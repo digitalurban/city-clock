@@ -21,6 +21,17 @@ export interface StreetLightDef {
   y: number;
 }
 
+export interface PlazaLampDef {
+  x: number;
+  y: number;
+}
+
+export interface PlazaBenchDef {
+  x: number;
+  y: number;
+  angle: number; // 0 = horizontal, PI/2 = vertical
+}
+
 export interface WalkableRect {
   x: number;
   y: number;
@@ -85,6 +96,8 @@ export class CityLayout {
   venues: VenueDef[] = [];
   entrances: PlazaEntrance[] = [];
   deliveryLanes: DeliveryLane[] = [];
+  plazaLamps: PlazaLampDef[] = [];
+  plazaBenches: PlazaBenchDef[] = [];
   plazaBounds: { x: number; y: number; w: number; h: number };
 
   // Which grid cells are plaza (col, row)
@@ -174,6 +187,7 @@ export class CityLayout {
     this.generateRoads(offsetX, offsetY, cellSize);
     this.generateBlocks(offsetX, offsetY, cellSize);
     this.generateVenues(offsetX, offsetY, cellSize, validPlazaCols, validPlazaRows);
+    this.generatePlazaFurniture();
     this.generateStreetLights(offsetX, offsetY, cellSize);
   }
 
@@ -381,6 +395,42 @@ export class CityLayout {
     }
   }
 
+  private generatePlazaFurniture() {
+    const pb = this.plazaBounds;
+    const cx = pb.x + pb.w / 2;
+    const cy = pb.y + pb.h / 2;
+    const innerMargin = 80; // keep lamps/benches away from venue edges
+
+    // Plaza lamps — evenly spaced in the interior area
+    const lampAreaW = pb.w - innerMargin * 2;
+    const lampAreaH = pb.h - innerMargin * 2;
+    const lampCols = Math.max(2, Math.floor(lampAreaW / 120));
+    const lampRows = Math.max(2, Math.floor(lampAreaH / 100));
+    for (let r = 0; r < lampRows; r++) {
+      for (let c = 0; c < lampCols; c++) {
+        const lx = pb.x + innerMargin + (c + 0.5) * (lampAreaW / lampCols);
+        const ly = pb.y + innerMargin + (r + 0.5) * (lampAreaH / lampRows);
+        // Avoid placing too close to center (where clock pedestrians gather)
+        const dx = lx - cx;
+        const dy = ly - cy;
+        if (Math.abs(dx) < 40 && Math.abs(dy) < 30) continue;
+        this.plazaLamps.push({ x: lx, y: ly });
+      }
+    }
+
+    // Plaza benches — placed near lamps, facing inward
+    for (const lamp of this.plazaLamps) {
+      const dx = lamp.x - cx;
+      const dy = lamp.y - cy;
+      // Place bench offset from lamp
+      const angle = Math.abs(dx) > Math.abs(dy) ? 0 : Math.PI / 2;
+      const offsetDist = 18;
+      const bx = lamp.x + (dy > 0 ? -offsetDist : offsetDist) * (angle === 0 ? 0 : 1);
+      const by = lamp.y + (dx > 0 ? offsetDist : -offsetDist) * (angle === 0 ? 1 : 0);
+      this.plazaBenches.push({ x: bx, y: by, angle });
+    }
+  }
+
   private generateVenues(offsetX: number, offsetY: number, cellSize: number, plazaCols: number[], plazaRows: number[]) {
     const pb = this.plazaBounds;
     const venueTypes: { type: VenueType; name: string; color: string; awning: string }[] = [
@@ -549,35 +599,59 @@ export class CityLayout {
         ctx.fillRect(doorX - 25, doorY - 25, 50, 50);
       }
 
-      // Outdoor seating — tables and chairs
+      // Outdoor seating — round tables with bistro chairs
       for (const seat of v.seatingPositions) {
-        // Table
-        ctx.fillStyle = `rgba(160, 120, 80, ${0.8 - nightAlpha * 0.3})`;
+        const hasParasol = seededRandom(seat.x * 7 + seat.y * 13) > 0.4;
+
+        // Parasol shadow (drawn first, beneath everything)
+        if (hasParasol) {
+          ctx.fillStyle = `rgba(0, 0, 0, ${0.08 - nightAlpha * 0.03})`;
+          ctx.beginPath();
+          ctx.ellipse(seat.x + 1.5, seat.y + 1.5, 8, 7, 0, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        // Two chairs (rounded rectangles beside table)
+        const chairAlpha = 0.7 - nightAlpha * 0.3;
+        ctx.fillStyle = `rgba(60, 60, 60, ${chairAlpha})`;
+        for (const cx of [-7, 7]) {
+          ctx.beginPath();
+          const chairX = seat.x + cx - 2;
+          const chairY = seat.y - 2;
+          ctx.moveTo(chairX + 1, chairY);
+          ctx.arcTo(chairX + 4, chairY, chairX + 4, chairY + 4, 1);
+          ctx.arcTo(chairX + 4, chairY + 4, chairX, chairY + 4, 1);
+          ctx.arcTo(chairX, chairY + 4, chairX, chairY, 1);
+          ctx.arcTo(chairX, chairY, chairX + 4, chairY, 1);
+          ctx.fill();
+        }
+
+        // Table (round, wooden)
+        ctx.fillStyle = `rgba(140, 100, 65, ${0.85 - nightAlpha * 0.3})`;
         ctx.beginPath();
-        ctx.arc(seat.x, seat.y, 4, 0, Math.PI * 2);
+        ctx.arc(seat.x, seat.y, 4.5, 0, Math.PI * 2);
         ctx.fill();
-        ctx.strokeStyle = `rgba(100, 70, 40, ${0.5 - nightAlpha * 0.2})`;
-        ctx.lineWidth = 0.5;
+        ctx.strokeStyle = `rgba(100, 70, 40, ${0.4 - nightAlpha * 0.15})`;
+        ctx.lineWidth = 0.7;
         ctx.stroke();
 
-        // Two chairs (small circles beside table)
-        ctx.fillStyle = `rgba(80, 80, 80, ${0.6 - nightAlpha * 0.2})`;
-        ctx.beginPath();
-        ctx.arc(seat.x - 6, seat.y, 2.5, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.beginPath();
-        ctx.arc(seat.x + 6, seat.y, 2.5, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Umbrella/parasol on some tables
-        if (seededRandom(seat.x * 7 + seat.y * 13) > 0.4) {
+        // Parasol canopy on top
+        if (hasParasol) {
           const umColor = seededRandom(seat.x * 3 + seat.y * 11) > 0.5 ? '#c44569' : '#e8a84c';
-          ctx.fillStyle = `${umColor}`;
-          ctx.globalAlpha = 0.6 - nightAlpha * 0.2;
+          const ur = parseInt(umColor.slice(1, 3), 16);
+          const ug = parseInt(umColor.slice(3, 5), 16);
+          const ub = parseInt(umColor.slice(5, 7), 16);
+          const pDark = 1 - nightAlpha * 0.3;
+          // Scalloped edge parasol
+          ctx.fillStyle = `rgba(${Math.floor(ur * pDark)}, ${Math.floor(ug * pDark)}, ${Math.floor(ub * pDark)}, 0.7)`;
           ctx.beginPath();
-          ctx.arc(seat.x, seat.y, 7, 0, Math.PI * 2);
+          ctx.arc(seat.x, seat.y, 7.5, 0, Math.PI * 2);
           ctx.fill();
-          ctx.globalAlpha = 1;
+          // Center pole dot
+          ctx.fillStyle = `rgba(80, 80, 80, 0.5)`;
+          ctx.beginPath();
+          ctx.arc(seat.x, seat.y, 1, 0, Math.PI * 2);
+          ctx.fill();
         }
       }
     }
@@ -750,6 +824,86 @@ export class CityLayout {
       ctx.beginPath();
       ctx.arc(sl.x, sl.y, 2.5, 0, Math.PI * 2);
       ctx.fill();
+    }
+  }
+
+  drawPlazaBenches(ctx: CanvasRenderingContext2D, nightAlpha: number) {
+    const benchL = 18;  // bench length
+    const benchW = 5;   // bench depth
+    const legH = 2;
+
+    for (const b of this.plazaBenches) {
+      ctx.save();
+      ctx.translate(b.x, b.y);
+      ctx.rotate(b.angle);
+
+      const dark = 1 - nightAlpha * 0.45;
+      // Shadow
+      ctx.fillStyle = `rgba(0,0,0,${0.12 + nightAlpha * 0.06})`;
+      ctx.fillRect(-benchL / 2 + 1.5, -benchW / 2 + 1.5, benchL, benchW);
+
+      // Seat slats (3 planks)
+      const slatColors = [
+        `rgba(${Math.floor(160 * dark)}, ${Math.floor(110 * dark)}, ${Math.floor(60 * dark)}, 0.95)`,
+        `rgba(${Math.floor(150 * dark)}, ${Math.floor(100 * dark)}, ${Math.floor(55 * dark)}, 0.95)`,
+        `rgba(${Math.floor(155 * dark)}, ${Math.floor(105 * dark)}, ${Math.floor(58 * dark)}, 0.95)`,
+      ];
+      const slatH = (benchW - 1) / 3;
+      for (let i = 0; i < 3; i++) {
+        ctx.fillStyle = slatColors[i];
+        ctx.fillRect(-benchL / 2, -benchW / 2 + i * slatH, benchL, slatH - 0.4);
+      }
+
+      // Backrest (a thin plank set back)
+      ctx.fillStyle = `rgba(${Math.floor(140 * dark)}, ${Math.floor(95 * dark)}, ${Math.floor(50 * dark)}, 0.9)`;
+      ctx.fillRect(-benchL / 2, -benchW / 2 - 3, benchL, 2.5);
+
+      // Metal legs (two pairs)
+      ctx.fillStyle = `rgba(${Math.floor(80 * dark)}, ${Math.floor(80 * dark)}, ${Math.floor(80 * dark)}, 0.8)`;
+      const legPositions = [-benchL / 2 + 3, benchL / 2 - 3];
+      for (const lx of legPositions) {
+        ctx.fillRect(lx - 1, benchW / 2, 2, legH);
+        ctx.fillRect(lx - 1, -benchW / 2 - 1, 2, legH);
+      }
+
+      ctx.restore();
+    }
+  }
+
+  drawPlazaLampPosts(ctx: CanvasRenderingContext2D, nightAlpha: number) {
+    for (const lamp of this.plazaLamps) {
+      const dark = 1 - nightAlpha * 0.3;
+      // Post shadow
+      ctx.fillStyle = `rgba(0,0,0,${0.1 + nightAlpha * 0.05})`;
+      ctx.fillRect(lamp.x + 1, lamp.y - 12, 2, 14);
+      // Post
+      ctx.fillStyle = `rgba(${Math.floor(90 * dark)}, ${Math.floor(90 * dark)}, ${Math.floor(100 * dark)}, 0.9)`;
+      ctx.fillRect(lamp.x - 1, lamp.y - 14, 2, 15);
+      // Arm
+      ctx.fillRect(lamp.x - 1, lamp.y - 14, 5, 2);
+      // Lamp head
+      ctx.fillStyle = nightAlpha > 0.1
+        ? `rgba(255, 240, 180, ${0.5 + nightAlpha * 0.5})`
+        : `rgba(200, 200, 210, 0.9)`;
+      ctx.beginPath();
+      ctx.arc(lamp.x + 4, lamp.y - 14, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+      // Base plate
+      ctx.fillStyle = `rgba(70, 70, 80, 0.7)`;
+      ctx.fillRect(lamp.x - 3, lamp.y, 6, 2);
+    }
+  }
+
+  drawPlazaLampGlows(ctx: CanvasRenderingContext2D, nightAlpha: number) {
+    if (nightAlpha < 0.05) return;
+    for (const lamp of this.plazaLamps) {
+      const glowR = 45 + nightAlpha * 15;
+      const grad = ctx.createRadialGradient(lamp.x + 4, lamp.y - 14, 0, lamp.x + 4, lamp.y - 14, glowR);
+      grad.addColorStop(0, `rgba(255, 220, 130, ${nightAlpha * 0.45})`);
+      grad.addColorStop(0.4, `rgba(255, 210, 110, ${nightAlpha * 0.15})`);
+      grad.addColorStop(1, 'rgba(255, 200, 100, 0)');
+      ctx.fillStyle = grad;
+      ctx.fillRect(lamp.x + 4 - glowR, lamp.y - 14 - glowR, glowR * 2, glowR * 2);
     }
   }
 

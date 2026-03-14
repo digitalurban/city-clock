@@ -72,9 +72,11 @@ function buildStaticCanvas(nightAlpha: number) {
   layout.drawSidewalks(sctx, nightAlpha);
   layout.drawCrosswalks(sctx, nightAlpha);
   layout.drawPlaza(sctx, nightAlpha);
+  layout.drawPlazaBenches(sctx, nightAlpha);
   layout.drawBuildings(sctx, nightAlpha);
   layout.drawDeliveryLanes(sctx, nightAlpha); // redraw inside plaza over plaza tile
   layout.drawVenues(sctx, nightAlpha);
+  layout.drawPlazaLampPosts(sctx, nightAlpha);
 
   lastStaticNightAlpha = nightAlpha;
 }
@@ -119,8 +121,9 @@ function loop() {
   // Trees on top (canopies)
   layout.drawTrees(ctx, time, nightAlpha);
 
-  // Street light glows
+  // Street light glows + plaza lamp glows (drawn after trees so they composite on top)
   layout.drawStreetLights(ctx, nightAlpha);
+  layout.drawPlazaLampGlows(ctx, nightAlpha);
 
   // Night overlay
   dayNight.drawNightOverlay(ctx, w, h, nightAlpha);

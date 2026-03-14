@@ -11,7 +11,7 @@ const CAR_COLORS = [
 const DELIVERY_COLOR = '#e67e22';
 
 // States for delivery cars
-type DeliveryState = 'driving' | 'approaching' | 'entering' | 'delivering' | 'exiting';
+type DeliveryState = 'driving' | 'entering' | 'delivering' | 'exiting';
 
 export class Car {
   x: number = 0;
@@ -148,41 +148,14 @@ export class Car {
         this.updateNormal(layout, pedestrians, cars);
         this.deliveryTimer--;
         if (this.deliveryTimer <= 0 && layout.deliveryLanes.length > 0) {
-          // Pick the delivery lane closest to current position
-          let bestLane = layout.deliveryLanes[0];
-          let bestDist = Infinity;
-          for (const lane of layout.deliveryLanes) {
-            const d = Math.abs(this.y - lane.outerY) + Math.abs(this.x - lane.laneX);
-            if (d < bestDist) { bestDist = d; bestLane = lane; }
-          }
-          this.deliveryLane = bestLane;
-          this.deliveryState = 'approaching';
-        }
-        break;
-      }
-
-      case 'approaching': {
-        if (!this.deliveryLane) { this.deliveryState = 'driving'; break; }
-        const lane = this.deliveryLane;
-        const dx = lane.laneX - this.x;
-        const dy = lane.outerY - this.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-
-        if (dist < 10) {
-          // Snap to lane centre x and outerY, then start entering
+          // Pick a random delivery lane and teleport to its entry point on the road
+          const lane = layout.deliveryLanes[Math.floor(Math.random() * layout.deliveryLanes.length)];
+          this.deliveryLane = lane;
           this.x = lane.laneX;
           this.y = lane.outerY;
           this.vx = 0;
           this.vy = 0;
           this.deliveryState = 'entering';
-        } else {
-          // Proportional velocity — slows naturally as it nears target (no wobble)
-          const speed = Math.min(this.baseSpeed, dist * 0.06);
-          this.vx = (dx / dist) * speed;
-          this.vy = (dy / dist) * speed;
-          this.angle = Math.atan2(this.vy, this.vx);
-          this.x += this.vx;
-          this.y += this.vy;
         }
         break;
       }
