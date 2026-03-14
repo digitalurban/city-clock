@@ -93,7 +93,7 @@ export class ClockManager {
           for (let k = 0; k < pedsPerSeg; k++) {
             if (idx < eligible.length) {
               if (segments[j]) {
-                const t = pedsPerSeg === 1 ? 0 : (k / (pedsPerSeg - 1) - 0.5) * 2;
+                const t = pedsPerSeg <= 1 ? 0 : (k / (pedsPerSeg - 1) - 0.5) * 2;
                 const offsetX = seg.horizontal ? t * spread : 0;
                 const offsetY = seg.horizontal ? 0 : t * spread;
                 eligible[idx].clockTarget = {

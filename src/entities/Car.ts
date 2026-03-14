@@ -14,8 +14,8 @@ const DELIVERY_COLOR = '#e67e22';
 type DeliveryState = 'driving' | 'approaching' | 'entering' | 'delivering' | 'exiting';
 
 export class Car {
-  x: number;
-  y: number;
+  x: number = 0;
+  y: number = 0;
   vx: number = 0;
   vy: number = 0;
   angle: number = 0;
