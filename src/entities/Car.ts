@@ -1,4 +1,4 @@
-import { CAR_SPEED } from '../utils/constants';
+import { CAR_SPEED, ROAD_WIDTH } from '../utils/constants';
 import type { CityLayout, RoadSegment, DeliveryLane } from '../city/CityLayout';
 import type { Pedestrian } from './Pedestrian';
 
@@ -93,6 +93,53 @@ export class Car {
     }
   }
 
+  // Find a road that intersects near the car's current position (for turning at junctions)
+  private findConnectingRoad(layout: CityLayout): RoadSegment | null {
+    const snap = ROAD_WIDTH * 1.5;
+    // Prefer roads with different orientation (to turn rather than continue straight / U-turn)
+    let best: RoadSegment | null = null;
+    let bestSameDir: RoadSegment | null = null;
+    for (const road of layout.roads) {
+      if (road === this.road) continue;
+      if (this.x >= road.x - snap && this.x <= road.x + road.w + snap &&
+          this.y >= road.y - snap && this.y <= road.y + road.h + snap) {
+        if (road.horizontal !== this.road.horizontal) {
+          best = road; // perpendicular road – ideal turn
+          break;
+        } else {
+          bestSameDir = road; // parallel – fallback (e.g. continue past clipped section)
+        }
+      }
+    }
+    return best ?? bestSameDir;
+  }
+
+  // Smoothly transition onto a connecting road, preserving travel direction where possible
+  private transitionToRoad(road: RoadSegment) {
+    this.road = road;
+    if (road.horizontal) {
+      // Coming from a vertical road or same-x segment: preserve general left/right direction
+      // Use the x-momentum, or if turning from vertical use a heuristic
+      const dir = this.dirX !== 0 ? Math.sign(this.dirX) : (Math.random() > 0.5 ? 1 : -1);
+      this.dirX = dir;
+      this.dirY = 0;
+      // Clamp x within road, set lane y
+      this.x = Math.max(road.x + 5, Math.min(road.x + road.w - 5, this.x));
+      this.y = road.y + (dir > 0 ? road.h * 0.25 : road.h * 0.75);
+      this.angle = dir > 0 ? 0 : Math.PI;
+    } else {
+      // Vertical road: preserve up/down direction
+      const dir = this.dirY !== 0 ? Math.sign(this.dirY) : (Math.random() > 0.5 ? 1 : -1);
+      this.dirX = 0;
+      this.dirY = dir;
+      this.y = Math.max(road.y + 5, Math.min(road.y + road.h - 5, this.y));
+      this.x = road.x + (dir > 0 ? road.w * 0.25 : road.w * 0.75);
+      this.angle = dir > 0 ? Math.PI / 2 : -Math.PI / 2;
+    }
+    this.vx = this.dirX * this.currentSpeed;
+    this.vy = this.dirY * this.currentSpeed;
+  }
+
   update(layout: CityLayout, pedestrians: Pedestrian[], cars: Car[]) {
     if (this.isDelivery) {
       this.updateDelivery(layout, pedestrians, cars);
@@ -136,8 +183,14 @@ export class Car {
     this.y += this.vy;
 
     if (this.isOutsideRoad()) {
-      this.road = this.pickRandomRoad(layout);
-      this.placeOnRoad(this.road);
+      const connecting = this.findConnectingRoad(layout);
+      if (connecting) {
+        this.transitionToRoad(connecting);
+      } else {
+        // No connecting road found (e.g. screen edge) — teleport to a random road
+        this.road = this.pickRandomRoad(layout);
+        this.placeOnRoad(this.road);
+      }
     }
   }
 
@@ -164,7 +217,7 @@ export class Car {
         if (!this.deliveryLane) { this.deliveryState = 'driving'; break; }
         const lane = this.deliveryLane;
         const inDir = lane.side === 'top' ? 1 : -1; // +1 = moving down, -1 = moving up
-        const speed = this.baseSpeed * 0.6;
+        const speed = this.baseSpeed * 1.0; // faster entry so it's clearly visible
 
         // Drive straight along the lane — direct velocity, no forces
         this.vx = 0;
@@ -192,7 +245,7 @@ export class Car {
         this.vx *= 0.8;
         this.vy *= 0.8;
         this.deliveryPauseTimer++;
-        if (this.deliveryPauseTimer >= 140) {
+        if (this.deliveryPauseTimer >= 300) {
           this.deliveryState = 'exiting';
         }
         break;
@@ -202,7 +255,7 @@ export class Car {
         if (!this.deliveryLane) { this.deliveryState = 'driving'; break; }
         const lane = this.deliveryLane;
         const outDir = lane.side === 'top' ? -1 : 1; // reverse direction
-        const speed = this.baseSpeed * 0.6;
+        const speed = this.baseSpeed * 1.0;
 
         // Drive straight back out — direct velocity, no forces
         this.vx = 0;
@@ -216,9 +269,14 @@ export class Car {
           : this.y >= lane.outerY;
 
         if (reachedOuter) {
-          // Back on the outer road — pick a road and resume
-          this.road = this.pickRandomRoad(layout);
-          this.placeOnRoad(this.road);
+          // Back on the outer road — find connecting road or pick a random one
+          const connecting = this.findConnectingRoad(layout);
+          if (connecting) {
+            this.transitionToRoad(connecting);
+          } else {
+            this.road = this.pickRandomRoad(layout);
+            this.placeOnRoad(this.road);
+          }
           this.deliveryLane = null;
           this.deliveryState = 'driving';
           this.deliveryTimer = 400 + Math.random() * 600;

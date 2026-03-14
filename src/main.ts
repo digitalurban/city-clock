@@ -171,9 +171,10 @@ function loop() {
     buildStaticCanvas(nightAlpha);
   }
 
-  // Clear canvas
+  // Fill entire canvas with sky colour (visible when zoomed out past world edges)
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = dayNight.getSkyColor(nightAlpha);
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
 
   // Apply zoom + pan + DPR transform
   // World coord (wx, wy) → screen physical pixel (panX*dpr + wx*zoom*dpr, panY*dpr + wy*zoom*dpr)

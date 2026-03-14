@@ -922,13 +922,13 @@ export class CityLayout {
   drawPlazaLampGlows(ctx: CanvasRenderingContext2D, nightAlpha: number) {
     if (nightAlpha < 0.05) return;
     for (const lamp of this.plazaLamps) {
-      const glowR = 45 + nightAlpha * 15;
-      const grad = ctx.createRadialGradient(lamp.x + 4, lamp.y - 14, 0, lamp.x + 4, lamp.y - 14, glowR);
-      grad.addColorStop(0, `rgba(255, 220, 130, ${nightAlpha * 0.45})`);
-      grad.addColorStop(0.4, `rgba(255, 210, 110, ${nightAlpha * 0.15})`);
+      const glowR = 50 + nightAlpha * 20;
+      const grad = ctx.createRadialGradient(lamp.x, lamp.y, 0, lamp.x, lamp.y, glowR);
+      grad.addColorStop(0, `rgba(255, 220, 130, ${nightAlpha * 0.5})`);
+      grad.addColorStop(0.4, `rgba(255, 210, 110, ${nightAlpha * 0.18})`);
       grad.addColorStop(1, 'rgba(255, 200, 100, 0)');
       ctx.fillStyle = grad;
-      ctx.fillRect(lamp.x + 4 - glowR, lamp.y - 14 - glowR, glowR * 2, glowR * 2);
+      ctx.fillRect(lamp.x - glowR, lamp.y - glowR, glowR * 2, glowR * 2);
     }
   }
 
