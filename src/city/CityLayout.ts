@@ -37,6 +37,23 @@ export interface RoadSegment {
   horizontal: boolean;
 }
 
+export interface PlazaEntrance {
+  x: number;
+  y: number;
+  side: 'top' | 'bottom' | 'left' | 'right';
+}
+
+export interface DeliveryLane {
+  side: 'top' | 'bottom';
+  laneX: number;    // center x of lane
+  outerY: number;   // y-center of the outer road (entry/exit point)
+  innerY: number;   // y inside plaza, past the venue band
+  stripX: number;   // left edge of the road strip (for rendering)
+  stripY: number;   // top edge of the road strip
+  stripW: number;
+  stripH: number;
+}
+
 export type VenueType = 'cafe' | 'bar' | 'shop' | 'restaurant' | 'bookshop';
 
 export interface VenueDef {
@@ -66,6 +83,8 @@ export class CityLayout {
   walkableRects: WalkableRect[] = [];
   roads: RoadSegment[] = [];
   venues: VenueDef[] = [];
+  entrances: PlazaEntrance[] = [];
+  deliveryLanes: DeliveryLane[] = [];
   plazaBounds: { x: number; y: number; w: number; h: number };
 
   // Which grid cells are plaza (col, row)
@@ -86,16 +105,14 @@ export class CityLayout {
     const offsetY = (height - totalH) / 2;
 
     // Determine plaza cells — scale with screen so it's always the main focus
-    const centerCol = Math.floor(this.gridCols / 2);
-    const centerRow = Math.floor(this.gridRows / 2);
     const plazaW = Math.max(3, Math.floor(this.gridCols * 0.6));
     const plazaH = Math.max(2, Math.floor(this.gridRows * 0.6));
-    const halfW = Math.floor(plazaW / 2);
-    const halfH = Math.floor(plazaH / 2);
+    const startCol = Math.floor((this.gridCols - plazaW) / 2);
+    const startRow = Math.floor((this.gridRows - plazaH) / 2);
     const plazaCols: number[] = [];
-    for (let c = centerCol - halfW; c <= centerCol - halfW + plazaW - 1; c++) plazaCols.push(c);
+    for (let c = startCol; c < startCol + plazaW; c++) plazaCols.push(c);
     const plazaRows: number[] = [];
-    for (let r = centerRow - halfH; r <= centerRow - halfH + plazaH - 1; r++) plazaRows.push(r);
+    for (let r = startRow; r < startRow + plazaH; r++) plazaRows.push(r);
     // Clamp to grid bounds
     const validPlazaCols = plazaCols.filter(c => c >= 0 && c < this.gridCols);
     const validPlazaRows = plazaRows.filter(r => r >= 0 && r < this.gridRows);
@@ -127,6 +144,32 @@ export class CityLayout {
       type: 'plaza',
     });
 
+    // Delivery lanes — one top-centre, one bottom-centre
+    // venueDepth = edgeInset(6) + venueH(30) = 36
+    const venueDepth = 36;
+    const laneW = ROAD_WIDTH;
+    const laneX = this.plazaBounds.x + this.plazaBounds.w / 2;
+    this.deliveryLanes.push({
+      side: 'top',
+      laneX,
+      outerY: this.plazaBounds.y - ROAD_WIDTH / 2,
+      innerY: this.plazaBounds.y + venueDepth + 18,
+      stripX: laneX - laneW / 2,
+      stripY: this.plazaBounds.y - ROAD_WIDTH,
+      stripW: laneW,
+      stripH: ROAD_WIDTH + venueDepth + 18,
+    });
+    this.deliveryLanes.push({
+      side: 'bottom',
+      laneX,
+      outerY: this.plazaBounds.y + this.plazaBounds.h + ROAD_WIDTH / 2,
+      innerY: this.plazaBounds.y + this.plazaBounds.h - venueDepth - 18,
+      stripX: laneX - laneW / 2,
+      stripY: this.plazaBounds.y + this.plazaBounds.h - venueDepth - 18,
+      stripW: laneW,
+      stripH: ROAD_WIDTH + venueDepth + 18,
+    });
+
     // Generate roads, sidewalks, buildings, trees, lights, venues
     this.generateRoads(offsetX, offsetY, cellSize);
     this.generateBlocks(offsetX, offsetY, cellSize);
@@ -134,11 +177,49 @@ export class CityLayout {
     this.generateStreetLights(offsetX, offsetY, cellSize);
   }
 
+  private clipRoadAroundPlaza(road: RoadSegment): RoadSegment[] {
+    const pb = this.plazaBounds;
+    if (road.horizontal) {
+      // Check vertical overlap
+      if (road.y + road.h <= pb.y || road.y >= pb.y + pb.h) return [road];
+      const segments: RoadSegment[] = [];
+      // Left portion
+      if (road.x < pb.x) {
+        segments.push({ x: road.x, y: road.y, w: pb.x - road.x, h: road.h, horizontal: true });
+      }
+      // Right portion
+      const roadRight = road.x + road.w;
+      const plazaRight = pb.x + pb.w;
+      if (roadRight > plazaRight) {
+        segments.push({ x: plazaRight, y: road.y, w: roadRight - plazaRight, h: road.h, horizontal: true });
+      }
+      return segments;
+    } else {
+      // Check horizontal overlap
+      if (road.x + road.w <= pb.x || road.x >= pb.x + pb.w) return [road];
+      const segments: RoadSegment[] = [];
+      // Top portion
+      if (road.y < pb.y) {
+        segments.push({ x: road.x, y: road.y, w: road.w, h: pb.y - road.y, horizontal: false });
+      }
+      // Bottom portion
+      const roadBottom = road.y + road.h;
+      const plazaBottom = pb.y + pb.h;
+      if (roadBottom > plazaBottom) {
+        segments.push({ x: road.x, y: plazaBottom, w: road.w, h: roadBottom - plazaBottom, horizontal: false });
+      }
+      return segments;
+    }
+  }
+
   private generateRoads(offsetX: number, offsetY: number, cellSize: number) {
+    const rawRoads: RoadSegment[] = [];
+    const pb = this.plazaBounds;
+
     // Horizontal roads
     for (let r = 0; r <= this.gridRows; r++) {
       const ry = offsetY + r * cellSize - ROAD_WIDTH / 2;
-      this.roads.push({ x: offsetX - cellSize, y: ry, w: this.width + cellSize * 2, h: ROAD_WIDTH, horizontal: true });
+      rawRoads.push({ x: offsetX - cellSize, y: ry, w: this.width + cellSize * 2, h: ROAD_WIDTH, horizontal: true });
 
       // Sidewalks along horizontal roads
       this.walkableRects.push({
@@ -152,7 +233,7 @@ export class CityLayout {
     // Vertical roads
     for (let c = 0; c <= this.gridCols; c++) {
       const rx = offsetX + c * cellSize - ROAD_WIDTH / 2;
-      this.roads.push({ x: rx, y: offsetY - cellSize, w: ROAD_WIDTH, h: this.height + cellSize * 2, horizontal: false });
+      rawRoads.push({ x: rx, y: offsetY - cellSize, w: ROAD_WIDTH, h: this.height + cellSize * 2, horizontal: false });
 
       // Sidewalks along vertical roads
       this.walkableRects.push({
@@ -163,11 +244,36 @@ export class CityLayout {
       });
     }
 
-    // Crosswalks at intersections
+    // Clip roads around plaza and compute entrances
+    for (const raw of rawRoads) {
+      const clipped = this.clipRoadAroundPlaza(raw);
+      this.roads.push(...clipped);
+
+      // If the road was clipped (overlaps plaza), record entrances
+      if (clipped.length !== 1 || clipped[0] !== raw) {
+        if (raw.horizontal) {
+          const roadCenterY = raw.y + raw.h / 2;
+          if (roadCenterY > pb.y && roadCenterY < pb.y + pb.h) {
+            this.entrances.push({ x: pb.x, y: roadCenterY, side: 'left' });
+            this.entrances.push({ x: pb.x + pb.w, y: roadCenterY, side: 'right' });
+          }
+        } else {
+          const roadCenterX = raw.x + raw.w / 2;
+          if (roadCenterX > pb.x && roadCenterX < pb.x + pb.w) {
+            this.entrances.push({ x: roadCenterX, y: pb.y, side: 'top' });
+            this.entrances.push({ x: roadCenterX, y: pb.y + pb.h, side: 'bottom' });
+          }
+        }
+      }
+    }
+
+    // Crosswalks at intersections (only outside plaza)
     for (let r = 0; r <= this.gridRows; r++) {
       for (let c = 0; c <= this.gridCols; c++) {
         const ix = offsetX + c * cellSize;
         const iy = offsetY + r * cellSize;
+        // Skip crosswalks inside the plaza
+        if (ix > pb.x && ix < pb.x + pb.w && iy > pb.y && iy < pb.y + pb.h) continue;
         this.walkableRects.push({
           x: ix - ROAD_WIDTH / 2 - 4, y: iy - ROAD_WIDTH / 2 - 4,
           w: ROAD_WIDTH + 8, h: ROAD_WIDTH + 8, type: 'crosswalk',
@@ -294,8 +400,14 @@ export class CityLayout {
     const edgeInset = 6;   // how far from the plaza edge the building sits
     const seatingGap = 8;  // gap between building and seating
 
+    const topLane = this.deliveryLanes[0];
+    const botLane = this.deliveryLanes[1];
+    const laneGap = ROAD_WIDTH + 10; // clearance around lane centre
+
     // Top edge — buildings sit against top of plaza, face inward
     for (let x = pb.x + 25; x < pb.x + pb.w - venueW; x += venueW + 25) {
+      // Leave gap for delivery lane
+      if (x < topLane.laneX + laneGap / 2 && x + venueW > topLane.laneX - laneGap / 2) continue;
       const v = venueTypes[vi % venueTypes.length];
       const bx = x;
       const by = pb.y + edgeInset;
@@ -313,6 +425,8 @@ export class CityLayout {
 
     // Bottom edge — buildings sit against bottom of plaza, face inward
     for (let x = pb.x + 45; x < pb.x + pb.w - venueW; x += venueW + 30) {
+      // Leave gap for delivery lane
+      if (x < botLane.laneX + laneGap / 2 && x + venueW > botLane.laneX - laneGap / 2) continue;
       const v = venueTypes[vi % venueTypes.length];
       const bx = x;
       const by = pb.y + pb.h - edgeInset - venueH;
@@ -467,6 +581,25 @@ export class CityLayout {
         }
       }
     }
+  }
+
+  drawDeliveryLanes(ctx: CanvasRenderingContext2D, nightAlpha: number) {
+    const roadLight = Math.max(0, 45 - nightAlpha * 25);
+    ctx.fillStyle = `hsl(220, 5%, ${roadLight}%)`;
+    for (const lane of this.deliveryLanes) {
+      ctx.fillRect(lane.stripX, lane.stripY, lane.stripW, lane.stripH);
+    }
+    // Dashed centre lines
+    ctx.strokeStyle = `rgba(255, 255, 200, ${0.4 - nightAlpha * 0.1})`;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 8]);
+    for (const lane of this.deliveryLanes) {
+      ctx.beginPath();
+      ctx.moveTo(lane.laneX, lane.stripY);
+      ctx.lineTo(lane.laneX, lane.stripY + lane.stripH);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
   }
 
   drawRoads(ctx: CanvasRenderingContext2D, nightAlpha: number) {

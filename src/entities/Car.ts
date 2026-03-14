@@ -1,100 +1,132 @@
 import { CAR_SPEED } from '../utils/constants';
-import type { CityLayout, RoadSegment } from '../city/CityLayout';
+import type { CityLayout, RoadSegment, DeliveryLane } from '../city/CityLayout';
 import type { Pedestrian } from './Pedestrian';
 
 const CAR_COLORS = [
   '#2c3e50', '#e74c3c', '#3498db', '#f1c40f',
-  '#1abc9c', '#e67e22', '#9b59b6', '#ecf0f1',
+  '#1abc9c', '#9b59b6', '#ecf0f1',
   '#34495e', '#c0392b', '#2980b9', '#27ae60',
 ];
+
+const DELIVERY_COLOR = '#e67e22';
+
+// States for delivery cars
+type DeliveryState = 'driving' | 'approaching' | 'entering' | 'delivering' | 'exiting';
 
 export class Car {
   x: number;
   y: number;
-  vx: number;
-  vy: number;
-  angle: number;
+  vx: number = 0;
+  vy: number = 0;
+  angle: number = 0;
   baseSpeed: number;
   currentSpeed: number;
   color: string;
   length: number;
   width: number;
   road: RoadSegment;
-  dirX: number;
-  dirY: number;
+  dirX: number = 0;
+  dirY: number = 0;
 
-  constructor(layout: CityLayout) {
-    this.baseSpeed = CAR_SPEED * (0.3 + Math.random() * 0.4); // slower base speed
+  // Delivery car fields
+  isDelivery: boolean;
+  deliveryState: DeliveryState = 'driving';
+  deliveryTimer: number = 0;
+  deliveryLane: DeliveryLane | null = null;
+  deliveryPauseTimer: number = 0;
+
+  constructor(layout: CityLayout, isDelivery: boolean = false) {
+    this.isDelivery = isDelivery;
+    this.baseSpeed = CAR_SPEED * (0.3 + Math.random() * 0.4);
     this.currentSpeed = this.baseSpeed;
-    this.color = CAR_COLORS[Math.floor(Math.random() * CAR_COLORS.length)];
-    this.length = 14 + Math.random() * 6;
-    this.width = 7 + Math.random() * 2;
+    this.color = isDelivery ? DELIVERY_COLOR : CAR_COLORS[Math.floor(Math.random() * CAR_COLORS.length)];
+    this.length = isDelivery ? 18 : 14 + Math.random() * 6;
+    this.width = isDelivery ? 9 : 7 + Math.random() * 2;
 
-    // Pick a random road segment
+    this.road = this.pickRandomRoad(layout);
+    this.placeOnRoad(this.road);
+
+    if (isDelivery) {
+      // Stagger deliveries so they don't all go at once
+      this.deliveryTimer = 400 + Math.random() * 600;
+    }
+  }
+
+  private pickRandomRoad(layout: CityLayout): RoadSegment {
     const roads = layout.roads;
-    this.road = roads[Math.floor(Math.random() * roads.length)];
+    const lengths = roads.map(r => r.horizontal ? r.w : r.h);
+    const total = lengths.reduce((a, b) => a + b, 0);
+    let pick = Math.random() * total;
+    for (let i = 0; i < roads.length; i++) {
+      pick -= lengths[i];
+      if (pick <= 0) return roads[i];
+    }
+    return roads[roads.length - 1];
+  }
 
-    if (this.road.horizontal) {
+  private placeOnRoad(road: RoadSegment) {
+    if (road.horizontal) {
       const direction = Math.random() > 0.5 ? 1 : -1;
-      this.x = this.road.x + Math.random() * this.road.w;
-      this.y = this.road.y + (direction > 0 ? this.road.h * 0.25 : this.road.h * 0.75);
+      this.x = road.x + Math.random() * road.w;
+      this.y = road.y + (direction > 0 ? road.h * 0.25 : road.h * 0.75);
       this.dirX = direction;
       this.dirY = 0;
       this.angle = direction > 0 ? 0 : Math.PI;
     } else {
       const direction = Math.random() > 0.5 ? 1 : -1;
-      this.y = this.road.y + Math.random() * this.road.h;
-      this.x = this.road.x + (direction > 0 ? this.road.w * 0.25 : this.road.w * 0.75);
+      this.y = road.y + Math.random() * road.h;
+      this.x = road.x + (direction > 0 ? road.w * 0.25 : road.w * 0.75);
       this.dirX = 0;
       this.dirY = direction;
       this.angle = direction > 0 ? Math.PI / 2 : -Math.PI / 2;
     }
-
     this.vx = this.dirX * this.baseSpeed;
     this.vy = this.dirY * this.baseSpeed;
   }
 
-  update(layout: CityLayout, pedestrians: Pedestrian[], cars: Car[]) {
-    // Check for pedestrians ahead — slow down or stop
-    let targetSpeed = this.baseSpeed;
-    const lookAhead = 40;
-    const lookWidth = 12;
+  private isOutsideRoad(): boolean {
+    const r = this.road;
+    if (r.horizontal) {
+      return this.x < r.x - 5 || this.x > r.x + r.w + 5;
+    } else {
+      return this.y < r.y - 5 || this.y > r.y + r.h + 5;
+    }
+  }
 
-    // Front of car in world coords
+  update(layout: CityLayout, pedestrians: Pedestrian[], cars: Car[]) {
+    if (this.isDelivery) {
+      this.updateDelivery(layout, pedestrians, cars);
+    } else {
+      this.updateNormal(layout, pedestrians, cars);
+    }
+  }
+
+  private updateNormal(layout: CityLayout, pedestrians: Pedestrian[], cars: Car[]) {
+    let targetSpeed = this.baseSpeed;
     const frontX = this.x + this.dirX * this.length * 0.5;
     const frontY = this.y + this.dirY * this.length * 0.5;
 
     for (const p of pedestrians) {
       const dx = p.x - frontX;
       const dy = p.y - frontY;
-
-      // Distance along car's direction of travel
       const along = dx * this.dirX + dy * this.dirY;
-      // Perpendicular distance
       const perp = Math.abs(dx * this.dirY - dy * this.dirX);
-
-      if (along > 0 && along < lookAhead && perp < lookWidth) {
-        // Pedestrian ahead — slow proportionally
-        const brakeFactor = along / lookAhead;
-        targetSpeed = Math.min(targetSpeed, this.baseSpeed * brakeFactor * 0.5);
+      if (along > 0 && along < 40 && perp < 12) {
+        targetSpeed = Math.min(targetSpeed, this.baseSpeed * (along / 40) * 0.5);
       }
     }
 
-    // Also check for cars ahead (avoid rear-ending)
     for (const other of cars) {
       if (other === this) continue;
       const dx = other.x - frontX;
       const dy = other.y - frontY;
       const along = dx * this.dirX + dy * this.dirY;
       const perp = Math.abs(dx * this.dirY - dy * this.dirX);
-
       if (along > 0 && along < 30 && perp < 10) {
-        const brakeFactor = along / 30;
-        targetSpeed = Math.min(targetSpeed, this.baseSpeed * brakeFactor * 0.3);
+        targetSpeed = Math.min(targetSpeed, this.baseSpeed * (along / 30) * 0.3);
       }
     }
 
-    // Smoothly adjust speed
     this.currentSpeed += (targetSpeed - this.currentSpeed) * 0.1;
     if (this.currentSpeed < 0.02) this.currentSpeed = 0;
 
@@ -103,12 +135,124 @@ export class Car {
     this.x += this.vx;
     this.y += this.vy;
 
-    // Wrap around edges
-    const margin = 50;
-    if (this.x < -margin) this.x = layout.width + margin;
-    if (this.x > layout.width + margin) this.x = -margin;
-    if (this.y < -margin) this.y = layout.height + margin;
-    if (this.y > layout.height + margin) this.y = -margin;
+    if (this.isOutsideRoad()) {
+      this.road = this.pickRandomRoad(layout);
+      this.placeOnRoad(this.road);
+    }
+  }
+
+  private updateDelivery(layout: CityLayout, pedestrians: Pedestrian[], cars: Car[]) {
+    switch (this.deliveryState) {
+
+      case 'driving': {
+        this.updateNormal(layout, pedestrians, cars);
+        this.deliveryTimer--;
+        if (this.deliveryTimer <= 0 && layout.deliveryLanes.length > 0) {
+          // Pick the delivery lane closest to current position
+          let bestLane = layout.deliveryLanes[0];
+          let bestDist = Infinity;
+          for (const lane of layout.deliveryLanes) {
+            const d = Math.abs(this.y - lane.outerY) + Math.abs(this.x - lane.laneX);
+            if (d < bestDist) { bestDist = d; bestLane = lane; }
+          }
+          this.deliveryLane = bestLane;
+          this.deliveryState = 'approaching';
+        }
+        break;
+      }
+
+      case 'approaching': {
+        if (!this.deliveryLane) { this.deliveryState = 'driving'; break; }
+        const lane = this.deliveryLane;
+        const dx = lane.laneX - this.x;
+        const dy = lane.outerY - this.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        if (dist < 10) {
+          // Snap to lane centre x and outerY, then start entering
+          this.x = lane.laneX;
+          this.y = lane.outerY;
+          this.vx = 0;
+          this.vy = 0;
+          this.deliveryState = 'entering';
+        } else {
+          // Proportional velocity — slows naturally as it nears target (no wobble)
+          const speed = Math.min(this.baseSpeed, dist * 0.06);
+          this.vx = (dx / dist) * speed;
+          this.vy = (dy / dist) * speed;
+          this.angle = Math.atan2(this.vy, this.vx);
+          this.x += this.vx;
+          this.y += this.vy;
+        }
+        break;
+      }
+
+      case 'entering': {
+        if (!this.deliveryLane) { this.deliveryState = 'driving'; break; }
+        const lane = this.deliveryLane;
+        const inDir = lane.side === 'top' ? 1 : -1; // +1 = moving down, -1 = moving up
+        const speed = this.baseSpeed * 0.6;
+
+        // Drive straight along the lane — direct velocity, no forces
+        this.vx = 0;
+        this.vy = inDir * speed;
+        this.angle = inDir > 0 ? Math.PI / 2 : -Math.PI / 2;
+        this.x = lane.laneX; // keep perfectly centred in lane
+        this.y += this.vy;
+
+        const reachedInner = lane.side === 'top'
+          ? this.y >= lane.innerY
+          : this.y <= lane.innerY;
+
+        if (reachedInner) {
+          this.y = lane.innerY;
+          this.vx = 0;
+          this.vy = 0;
+          this.deliveryPauseTimer = 0;
+          this.deliveryState = 'delivering';
+        }
+        break;
+      }
+
+      case 'delivering': {
+        // Parked — slow drift to stop
+        this.vx *= 0.8;
+        this.vy *= 0.8;
+        this.deliveryPauseTimer++;
+        if (this.deliveryPauseTimer >= 140) {
+          this.deliveryState = 'exiting';
+        }
+        break;
+      }
+
+      case 'exiting': {
+        if (!this.deliveryLane) { this.deliveryState = 'driving'; break; }
+        const lane = this.deliveryLane;
+        const outDir = lane.side === 'top' ? -1 : 1; // reverse direction
+        const speed = this.baseSpeed * 0.6;
+
+        // Drive straight back out — direct velocity, no forces
+        this.vx = 0;
+        this.vy = outDir * speed;
+        this.angle = outDir > 0 ? Math.PI / 2 : -Math.PI / 2;
+        this.x = lane.laneX;
+        this.y += this.vy;
+
+        const reachedOuter = lane.side === 'top'
+          ? this.y <= lane.outerY
+          : this.y >= lane.outerY;
+
+        if (reachedOuter) {
+          // Back on the outer road — pick a road and resume
+          this.road = this.pickRandomRoad(layout);
+          this.placeOnRoad(this.road);
+          this.deliveryLane = null;
+          this.deliveryState = 'driving';
+          this.deliveryTimer = 400 + Math.random() * 600;
+        }
+        break;
+      }
+    }
   }
 
   draw(ctx: CanvasRenderingContext2D, nightAlpha: number) {
@@ -116,10 +260,9 @@ export class Car {
     ctx.translate(this.x, this.y);
     ctx.rotate(this.angle);
 
-    // Brake lights glow when slowing
     const isBraking = this.currentSpeed < this.baseSpeed * 0.5;
 
-    // Car body shadow
+    // Shadow
     ctx.fillStyle = `rgba(0, 0, 0, ${0.2 + nightAlpha * 0.1})`;
     ctx.fillRect(-this.length / 2 + 1.5, -this.width / 2 + 1.5, this.length, this.width);
 
@@ -130,7 +273,6 @@ export class Car {
     const b = parseInt(this.color.slice(5, 7), 16);
     ctx.fillStyle = `rgb(${Math.floor(r * darkFactor)}, ${Math.floor(g * darkFactor)}, ${Math.floor(b * darkFactor)})`;
 
-    // Rounded rectangle for car body
     const hw = this.length / 2;
     const hh = this.width / 2;
     const cr = 2;
@@ -146,11 +288,20 @@ export class Car {
     ctx.quadraticCurveTo(-hw, -hh, -hw + cr, -hh);
     ctx.fill();
 
+    // Delivery cargo box on back
+    if (this.isDelivery) {
+      ctx.fillStyle = `rgb(${Math.floor(r * darkFactor * 0.75)}, ${Math.floor(g * darkFactor * 0.75)}, ${Math.floor(b * darkFactor * 0.75)})`;
+      ctx.fillRect(-hw + 1, -hh + 1.5, this.length * 0.42, this.width - 3);
+      ctx.strokeStyle = `rgba(0,0,0,0.25)`;
+      ctx.lineWidth = 0.5;
+      ctx.strokeRect(-hw + 1, -hh + 1.5, this.length * 0.42, this.width - 3);
+    }
+
     // Windshield
     ctx.fillStyle = `rgba(150, 200, 230, ${0.6 - nightAlpha * 0.3})`;
     ctx.fillRect(this.length * 0.15, -this.width / 2 + 1.5, this.length * 0.2, this.width - 3);
 
-    // Headlights (more visible at night)
+    // Headlights at night
     if (nightAlpha > 0.1) {
       const headlightAlpha = 0.3 + nightAlpha * 0.7;
       ctx.fillStyle = `rgba(255, 240, 180, ${headlightAlpha})`;
@@ -161,7 +312,6 @@ export class Car {
       ctx.arc(this.length / 2, this.width / 2 - 1.5, 1.5, 0, Math.PI * 2);
       ctx.fill();
 
-      // Headlight beams
       if (nightAlpha > 0.3) {
         const grad = ctx.createRadialGradient(this.length / 2 + 5, 0, 0, this.length / 2 + 5, 0, 25);
         grad.addColorStop(0, `rgba(255, 240, 180, ${nightAlpha * 0.2})`);
@@ -171,7 +321,7 @@ export class Car {
       }
     }
 
-    // Taillights (brighter when braking)
+    // Taillights
     const tailAlpha = isBraking ? 0.9 : (0.4 + nightAlpha * 0.4);
     ctx.fillStyle = `rgba(255, 50, 50, ${tailAlpha})`;
     ctx.fillRect(-this.length / 2, -this.width / 2 + 1, 2, 2);

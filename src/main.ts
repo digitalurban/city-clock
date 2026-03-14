@@ -38,8 +38,9 @@ function resize() {
   }
 
   cars = [];
+  const deliveryCount = Math.floor(TOTAL_CARS * 0.2);
   for (let i = 0; i < TOTAL_CARS; i++) {
-    cars.push(new Car(layout));
+    cars.push(new Car(layout, i < deliveryCount));
   }
 
   // Force static canvas rebuild
@@ -67,10 +68,12 @@ function buildStaticCanvas(nightAlpha: number) {
 
   // Render layers
   layout.drawRoads(sctx, nightAlpha);
+  layout.drawDeliveryLanes(sctx, nightAlpha);
   layout.drawSidewalks(sctx, nightAlpha);
   layout.drawCrosswalks(sctx, nightAlpha);
   layout.drawPlaza(sctx, nightAlpha);
   layout.drawBuildings(sctx, nightAlpha);
+  layout.drawDeliveryLanes(sctx, nightAlpha); // redraw inside plaza over plaza tile
   layout.drawVenues(sctx, nightAlpha);
 
   lastStaticNightAlpha = nightAlpha;
