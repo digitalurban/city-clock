@@ -111,17 +111,21 @@ export class CityLayout {
     this.gridCols = Math.ceil(width / cellSize) + 1;
     this.gridRows = Math.ceil(height / cellSize) + 1;
 
-    // Center the grid
+    // Compute plaza size first so we can guarantee equal road margins
+    const plazaW = Math.max(3, Math.floor(this.gridCols * 0.6));
+    const plazaH = Math.max(2, Math.floor(this.gridRows * 0.6));
+    // Ensure (gridCols - plazaW) is even so left/right road counts are identical
+    if ((this.gridCols - plazaW) % 2 !== 0) this.gridCols++;
+    if ((this.gridRows - plazaH) % 2 !== 0) this.gridRows++;
+
+    // Center the grid — with equal parity guaranteed, startCol/Row are exact integers
     const totalW = this.gridCols * cellSize;
     const totalH = this.gridRows * cellSize;
     const offsetX = (width - totalW) / 2;
     const offsetY = (height - totalH) / 2;
 
-    // Determine plaza cells — scale with screen so it's always the main focus
-    const plazaW = Math.max(3, Math.floor(this.gridCols * 0.6));
-    const plazaH = Math.max(2, Math.floor(this.gridRows * 0.6));
-    const startCol = Math.floor((this.gridCols - plazaW) / 2);
-    const startRow = Math.floor((this.gridRows - plazaH) / 2);
+    const startCol = (this.gridCols - plazaW) / 2;
+    const startRow = (this.gridRows - plazaH) / 2;
     const plazaCols: number[] = [];
     for (let c = startCol; c < startCol + plazaW; c++) plazaCols.push(c);
     const plazaRows: number[] = [];
@@ -158,29 +162,32 @@ export class CityLayout {
     });
 
     // Delivery lanes — one top-centre, one bottom-centre
-    // venueDepth = edgeInset(6) + venueH(30) = 36
+    // venueDepth = edgeInset(6) + venueH(30) = 36; awning = 14px → stop at 36+14+4=54 but
+    // use 44 so truck parks just in front of the venue awning (visible drop-off point)
     const venueDepth = 36;
+    const awningDepth = 14;
+    const deliveryStopDepth = venueDepth + awningDepth + 4; // 54px inside plaza edge
     const laneW = ROAD_WIDTH;
     const laneX = this.plazaBounds.x + this.plazaBounds.w / 2;
     this.deliveryLanes.push({
       side: 'top',
       laneX,
       outerY: this.plazaBounds.y - ROAD_WIDTH / 2,
-      innerY: this.plazaBounds.y + venueDepth + 18,
+      innerY: this.plazaBounds.y + deliveryStopDepth,
       stripX: laneX - laneW / 2,
       stripY: this.plazaBounds.y - ROAD_WIDTH,
       stripW: laneW,
-      stripH: ROAD_WIDTH + venueDepth + 18,
+      stripH: ROAD_WIDTH + deliveryStopDepth,
     });
     this.deliveryLanes.push({
       side: 'bottom',
       laneX,
       outerY: this.plazaBounds.y + this.plazaBounds.h + ROAD_WIDTH / 2,
-      innerY: this.plazaBounds.y + this.plazaBounds.h - venueDepth - 18,
+      innerY: this.plazaBounds.y + this.plazaBounds.h - deliveryStopDepth,
       stripX: laneX - laneW / 2,
-      stripY: this.plazaBounds.y + this.plazaBounds.h - venueDepth - 18,
+      stripY: this.plazaBounds.y + this.plazaBounds.h - deliveryStopDepth,
       stripW: laneW,
-      stripH: ROAD_WIDTH + venueDepth + 18,
+      stripH: ROAD_WIDTH + deliveryStopDepth,
     });
 
     // Generate roads, sidewalks, buildings, trees, lights, venues
@@ -872,25 +879,43 @@ export class CityLayout {
 
   drawPlazaLampPosts(ctx: CanvasRenderingContext2D, nightAlpha: number) {
     for (const lamp of this.plazaLamps) {
-      const dark = 1 - nightAlpha * 0.3;
-      // Post shadow
-      ctx.fillStyle = `rgba(0,0,0,${0.1 + nightAlpha * 0.05})`;
-      ctx.fillRect(lamp.x + 1, lamp.y - 12, 2, 14);
-      // Post
-      ctx.fillStyle = `rgba(${Math.floor(90 * dark)}, ${Math.floor(90 * dark)}, ${Math.floor(100 * dark)}, 0.9)`;
-      ctx.fillRect(lamp.x - 1, lamp.y - 14, 2, 15);
-      // Arm
-      ctx.fillRect(lamp.x - 1, lamp.y - 14, 5, 2);
-      // Lamp head
-      ctx.fillStyle = nightAlpha > 0.1
-        ? `rgba(255, 240, 180, ${0.5 + nightAlpha * 0.5})`
-        : `rgba(200, 200, 210, 0.9)`;
+      const dark = 1 - nightAlpha * 0.35;
+
+      // Ground shadow (top-down: shadow falls slightly south-east)
+      ctx.fillStyle = `rgba(0,0,0,${0.18 + nightAlpha * 0.04})`;
       ctx.beginPath();
-      ctx.arc(lamp.x + 4, lamp.y - 14, 2.5, 0, Math.PI * 2);
+      ctx.ellipse(lamp.x + 2, lamp.y + 2, 4, 3, 0.4, 0, Math.PI * 2);
       ctx.fill();
-      // Base plate
-      ctx.fillStyle = `rgba(70, 70, 80, 0.7)`;
-      ctx.fillRect(lamp.x - 3, lamp.y, 6, 2);
+
+      // Base disc (the base plate of the post)
+      ctx.fillStyle = `rgba(${Math.floor(75 * dark)}, ${Math.floor(75 * dark)}, ${Math.floor(85 * dark)}, 1)`;
+      ctx.beginPath();
+      ctx.arc(lamp.x, lamp.y, 3, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Lamp head (the housing — top-down circle, slightly larger)
+      const lampLit = nightAlpha > 0.1;
+      ctx.fillStyle = lampLit
+        ? `rgba(255, 245, 190, ${0.6 + nightAlpha * 0.4})`
+        : `rgba(210, 215, 225, 0.95)`;
+      ctx.beginPath();
+      ctx.arc(lamp.x, lamp.y, 4.5, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Rim ring
+      ctx.strokeStyle = `rgba(${Math.floor(60 * dark)}, ${Math.floor(60 * dark)}, ${Math.floor(70 * dark)}, 0.9)`;
+      ctx.lineWidth = 0.8;
+      ctx.beginPath();
+      ctx.arc(lamp.x, lamp.y, 4.5, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // Centre dot (the bulb or lens)
+      ctx.fillStyle = lampLit
+        ? `rgba(255, 255, 220, ${0.8 + nightAlpha * 0.2})`
+        : `rgba(180, 185, 195, 0.8)`;
+      ctx.beginPath();
+      ctx.arc(lamp.x, lamp.y, 2, 0, Math.PI * 2);
+      ctx.fill();
     }
   }
 
