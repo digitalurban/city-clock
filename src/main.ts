@@ -18,6 +18,10 @@ const dayNight = new DayNightCycle();
 let staticCanvas: HTMLCanvasElement | null = null;
 let lastStaticNightAlpha = -1;
 
+// The city world is WORLD_SCALE times the viewport in each dimension.
+// At MIN_ZOOM the full world fits in the viewport; zooming in shows detail.
+const WORLD_SCALE = 2.0;
+
 // Zoom / pan state
 let zoom = 1.0;
 let panX = 0;
@@ -26,13 +30,14 @@ const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 5.0;
 
 function clampPan(w: number, h: number) {
-  // Keep the world visible — don't allow panning entirely off-screen
-  const worldW = w * zoom;
-  const worldH = h * zoom;
-  const maxPanX = w * 0.15;
-  const minPanX = w - worldW - w * 0.15;
-  const maxPanY = h * 0.15;
-  const minPanY = h - worldH - h * 0.15;
+  // World dimensions in CSS pixels
+  const worldW = w * WORLD_SCALE;
+  const worldH = h * WORLD_SCALE;
+  // Pan limits: keep world edges from scrolling past screen edges
+  const minPanX = w - worldW * zoom;
+  const maxPanX = 0;
+  const minPanY = h - worldH * zoom;
+  const maxPanY = 0;
   panX = Math.max(minPanX, Math.min(maxPanX, panX));
   panY = Math.max(minPanY, Math.min(maxPanY, panY));
 }
@@ -95,18 +100,23 @@ function resize() {
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const width = window.innerWidth;
   const height = window.innerHeight;
+  const worldW = width * WORLD_SCALE;
+  const worldH = height * WORLD_SCALE;
 
   canvas.width = width * dpr;
   canvas.height = height * dpr;
   canvas.style.width = `${width}px`;
   canvas.style.height = `${height}px`;
 
-  // Reset zoom/pan on resize
-  zoom = 1.0;
-  panX = 0;
-  panY = 0;
+  layout = new CityLayout(worldW, worldH);
 
-  layout = new CityLayout(width, height);
+  // Start centered on the plaza at zoom=1
+  zoom = 1.0;
+  const plazaCX = layout.plazaBounds.x + layout.plazaBounds.w / 2;
+  const plazaCY = layout.plazaBounds.y + layout.plazaBounds.h / 2;
+  panX = width / 2 - plazaCX;
+  panY = height / 2 - plazaCY;
+  clampPan(width, height);
 
   // Re-spawn entities
   pedestrians = [];
@@ -129,19 +139,21 @@ function buildStaticCanvas(nightAlpha: number) {
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const w = window.innerWidth;
   const h = window.innerHeight;
+  const worldW = w * WORLD_SCALE;
+  const worldH = h * WORLD_SCALE;
 
   if (!staticCanvas) {
     staticCanvas = document.createElement('canvas');
   }
-  staticCanvas.width = w * dpr;
-  staticCanvas.height = h * dpr;
+  staticCanvas.width = worldW * dpr;
+  staticCanvas.height = worldH * dpr;
 
   const sctx = staticCanvas.getContext('2d')!;
   sctx.scale(dpr, dpr);
 
   // Sky/ground base
   sctx.fillStyle = dayNight.getSkyColor(nightAlpha);
-  sctx.fillRect(0, 0, w, h);
+  sctx.fillRect(0, 0, worldW, worldH);
 
   // Render layers
   layout.drawRoads(sctx, nightAlpha);
@@ -164,6 +176,8 @@ function loop() {
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const w = window.innerWidth;
   const h = window.innerHeight;
+  const worldW = w * WORLD_SCALE;
+  const worldH = h * WORLD_SCALE;
 
   // Rebuild static canvas if lighting changed significantly
   const quantizedAlpha = Math.round(nightAlpha * 20) / 20;
@@ -180,9 +194,9 @@ function loop() {
   // World coord (wx, wy) → screen physical pixel (panX*dpr + wx*zoom*dpr, panY*dpr + wy*zoom*dpr)
   ctx.setTransform(dpr * zoom, 0, 0, dpr * zoom, panX * dpr, panY * dpr);
 
-  // Draw cached static city (mapped from world 0,0,w,h)
+  // Draw cached static city (maps from world 0,0,worldW,worldH)
   if (staticCanvas) {
-    ctx.drawImage(staticCanvas, 0, 0, w, h);
+    ctx.drawImage(staticCanvas, 0, 0, worldW, worldH);
   }
 
   // Update clock targets
@@ -209,8 +223,9 @@ function loop() {
   layout.drawStreetLights(ctx, nightAlpha);
   layout.drawPlazaLampGlows(ctx, nightAlpha);
 
-  // Night overlay
-  dayNight.drawNightOverlay(ctx, w, h, nightAlpha);
+  // Night overlay — drawn in screen space so it always covers the full viewport
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  dayNight.drawNightOverlay(ctx, canvas.width, canvas.height, nightAlpha);
 
   requestAnimationFrame(loop);
 }

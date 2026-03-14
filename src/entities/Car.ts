@@ -48,7 +48,7 @@ export class Car {
 
     if (isDelivery) {
       // Stagger deliveries so they don't all go at once
-      this.deliveryTimer = 400 + Math.random() * 600;
+      this.deliveryTimer = 80 + Math.random() * 160;
     }
   }
 
@@ -279,7 +279,7 @@ export class Car {
           }
           this.deliveryLane = null;
           this.deliveryState = 'driving';
-          this.deliveryTimer = 400 + Math.random() * 600;
+          this.deliveryTimer = 80 + Math.random() * 160;
         }
         break;
       }

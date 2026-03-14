@@ -1,7 +1,7 @@
 export const PEDS_PER_SEGMENT = 4;
 export const CLOCK_ELIGIBLE_COUNT = 28 * PEDS_PER_SEGMENT; // 112
 export const TOTAL_PEDESTRIANS = 160;
-export const TOTAL_CARS = 10;
+export const TOTAL_CARS = 20;
 export const CLOCK_ACTIVE_SECONDS = 15;
 
 export const DIGIT_WIDTH = 80;
