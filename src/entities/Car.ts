@@ -1,5 +1,5 @@
 import { CAR_SPEED, ROAD_WIDTH } from '../utils/constants';
-import type { CityLayout, RoadSegment, DeliveryLane, VenueDef } from '../city/CityLayout';
+import type { CityLayout, RoadSegment, VenueDef } from '../city/CityLayout';
 import type { Pedestrian } from './Pedestrian';
 
 const CAR_COLORS = [
@@ -10,18 +10,14 @@ const CAR_COLORS = [
 
 const DELIVERY_COLOR = '#e67e22';
 
-// States for delivery cars
-type DeliveryState = 'driving' | 'entering' | 'delivering' | 'exiting';
-
 /** A dropped-off package sitting outside a venue */
 export interface DroppedPackage {
   x: number;
   y: number;
-  timer: number;   // frames left until it disappears (carried inside by staff)
+  timer: number;
   color: string;
 }
 
-// Package colours — small brown cardboard boxes with tape
 const PKG_COLORS = ['#b08050', '#a07040', '#c09060', '#907050'];
 
 export class Car {
@@ -39,15 +35,14 @@ export class Car {
   dirX: number = 0;
   dirY: number = 0;
 
-  // Delivery car fields
+  // Delivery fields — simple approach: drive on roads, stop near venues
   isDelivery: boolean;
-  deliveryState: DeliveryState = 'driving';
   deliveryTimer: number = 0;
-  deliveryLane: DeliveryLane | null = null;
+  isParkedDelivering: boolean = false;
   deliveryPauseTimer: number = 0;
   targetVenue: VenueDef | null = null;
+  packageDropped: boolean = false;
 
-  // Class-level collection of dropped packages (shared across all trucks)
   static droppedPackages: DroppedPackage[] = [];
 
   constructor(layout: CityLayout, isDelivery: boolean = false) {
@@ -62,8 +57,7 @@ export class Car {
     this.placeOnRoad(this.road);
 
     if (isDelivery) {
-      // Stagger deliveries so they don't all go at once
-      this.deliveryTimer = 60 + Math.random() * 120;
+      this.deliveryTimer = 80 + Math.random() * 160;
     }
   }
 
@@ -108,10 +102,8 @@ export class Car {
     }
   }
 
-  // Find a road that intersects near the car's current position (for turning at junctions)
   private findConnectingRoad(layout: CityLayout): RoadSegment | null {
     const snap = ROAD_WIDTH * 1.5;
-    // Prefer roads with different orientation (to turn rather than continue straight / U-turn)
     let best: RoadSegment | null = null;
     let bestSameDir: RoadSegment | null = null;
     for (const road of layout.roads) {
@@ -119,17 +111,16 @@ export class Car {
       if (this.x >= road.x - snap && this.x <= road.x + road.w + snap &&
           this.y >= road.y - snap && this.y <= road.y + road.h + snap) {
         if (road.horizontal !== this.road.horizontal) {
-          best = road; // perpendicular road – ideal turn
+          best = road;
           break;
         } else {
-          bestSameDir = road; // parallel – fallback (e.g. continue past clipped section)
+          bestSameDir = road;
         }
       }
     }
     return best ?? bestSameDir;
   }
 
-  // Smoothly transition onto a connecting road, preserving travel direction where possible
   private transitionToRoad(road: RoadSegment) {
     this.road = road;
     if (road.horizontal) {
@@ -149,6 +140,63 @@ export class Car {
     }
     this.vx = this.dirX * this.currentSpeed;
     this.vy = this.dirY * this.currentSpeed;
+  }
+
+  /**
+   * Find a road segment that borders the plaza on the same side as a venue,
+   * and return a position on it close to the venue.
+   */
+  private findPlazaBorderRoad(layout: CityLayout, venue: VenueDef):
+    { road: RoadSegment; x: number; y: number; dirX: number; dirY: number } | null {
+
+    const pb = layout.plazaBounds;
+    const margin = ROAD_WIDTH * 0.8;
+
+    for (const road of layout.roads) {
+      if (venue.facingPlaza === 'bottom') {
+        // Venue on top edge → road runs horizontally just above plaza top
+        if (road.horizontal &&
+            road.y + road.h > pb.y - ROAD_WIDTH - 2 &&
+            road.y < pb.y &&
+            road.x < pb.x && road.x + road.w >= pb.x - 5) {
+          // Place truck at the end of this segment closest to the plaza
+          const tx = Math.min(road.x + road.w - 10, pb.x - 5);
+          const ty = road.y + road.h * 0.5;
+          return { road, x: tx, y: ty, dirX: -1, dirY: 0 };
+        }
+      } else if (venue.facingPlaza === 'top') {
+        // Venue on bottom edge → road runs horizontally just below plaza bottom
+        if (road.horizontal &&
+            road.y < pb.y + pb.h + ROAD_WIDTH + 2 &&
+            road.y + road.h > pb.y + pb.h &&
+            road.x < pb.x && road.x + road.w >= pb.x - 5) {
+          const tx = Math.min(road.x + road.w - 10, pb.x - 5);
+          const ty = road.y + road.h * 0.5;
+          return { road, x: tx, y: ty, dirX: -1, dirY: 0 };
+        }
+      } else if (venue.facingPlaza === 'right') {
+        // Venue on left edge → road runs vertically just left of plaza
+        if (!road.horizontal &&
+            road.x + road.w > pb.x - ROAD_WIDTH - 2 &&
+            road.x < pb.x &&
+            road.y < pb.y && road.y + road.h >= pb.y - 5) {
+          const tx = road.x + road.w * 0.5;
+          const ty = Math.min(road.y + road.h - 10, pb.y - 5);
+          return { road, x: tx, y: ty, dirX: 0, dirY: -1 };
+        }
+      } else {
+        // Venue on right edge → road runs vertically just right of plaza
+        if (!road.horizontal &&
+            road.x < pb.x + pb.w + ROAD_WIDTH + 2 &&
+            road.x + road.w > pb.x + pb.w &&
+            road.y < pb.y && road.y + road.h >= pb.y - 5) {
+          const tx = road.x + road.w * 0.5;
+          const ty = Math.min(road.y + road.h - 10, pb.y - 5);
+          return { road, x: tx, y: ty, dirX: 0, dirY: 1 };
+        }
+      }
+    }
+    return null;
   }
 
   update(layout: CityLayout, pedestrians: Pedestrian[], cars: Car[]) {
@@ -198,145 +246,102 @@ export class Car {
       if (connecting) {
         this.transitionToRoad(connecting);
       } else {
-        // No connecting road found (e.g. screen edge) — teleport to a random road
         this.road = this.pickRandomRoad(layout);
         this.placeOnRoad(this.road);
       }
     }
   }
 
+  /**
+   * Delivery approach: the truck drives normally on roads. When its timer
+   * expires AND it's on a road that borders the plaza (within ROAD_WIDTH of
+   * the plaza edge), it stops, picks a random venue, and drops a package
+   * at that venue's door. Roads are clipped around the plaza so the truck
+   * can never drive *inside* the plaza — it stops on the bordering road.
+   */
   private updateDelivery(layout: CityLayout, pedestrians: Pedestrian[], cars: Car[]) {
-    switch (this.deliveryState) {
 
-      case 'driving': {
-        this.updateNormal(layout, pedestrians, cars);
-        this.deliveryTimer--;
-        if (this.deliveryTimer <= 0 && layout.deliveryLanes.length > 0) {
-          // Only pick a lane that no other delivery truck is currently using
-          const occupiedLanes = new Set(
-            cars
-              .filter(c => c !== this && c.isDelivery && c.deliveryLane !== null)
-              .map(c => c.deliveryLane!)
-          );
-          const freeLanes = layout.deliveryLanes.filter(l => !occupiedLanes.has(l));
-          if (freeLanes.length === 0) {
-            // All lanes busy — retry after a short wait
-            this.deliveryTimer = 30 + Math.floor(Math.random() * 40);
-            break;
-          }
-          const lane = freeLanes[Math.floor(Math.random() * freeLanes.length)];
-          this.deliveryLane = lane;
+    // === PARKED: delivering a package ===
+    if (this.isParkedDelivering) {
+      this.vx *= 0.85;
+      this.vy *= 0.85;
+      this.deliveryPauseTimer++;
 
-          // Pick a venue on this side of the plaza to deliver to
-          const sideVenues = layout.venues.filter(v =>
-            (lane.side === 'top' && v.facingPlaza === 'bottom') ||
-            (lane.side === 'bottom' && v.facingPlaza === 'top')
-          );
-          this.targetVenue = sideVenues.length > 0
-            ? sideVenues[Math.floor(Math.random() * sideVenues.length)]
-            : null;
+      // Drop the package halfway through
+      if (!this.packageDropped && this.deliveryPauseTimer >= 50 && this.targetVenue) {
+        const v = this.targetVenue;
+        // Place package at the venue's plaza-facing entrance
+        let px = v.x + v.w / 2;
+        let py = v.y + v.h / 2;
+        if (v.facingPlaza === 'bottom') py = v.y + v.h + 8;
+        else if (v.facingPlaza === 'top') py = v.y - 8;
+        else if (v.facingPlaza === 'right') px = v.x + v.w + 8;
+        else px = v.x - 8;
 
-          this.x = lane.laneX;
-          this.y = lane.outerY;
-          this.vx = 0;
-          this.vy = 0;
-          this.deliveryState = 'entering';
-        }
-        break;
+        Car.droppedPackages.push({
+          x: px, y: py,
+          timer: 400 + Math.floor(Math.random() * 200),
+          color: PKG_COLORS[Math.floor(Math.random() * PKG_COLORS.length)],
+        });
+        this.packageDropped = true;
       }
 
-      case 'entering': {
-        if (!this.deliveryLane) { this.deliveryState = 'driving'; break; }
-        const lane = this.deliveryLane;
-        const inDir = lane.side === 'top' ? 1 : -1; // +1 = moving down, -1 = moving up
-        const speed = this.baseSpeed * 4.0; // fast entry so clearly visible
-
-        // Drive straight along the lane
-        this.vx = 0;
-        this.vy = inDir * speed;
-        this.angle = inDir > 0 ? Math.PI / 2 : -Math.PI / 2;
-        this.x = lane.laneX; // keep perfectly centred in lane
-        this.y += this.vy;
-
-        const reachedInner = lane.side === 'top'
-          ? this.y >= lane.innerY
-          : this.y <= lane.innerY;
-
-        if (reachedInner) {
-          this.y = lane.innerY;
-          this.vx = 0;
-          this.vy = 0;
-          this.deliveryPauseTimer = 0;
-          this.deliveryState = 'delivering';
-        }
-        break;
+      // Done delivering — resume driving
+      if (this.deliveryPauseTimer >= 120) {
+        this.isParkedDelivering = false;
+        this.targetVenue = null;
+        this.packageDropped = false;
+        this.deliveryTimer = 120 + Math.random() * 240;
+        this.currentSpeed = this.baseSpeed;
+        this.vx = this.dirX * this.currentSpeed;
+        this.vy = this.dirY * this.currentSpeed;
       }
-
-      case 'delivering': {
-        // Parked — slow drift to stop
-        this.vx *= 0.8;
-        this.vy *= 0.8;
-        this.deliveryPauseTimer++;
-
-        // Drop the package partway through the pause
-        if (this.deliveryPauseTimer === 60 && this.targetVenue) {
-          const v = this.targetVenue;
-          // Place package at venue entrance
-          let px = v.x + v.w / 2;
-          let py = v.y + v.h / 2;
-          if (v.facingPlaza === 'bottom') py = v.y + v.h + 6;
-          else if (v.facingPlaza === 'top') py = v.y - 6;
-          else if (v.facingPlaza === 'right') px = v.x + v.w + 6;
-          else px = v.x - 6;
-
-          Car.droppedPackages.push({
-            x: px,
-            y: py,
-            timer: 400 + Math.floor(Math.random() * 200), // visible for 7-10 seconds
-            color: PKG_COLORS[Math.floor(Math.random() * PKG_COLORS.length)],
-          });
-        }
-
-        if (this.deliveryPauseTimer >= 120) {
-          this.deliveryState = 'exiting';
-        }
-        break;
-      }
-
-      case 'exiting': {
-        if (!this.deliveryLane) { this.deliveryState = 'driving'; break; }
-        const lane = this.deliveryLane;
-        const outDir = lane.side === 'top' ? -1 : 1; // reverse direction
-        const speed = this.baseSpeed * 4.0;
-
-        // Drive straight back out
-        this.vx = 0;
-        this.vy = outDir * speed;
-        this.angle = outDir > 0 ? Math.PI / 2 : -Math.PI / 2;
-        this.x = lane.laneX;
-        this.y += this.vy;
-
-        const reachedOuter = lane.side === 'top'
-          ? this.y <= lane.outerY
-          : this.y >= lane.outerY;
-
-        if (reachedOuter) {
-          // Back on the outer road — find connecting road or pick a random one
-          const connecting = this.findConnectingRoad(layout);
-          if (connecting) {
-            this.transitionToRoad(connecting);
-          } else {
-            this.road = this.pickRandomRoad(layout);
-            this.placeOnRoad(this.road);
-          }
-          this.deliveryLane = null;
-          this.targetVenue = null;
-          this.deliveryState = 'driving';
-          this.deliveryTimer = 60 + Math.random() * 120;
-        }
-        break;
-      }
+      return;
     }
+
+    // === DRIVING: normal movement, count down timer ===
+    this.updateNormal(layout, pedestrians, cars);
+    this.deliveryTimer--;
+
+    if (this.deliveryTimer > 0) return;
+    if (layout.venues.length === 0) return;
+
+    // Timer expired — pick a venue and drive to the nearest plaza-bordering road.
+    // Roads are clipped around the plaza, so we find a road segment whose edge
+    // touches the plaza bounds and teleport the truck there (like arriving at
+    // a junction). This guarantees the truck visibly stops on the road next to
+    // the plaza to make its delivery.
+    const pb = layout.plazaBounds;
+    const venue = layout.venues[Math.floor(Math.random() * layout.venues.length)];
+
+    // Check no other truck is already delivering to this venue
+    const taken = cars.some(c =>
+      c !== this && c.isDelivery && c.isParkedDelivering && c.targetVenue === venue
+    );
+    if (taken) {
+      this.deliveryTimer = 30 + Math.floor(Math.random() * 60);
+      return;
+    }
+
+    // Find a road segment that borders the plaza near this venue
+    const plazaRoad = this.findPlazaBorderRoad(layout, venue);
+    if (plazaRoad) {
+      this.road = plazaRoad.road;
+      this.x = plazaRoad.x;
+      this.y = plazaRoad.y;
+      this.dirX = plazaRoad.dirX;
+      this.dirY = plazaRoad.dirY;
+      this.angle = Math.atan2(this.dirY, this.dirX);
+    }
+
+    // Park and deliver
+    this.isParkedDelivering = true;
+    this.targetVenue = venue;
+    this.deliveryPauseTimer = 0;
+    this.packageDropped = false;
+    this.currentSpeed = 0;
+    this.vx = 0;
+    this.vy = 0;
   }
 
   /** Tick all dropped packages (call once per frame from main loop) */
@@ -357,7 +362,6 @@ export class Car {
       const g = parseInt(pkg.color.slice(3, 5), 16);
       const b = parseInt(pkg.color.slice(5, 7), 16);
 
-      // Fade out in last 60 frames (carried inside)
       const alpha = pkg.timer < 60 ? pkg.timer / 60 : 1;
 
       // Shadow
@@ -415,6 +419,18 @@ export class Car {
       ctx.strokeStyle = `rgba(0,0,0,0.25)`;
       ctx.lineWidth = 0.5;
       ctx.strokeRect(-hw + 1, -hh + 1.5, this.length * 0.42, this.width - 3);
+
+      // Hazard flashers when parked
+      if (this.isParkedDelivering) {
+        const flash = Math.sin(Date.now() / 200) > 0;
+        if (flash) {
+          ctx.fillStyle = `rgba(255, 160, 0, 0.9)`;
+          ctx.fillRect(-hw, -hh, 2, 2);
+          ctx.fillRect(-hw, hh - 2, 2, 2);
+          ctx.fillRect(hw - 2, -hh, 2, 2);
+          ctx.fillRect(hw - 2, hh - 2, 2, 2);
+        }
+      }
     }
 
     // Windshield

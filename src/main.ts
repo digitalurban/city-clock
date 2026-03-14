@@ -239,13 +239,11 @@ function buildStaticCanvas(nightAlpha: number) {
 
   // Render layers
   layout.drawRoads(sctx, nightAlpha);
-  layout.drawDeliveryLanes(sctx, nightAlpha);
   layout.drawSidewalks(sctx, nightAlpha);
   layout.drawCrosswalks(sctx, nightAlpha);
   layout.drawPlaza(sctx, nightAlpha);
   layout.drawPlazaBenches(sctx, nightAlpha);
   layout.drawBuildings(sctx, nightAlpha);
-  layout.drawDeliveryLanes(sctx, nightAlpha); // redraw inside plaza over plaza tile
   layout.drawVenues(sctx, nightAlpha);
   layout.drawPlazaLampPosts(sctx, nightAlpha);
 
