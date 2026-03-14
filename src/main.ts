@@ -110,12 +110,13 @@ function resize() {
 
   layout = new CityLayout(worldW, worldH);
 
-  // Start centered on the plaza at zoom=1
-  zoom = 1.0;
+  // Start at MIN_ZOOM so the full city (including delivery lanes) fills the viewport,
+  // centred on the plaza. The user can then zoom in for detail.
+  zoom = MIN_ZOOM;
   const plazaCX = layout.plazaBounds.x + layout.plazaBounds.w / 2;
   const plazaCY = layout.plazaBounds.y + layout.plazaBounds.h / 2;
-  panX = width / 2 - plazaCX;
-  panY = height / 2 - plazaCY;
+  panX = width / 2 - plazaCX * zoom;
+  panY = height / 2 - plazaCY * zoom;
   clampPan(width, height);
 
   // Re-spawn entities

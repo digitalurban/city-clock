@@ -201,8 +201,19 @@ export class Car {
         this.updateNormal(layout, pedestrians, cars);
         this.deliveryTimer--;
         if (this.deliveryTimer <= 0 && layout.deliveryLanes.length > 0) {
-          // Pick a random delivery lane and teleport to its entry point on the road
-          const lane = layout.deliveryLanes[Math.floor(Math.random() * layout.deliveryLanes.length)];
+          // Only pick a lane that no other delivery truck is currently using
+          const occupiedLanes = new Set(
+            cars
+              .filter(c => c !== this && c.isDelivery && c.deliveryLane !== null)
+              .map(c => c.deliveryLane!)
+          );
+          const freeLanes = layout.deliveryLanes.filter(l => !occupiedLanes.has(l));
+          if (freeLanes.length === 0) {
+            // All lanes busy — retry after a short wait
+            this.deliveryTimer = 40 + Math.floor(Math.random() * 60);
+            break;
+          }
+          const lane = freeLanes[Math.floor(Math.random() * freeLanes.length)];
           this.deliveryLane = lane;
           this.x = lane.laneX;
           this.y = lane.outerY;
