@@ -3,6 +3,7 @@ import { Pedestrian } from './entities/Pedestrian';
 import { Car } from './entities/Car';
 import { ClockManager } from './clock/ClockManager';
 import { DayNightCycle } from './rendering/DayNightCycle';
+import { Weather } from './rendering/Weather';
 import { TOTAL_PEDESTRIANS, CLOCK_ELIGIBLE_COUNT, TOTAL_CARS } from './utils/constants';
 
 const canvas = document.getElementById('cityCanvas') as HTMLCanvasElement;
@@ -13,6 +14,7 @@ let pedestrians: Pedestrian[] = [];
 let cars: Car[] = [];
 const clockManager = new ClockManager();
 const dayNight = new DayNightCycle();
+const weather = new Weather();
 
 // Offscreen canvas for static city elements
 let staticCanvas: HTMLCanvasElement | null = null;
@@ -51,7 +53,7 @@ function applyZoom(factor: number, pivotX: number, pivotY: number, w: number, h:
   clampPan(w, h);
 }
 
-// Mouse wheel zoom
+// ==================== Mouse wheel zoom ====================
 canvas.addEventListener('wheel', (e) => {
   e.preventDefault();
   const rect = canvas.getBoundingClientRect();
@@ -61,14 +63,62 @@ canvas.addEventListener('wheel', (e) => {
   applyZoom(factor, px, py, window.innerWidth, window.innerHeight);
 }, { passive: false });
 
-// Touch pinch zoom
+// ==================== Mouse drag to pan ====================
+let isDragging = false;
+let dragStartX = 0;
+let dragStartY = 0;
+let dragStartPanX = 0;
+let dragStartPanY = 0;
+
+canvas.addEventListener('mousedown', (e) => {
+  isDragging = true;
+  dragStartX = e.clientX;
+  dragStartY = e.clientY;
+  dragStartPanX = panX;
+  dragStartPanY = panY;
+  canvas.style.cursor = 'grabbing';
+});
+
+window.addEventListener('mousemove', (e) => {
+  if (!isDragging) return;
+  const dx = e.clientX - dragStartX;
+  const dy = e.clientY - dragStartY;
+  panX = dragStartPanX + dx;
+  panY = dragStartPanY + dy;
+  clampPan(window.innerWidth, window.innerHeight);
+});
+
+window.addEventListener('mouseup', () => {
+  if (isDragging) {
+    isDragging = false;
+    canvas.style.cursor = 'grab';
+  }
+});
+
+canvas.style.cursor = 'grab';
+
+// ==================== Touch pinch zoom + drag to pan ====================
 const activeTouches: Map<number, { x: number; y: number }> = new Map();
 let lastPinchDist = -1;
+let touchDragId: number | null = null;
+let touchDragStartX = 0;
+let touchDragStartY = 0;
+let touchDragStartPanX = 0;
+let touchDragStartPanY = 0;
 
 canvas.addEventListener('touchstart', (e) => {
+  const rect = canvas.getBoundingClientRect();
   for (const t of e.changedTouches) {
-    const rect = canvas.getBoundingClientRect();
     activeTouches.set(t.identifier, { x: t.clientX - rect.left, y: t.clientY - rect.top });
+  }
+  // Start single-finger drag
+  if (activeTouches.size === 1) {
+    const t = e.changedTouches[0];
+    touchDragId = t.identifier;
+    touchDragStartX = t.clientX;
+    touchDragStartY = t.clientY;
+    touchDragStartPanX = panX;
+    touchDragStartPanY = panY;
   }
 }, { passive: true });
 
@@ -78,7 +128,20 @@ canvas.addEventListener('touchmove', (e) => {
   for (const t of e.changedTouches) {
     activeTouches.set(t.identifier, { x: t.clientX - rect.left, y: t.clientY - rect.top });
   }
-  if (activeTouches.size === 2) {
+
+  if (activeTouches.size === 1 && touchDragId !== null) {
+    // Single-finger drag → pan
+    for (const t of e.changedTouches) {
+      if (t.identifier === touchDragId) {
+        const dx = t.clientX - touchDragStartX;
+        const dy = t.clientY - touchDragStartY;
+        panX = touchDragStartPanX + dx;
+        panY = touchDragStartPanY + dy;
+        clampPan(window.innerWidth, window.innerHeight);
+      }
+    }
+  } else if (activeTouches.size === 2) {
+    // Two-finger pinch → zoom
     const [a, b] = [...activeTouches.values()];
     const dist = Math.hypot(a.x - b.x, a.y - b.y);
     if (lastPinchDist > 0 && dist > 0) {
@@ -88,14 +151,28 @@ canvas.addEventListener('touchmove', (e) => {
       applyZoom(factor, mx, my, window.innerWidth, window.innerHeight);
     }
     lastPinchDist = dist;
+    touchDragId = null; // cancel drag when pinching
   }
 }, { passive: false });
 
 canvas.addEventListener('touchend', (e) => {
-  for (const t of e.changedTouches) activeTouches.delete(t.identifier);
+  for (const t of e.changedTouches) {
+    activeTouches.delete(t.identifier);
+    if (t.identifier === touchDragId) touchDragId = null;
+  }
   if (activeTouches.size < 2) lastPinchDist = -1;
+  // If one finger remains after lifting second, start a new drag
+  if (activeTouches.size === 1) {
+    const [id, pos] = [...activeTouches.entries()][0];
+    touchDragId = id;
+    touchDragStartX = pos.x;
+    touchDragStartY = pos.y;
+    touchDragStartPanX = panX;
+    touchDragStartPanY = panY;
+  }
 }, { passive: true });
 
+// ==================== Resize / init ====================
 function resize() {
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const width = window.innerWidth;
@@ -126,10 +203,14 @@ function resize() {
   }
 
   cars = [];
+  Car.droppedPackages = []; // clear packages on resize
   const deliveryCount = Math.floor(TOTAL_CARS * 0.2);
   for (let i = 0; i < TOTAL_CARS; i++) {
     cars.push(new Car(layout, i < deliveryCount));
   }
+
+  // Init weather with world dimensions
+  weather.init(worldW, worldH);
 
   // Force static canvas rebuild
   lastStaticNightAlpha = -1;
@@ -180,6 +261,9 @@ function loop() {
   const worldW = w * WORLD_SCALE;
   const worldH = h * WORLD_SCALE;
 
+  // Update weather
+  weather.update();
+
   // Rebuild static canvas if lighting changed significantly
   const quantizedAlpha = Math.round(nightAlpha * 20) / 20;
   if (quantizedAlpha !== lastStaticNightAlpha) {
@@ -211,6 +295,10 @@ function loop() {
     car.draw(ctx, nightAlpha);
   }
 
+  // Update and draw dropped packages
+  Car.updateDroppedPackages();
+  Car.drawDroppedPackages(ctx, nightAlpha);
+
   // Update and draw pedestrians
   for (const p of pedestrians) {
     p.update(pedestrians, layout);
@@ -224,9 +312,15 @@ function loop() {
   layout.drawStreetLights(ctx, nightAlpha);
   layout.drawPlazaLampGlows(ctx, nightAlpha);
 
+  // Weather effects in world space (clouds, rain, puddles)
+  weather.drawWorldEffects(ctx, nightAlpha);
+
   // Night overlay — drawn in screen space so it always covers the full viewport
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   dayNight.drawNightOverlay(ctx, canvas.width, canvas.height, nightAlpha);
+
+  // Weather screen overlay (rain tint)
+  weather.drawScreenOverlay(ctx, canvas.width, canvas.height);
 
   requestAnimationFrame(loop);
 }

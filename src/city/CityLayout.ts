@@ -112,8 +112,11 @@ export class CityLayout {
     this.gridRows = Math.ceil(height / cellSize) + 1;
 
     // Compute plaza size first so we can guarantee equal road margins
-    const plazaW = Math.max(3, Math.floor(this.gridCols * 0.6));
-    const plazaH = Math.max(2, Math.floor(this.gridRows * 0.6));
+    // Keep the plaza compact and "cute" — with WORLD_SCALE = 2 the grid has
+    // double the columns, so 0.3 gives the same visual plaza size as the
+    // original 0.6 fraction on a viewport-sized world.
+    const plazaW = Math.max(3, Math.floor(this.gridCols * 0.3));
+    const plazaH = Math.max(2, Math.floor(this.gridRows * 0.3));
     // Ensure (gridCols - plazaW) is even so left/right road counts are identical
     if ((this.gridCols - plazaW) % 2 !== 0) this.gridCols++;
     if ((this.gridRows - plazaH) % 2 !== 0) this.gridRows++;

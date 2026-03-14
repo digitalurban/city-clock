@@ -1,5 +1,5 @@
 import { CAR_SPEED, ROAD_WIDTH } from '../utils/constants';
-import type { CityLayout, RoadSegment, DeliveryLane } from '../city/CityLayout';
+import type { CityLayout, RoadSegment, DeliveryLane, VenueDef } from '../city/CityLayout';
 import type { Pedestrian } from './Pedestrian';
 
 const CAR_COLORS = [
@@ -12,6 +12,17 @@ const DELIVERY_COLOR = '#e67e22';
 
 // States for delivery cars
 type DeliveryState = 'driving' | 'entering' | 'delivering' | 'exiting';
+
+/** A dropped-off package sitting outside a venue */
+export interface DroppedPackage {
+  x: number;
+  y: number;
+  timer: number;   // frames left until it disappears (carried inside by staff)
+  color: string;
+}
+
+// Package colours — small brown cardboard boxes with tape
+const PKG_COLORS = ['#b08050', '#a07040', '#c09060', '#907050'];
 
 export class Car {
   x: number = 0;
@@ -34,6 +45,10 @@ export class Car {
   deliveryTimer: number = 0;
   deliveryLane: DeliveryLane | null = null;
   deliveryPauseTimer: number = 0;
+  targetVenue: VenueDef | null = null;
+
+  // Class-level collection of dropped packages (shared across all trucks)
+  static droppedPackages: DroppedPackage[] = [];
 
   constructor(layout: CityLayout, isDelivery: boolean = false) {
     this.isDelivery = isDelivery;
@@ -48,7 +63,7 @@ export class Car {
 
     if (isDelivery) {
       // Stagger deliveries so they don't all go at once
-      this.deliveryTimer = 80 + Math.random() * 160;
+      this.deliveryTimer = 60 + Math.random() * 120;
     }
   }
 
@@ -118,17 +133,13 @@ export class Car {
   private transitionToRoad(road: RoadSegment) {
     this.road = road;
     if (road.horizontal) {
-      // Coming from a vertical road or same-x segment: preserve general left/right direction
-      // Use the x-momentum, or if turning from vertical use a heuristic
       const dir = this.dirX !== 0 ? Math.sign(this.dirX) : (Math.random() > 0.5 ? 1 : -1);
       this.dirX = dir;
       this.dirY = 0;
-      // Clamp x within road, set lane y
       this.x = Math.max(road.x + 5, Math.min(road.x + road.w - 5, this.x));
       this.y = road.y + (dir > 0 ? road.h * 0.25 : road.h * 0.75);
       this.angle = dir > 0 ? 0 : Math.PI;
     } else {
-      // Vertical road: preserve up/down direction
       const dir = this.dirY !== 0 ? Math.sign(this.dirY) : (Math.random() > 0.5 ? 1 : -1);
       this.dirX = 0;
       this.dirY = dir;
@@ -210,11 +221,21 @@ export class Car {
           const freeLanes = layout.deliveryLanes.filter(l => !occupiedLanes.has(l));
           if (freeLanes.length === 0) {
             // All lanes busy — retry after a short wait
-            this.deliveryTimer = 40 + Math.floor(Math.random() * 60);
+            this.deliveryTimer = 30 + Math.floor(Math.random() * 40);
             break;
           }
           const lane = freeLanes[Math.floor(Math.random() * freeLanes.length)];
           this.deliveryLane = lane;
+
+          // Pick a venue on this side of the plaza to deliver to
+          const sideVenues = layout.venues.filter(v =>
+            (lane.side === 'top' && v.facingPlaza === 'bottom') ||
+            (lane.side === 'bottom' && v.facingPlaza === 'top')
+          );
+          this.targetVenue = sideVenues.length > 0
+            ? sideVenues[Math.floor(Math.random() * sideVenues.length)]
+            : null;
+
           this.x = lane.laneX;
           this.y = lane.outerY;
           this.vx = 0;
@@ -228,9 +249,9 @@ export class Car {
         if (!this.deliveryLane) { this.deliveryState = 'driving'; break; }
         const lane = this.deliveryLane;
         const inDir = lane.side === 'top' ? 1 : -1; // +1 = moving down, -1 = moving up
-        const speed = this.baseSpeed * 1.0; // faster entry so it's clearly visible
+        const speed = this.baseSpeed * 4.0; // fast entry so clearly visible
 
-        // Drive straight along the lane — direct velocity, no forces
+        // Drive straight along the lane
         this.vx = 0;
         this.vy = inDir * speed;
         this.angle = inDir > 0 ? Math.PI / 2 : -Math.PI / 2;
@@ -256,7 +277,27 @@ export class Car {
         this.vx *= 0.8;
         this.vy *= 0.8;
         this.deliveryPauseTimer++;
-        if (this.deliveryPauseTimer >= 300) {
+
+        // Drop the package partway through the pause
+        if (this.deliveryPauseTimer === 60 && this.targetVenue) {
+          const v = this.targetVenue;
+          // Place package at venue entrance
+          let px = v.x + v.w / 2;
+          let py = v.y + v.h / 2;
+          if (v.facingPlaza === 'bottom') py = v.y + v.h + 6;
+          else if (v.facingPlaza === 'top') py = v.y - 6;
+          else if (v.facingPlaza === 'right') px = v.x + v.w + 6;
+          else px = v.x - 6;
+
+          Car.droppedPackages.push({
+            x: px,
+            y: py,
+            timer: 400 + Math.floor(Math.random() * 200), // visible for 7-10 seconds
+            color: PKG_COLORS[Math.floor(Math.random() * PKG_COLORS.length)],
+          });
+        }
+
+        if (this.deliveryPauseTimer >= 120) {
           this.deliveryState = 'exiting';
         }
         break;
@@ -266,9 +307,9 @@ export class Car {
         if (!this.deliveryLane) { this.deliveryState = 'driving'; break; }
         const lane = this.deliveryLane;
         const outDir = lane.side === 'top' ? -1 : 1; // reverse direction
-        const speed = this.baseSpeed * 1.0;
+        const speed = this.baseSpeed * 4.0;
 
-        // Drive straight back out — direct velocity, no forces
+        // Drive straight back out
         this.vx = 0;
         this.vy = outDir * speed;
         this.angle = outDir > 0 ? Math.PI / 2 : -Math.PI / 2;
@@ -289,11 +330,48 @@ export class Car {
             this.placeOnRoad(this.road);
           }
           this.deliveryLane = null;
+          this.targetVenue = null;
           this.deliveryState = 'driving';
-          this.deliveryTimer = 80 + Math.random() * 160;
+          this.deliveryTimer = 60 + Math.random() * 120;
         }
         break;
       }
+    }
+  }
+
+  /** Tick all dropped packages (call once per frame from main loop) */
+  static updateDroppedPackages() {
+    for (let i = Car.droppedPackages.length - 1; i >= 0; i--) {
+      Car.droppedPackages[i].timer--;
+      if (Car.droppedPackages[i].timer <= 0) {
+        Car.droppedPackages.splice(i, 1);
+      }
+    }
+  }
+
+  /** Draw all dropped packages */
+  static drawDroppedPackages(ctx: CanvasRenderingContext2D, nightAlpha: number) {
+    for (const pkg of Car.droppedPackages) {
+      const dark = 1 - nightAlpha * 0.4;
+      const r = parseInt(pkg.color.slice(1, 3), 16);
+      const g = parseInt(pkg.color.slice(3, 5), 16);
+      const b = parseInt(pkg.color.slice(5, 7), 16);
+
+      // Fade out in last 60 frames (carried inside)
+      const alpha = pkg.timer < 60 ? pkg.timer / 60 : 1;
+
+      // Shadow
+      ctx.fillStyle = `rgba(0,0,0,${0.15 * alpha})`;
+      ctx.fillRect(pkg.x - 3.5, pkg.y - 2.5, 8, 6);
+
+      // Box
+      ctx.fillStyle = `rgba(${Math.floor(r * dark)},${Math.floor(g * dark)},${Math.floor(b * dark)},${alpha})`;
+      ctx.fillRect(pkg.x - 4, pkg.y - 3, 8, 6);
+
+      // Tape stripe
+      ctx.fillStyle = `rgba(200,180,140,${0.6 * alpha})`;
+      ctx.fillRect(pkg.x - 4, pkg.y - 0.5, 8, 1);
+      ctx.fillRect(pkg.x - 0.5, pkg.y - 3, 1, 6);
     }
   }
 
