@@ -127,9 +127,9 @@ export class Weather {
     // Layer 2 (near): faster, smaller, more opaque — more visible when cloudy/rain
     this.clouds = [];
     const layerConfigs = [
-      { count: 5, wMin: 120, wMax: 250, hMin: 35, hMax: 60, speedMin: 0.08, speedMax: 0.15, opMin: 0.06, opMax: 0.12 },
-      { count: 5, wMin: 80, wMax: 160, hMin: 25, hMax: 45, speedMin: 0.18, speedMax: 0.32, opMin: 0.10, opMax: 0.20 },
-      { count: 4, wMin: 50, wMax: 120, hMin: 20, hMax: 35, speedMin: 0.30, speedMax: 0.50, opMin: 0.15, opMax: 0.30 },
+      { count: 8, wMin: 150, wMax: 350, hMin: 45, hMax: 80, speedMin: 0.06, speedMax: 0.12, opMin: 0.25, opMax: 0.45 },
+      { count: 6, wMin: 100, wMax: 200, hMin: 30, hMax: 55, speedMin: 0.15, speedMax: 0.28, opMin: 0.20, opMax: 0.35 },
+      { count: 5, wMin: 60, wMax: 140, hMin: 22, hMax: 40, speedMin: 0.25, speedMax: 0.45, opMin: 0.18, opMax: 0.30 },
     ];
 
     for (let layer = 0; layer < layerConfigs.length; layer++) {
@@ -260,14 +260,14 @@ export class Weather {
     for (const cloud of this.clouds) {
       let layerAlpha: number;
       if (cloud.layer === 0) {
-        // Far layer: always visible, subtle
-        layerAlpha = cloud.opacity * (0.5 + this.alpha * 0.5);
+        // Far layer: always clearly visible for ambient sky depth
+        layerAlpha = cloud.opacity * (0.7 + this.alpha * 0.3);
       } else if (cloud.layer === 1) {
-        // Mid layer: slightly visible in clear, full in cloudy
-        layerAlpha = cloud.opacity * (0.25 + this.alpha * 0.75);
+        // Mid layer: visible in clear, fuller in cloudy
+        layerAlpha = cloud.opacity * (0.45 + this.alpha * 0.55);
       } else {
-        // Near layer: only visible when cloudy/rain
-        layerAlpha = cloud.opacity * this.alpha;
+        // Near layer: faint in clear, prominent in cloudy/rain
+        layerAlpha = cloud.opacity * (0.15 + this.alpha * 0.85);
       }
 
       // Reduce at night

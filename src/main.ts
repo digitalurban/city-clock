@@ -211,8 +211,8 @@ function createOptionsUI() {
   `;
 
   // Max cars: cap at a safe level to prevent gridlock
-  const maxCars = 120;
-  const maxPeds = 300;
+  const maxCars = 500;
+  const maxPeds = 1000;
 
   panel.innerHTML = `
     <div style="font-size: 14px; font-weight: 600; margin-bottom: 12px; color: #aab;">City Options</div>
