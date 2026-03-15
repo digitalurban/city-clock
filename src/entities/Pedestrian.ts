@@ -652,6 +652,21 @@ export class Pedestrian {
             const rd = Math.sqrt(rdx * rdx + rdy * rdy) || 1;
             ax += (rdx / rd) * this.maxForce * 8;
             ay += (rdy / rd) * this.maxForce * 8;
+            repelled = true;
+            break;
+          }
+        }
+      }
+      // House repulsion
+      if (!repelled) {
+        for (const h of layout.houses) {
+          if (nextX >= h.x - m && nextX <= h.x + h.w + m &&
+              nextY >= h.y - m && nextY <= h.y + h.h + m) {
+            const rdx = this.x - (h.x + h.w / 2);
+            const rdy = this.y - (h.y + h.h / 2);
+            const rd = Math.sqrt(rdx * rdx + rdy * rdy) || 1;
+            ax += (rdx / rd) * this.maxForce * 8;
+            ay += (rdy / rd) * this.maxForce * 8;
             break;
           }
         }

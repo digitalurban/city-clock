@@ -1,4 +1,4 @@
-import { BLOCK_SIZE, ROAD_WIDTH, SIDEWALK_WIDTH, BUILDING_COLORS } from '../utils/constants';
+import { BLOCK_SIZE, ROAD_WIDTH, SIDEWALK_WIDTH, BUILDING_COLORS, HOUSE_COLORS, GARDEN_COLORS } from '../utils/constants';
 
 export interface BuildingDef {
   x: number;
@@ -7,6 +7,29 @@ export interface BuildingDef {
   h: number;
   color: string;
   windowSeed: number;
+}
+
+export interface HouseDef {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  color: string;
+  roofColor: string;
+  seed: number;
+  hasGarden: boolean;
+  gardenSide: 'top' | 'bottom' | 'left' | 'right';
+  gardenColor: string;
+}
+
+export interface ParkDef {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  seed: number;
+  hasFountain: boolean;
+  hasPlayground: boolean;
 }
 
 export interface TreeDef {
@@ -86,13 +109,13 @@ export interface VenueDef {
   color: string;
   awningColor: string;
   seed: number;
-  // Side facing the plaza: 'top' | 'bottom' | 'left' | 'right'
   facingPlaza: 'top' | 'bottom' | 'left' | 'right';
-  // Outdoor seating positions (in world coords)
   seatingPositions: { x: number; y: number }[];
-  // Queue positions for shops (in world coords, front→back order)
   queuePositions: { x: number; y: number }[];
 }
+
+// Block type determines what fills a city block
+type BlockType = 'commercial' | 'residential' | 'park' | 'utility';
 
 export class CityLayout {
   width: number;
@@ -100,6 +123,8 @@ export class CityLayout {
   gridCols: number;
   gridRows: number;
   buildings: BuildingDef[] = [];
+  houses: HouseDef[] = [];
+  parks: ParkDef[] = [];
   trees: TreeDef[] = [];
   streetLights: StreetLightDef[] = [];
   walkableRects: WalkableRect[] = [];
@@ -114,6 +139,8 @@ export class CityLayout {
 
   // Which grid cells are plaza (col, row)
   plazaCells: Set<string> = new Set();
+  // Block types for generating varied city content
+  blockTypes: Map<string, BlockType> = new Map();
 
   constructor(width: number, height: number) {
     this.width = width;
@@ -123,31 +150,23 @@ export class CityLayout {
     this.gridCols = Math.ceil(width / cellSize) + 1;
     this.gridRows = Math.ceil(height / cellSize) + 1;
 
-    // Compute plaza size first so we can guarantee equal road margins
-    // Keep the plaza compact and "cute" — with WORLD_SCALE = 2 the grid has
-    // double the columns, so 0.3 gives the same visual plaza size as the
-    // original 0.6 fraction on a viewport-sized world.
-    const plazaW = Math.max(3, Math.floor(this.gridCols * 0.3));
-    const plazaH = Math.max(2, Math.floor(this.gridRows * 0.3));
-    // Ensure (gridCols - plazaW) is even so left/right road counts are identical
-    if ((this.gridCols - plazaW) % 2 !== 0) this.gridCols++;
-    if ((this.gridRows - plazaH) % 2 !== 0) this.gridRows++;
+    const offsetX = (width - (this.gridCols - 1) * cellSize) / 2;
+    const offsetY = (height - (this.gridRows - 1) * cellSize) / 2;
 
-    // Center the grid — with equal parity guaranteed, startCol/Row are exact integers
-    const totalW = this.gridCols * cellSize;
-    const totalH = this.gridRows * cellSize;
-    const offsetX = (width - totalW) / 2;
-    const offsetY = (height - totalH) / 2;
+    // Find center block for the plaza (3×3)
+    const centerCol = Math.floor(this.gridCols / 2);
+    const centerRow = Math.floor(this.gridRows / 2);
 
-    const startCol = (this.gridCols - plazaW) / 2;
-    const startRow = (this.gridRows - plazaH) / 2;
-    const plazaCols: number[] = [];
-    for (let c = startCol; c < startCol + plazaW; c++) plazaCols.push(c);
-    const plazaRows: number[] = [];
-    for (let r = startRow; r < startRow + plazaH; r++) plazaRows.push(r);
-    // Clamp to grid bounds
-    const validPlazaCols = plazaCols.filter(c => c >= 0 && c < this.gridCols);
-    const validPlazaRows = plazaRows.filter(r => r >= 0 && r < this.gridRows);
+    const validPlazaCols: number[] = [];
+    const validPlazaRows: number[] = [];
+    for (let dc = -1; dc <= 1; dc++) {
+      const c = centerCol + dc;
+      if (c >= 0 && c < this.gridCols) validPlazaCols.push(c);
+    }
+    for (let dr = -1; dr <= 1; dr++) {
+      const r = centerRow + dr;
+      if (r >= 0 && r < this.gridRows) validPlazaRows.push(r);
+    }
 
     for (const c of validPlazaCols) {
       for (const r of validPlazaRows) {
@@ -155,48 +174,34 @@ export class CityLayout {
       }
     }
 
-    // Compute plaza bounds
-    const pMinCol = Math.min(...validPlazaCols);
-    const pMaxCol = Math.max(...validPlazaCols);
-    const pMinRow = Math.min(...validPlazaRows);
-    const pMaxRow = Math.max(...validPlazaRows);
-    this.plazaBounds = {
-      x: offsetX + pMinCol * cellSize + ROAD_WIDTH / 2,
-      y: offsetY + pMinRow * cellSize + ROAD_WIDTH / 2,
-      w: (pMaxCol - pMinCol + 1) * cellSize - ROAD_WIDTH,
-      h: (pMaxRow - pMinRow + 1) * cellSize - ROAD_WIDTH,
-    };
+    // Plaza bounds
+    const px = offsetX + validPlazaCols[0] * cellSize + ROAD_WIDTH / 2;
+    const py = offsetY + validPlazaRows[0] * cellSize + ROAD_WIDTH / 2;
+    const pw = validPlazaCols.length * cellSize - ROAD_WIDTH;
+    const ph = validPlazaRows.length * cellSize - ROAD_WIDTH;
+    this.plazaBounds = { x: px, y: py, w: pw, h: ph };
 
-    // Plaza walkable area
-    this.walkableRects.push({
-      x: this.plazaBounds.x,
-      y: this.plazaBounds.y,
-      w: this.plazaBounds.w,
-      h: this.plazaBounds.h,
-      type: 'plaza',
-    });
+    // Walkable plaza area
+    this.walkableRects.push({ x: px, y: py, w: pw, h: ph, type: 'plaza' });
 
-    // Delivery lanes — one top-centre, one bottom-centre
-    // venueDepth = edgeInset(6) + venueH(30) = 36; awning = 14px → stop at 36+14+4=54 but
-    // use 44 so truck parks just in front of the venue awning (visible drop-off point)
-    const venueDepth = 36;
-    const awningDepth = 14;
-    const deliveryStopDepth = venueDepth + awningDepth + 4; // 54px inside plaza edge
-    const laneW = ROAD_WIDTH;
-    const laneX = this.plazaBounds.x + this.plazaBounds.w / 2;
+    // Delivery lanes
+    const laneW = 16;
+    const laneX = px + pw * 0.25;
+    const deliveryStopDepth = 45;
+
     this.deliveryLanes.push({
       side: 'top',
       laneX,
-      outerY: this.plazaBounds.y - ROAD_WIDTH / 2,
-      innerY: this.plazaBounds.y + deliveryStopDepth,
+      outerY: py - ROAD_WIDTH / 2,
+      innerY: py + deliveryStopDepth,
       stripX: laneX - laneW / 2,
-      stripY: this.plazaBounds.y - ROAD_WIDTH,
+      stripY: py - ROAD_WIDTH,
       stripW: laneW,
       stripH: ROAD_WIDTH + deliveryStopDepth,
     });
     this.deliveryLanes.push({
       side: 'bottom',
-      laneX,
+      laneX: px + pw * 0.75,
       outerY: this.plazaBounds.y + this.plazaBounds.h + ROAD_WIDTH / 2,
       innerY: this.plazaBounds.y + this.plazaBounds.h - deliveryStopDepth,
       stripX: laneX - laneW / 2,
@@ -204,6 +209,9 @@ export class CityLayout {
       stripW: laneW,
       stripH: ROAD_WIDTH + deliveryStopDepth,
     });
+
+    // Assign block types for non-plaza blocks
+    this.assignBlockTypes(offsetX, offsetY, cellSize, validPlazaCols, validPlazaRows);
 
     // Generate roads, sidewalks, buildings, trees, lights, venues
     this.generateRoads(offsetX, offsetY, cellSize);
@@ -213,17 +221,48 @@ export class CityLayout {
     this.generateStreetLights(offsetX, offsetY, cellSize);
   }
 
+  private assignBlockTypes(offsetX: number, offsetY: number, cellSize: number, plazaCols: number[], plazaRows: number[]) {
+    const centerCol = Math.floor(this.gridCols / 2);
+    const centerRow = Math.floor(this.gridRows / 2);
+
+    for (let r = 0; r < this.gridRows; r++) {
+      for (let c = 0; c < this.gridCols; c++) {
+        if (this.plazaCells.has(`${c},${r}`)) continue;
+
+        const dist = Math.abs(c - centerCol) + Math.abs(r - centerRow);
+        const seed = c * 37 + r * 73 + 42;
+        const roll = seededRandom(seed);
+
+        let blockType: BlockType;
+        if (dist <= 2) {
+          // Near plaza: mostly commercial
+          blockType = roll < 0.85 ? 'commercial' : 'park';
+        } else if (dist <= 4) {
+          // Mid distance: mix of residential and commercial
+          if (roll < 0.35) blockType = 'commercial';
+          else if (roll < 0.82) blockType = 'residential';
+          else if (roll < 0.92) blockType = 'park';
+          else blockType = 'utility';
+        } else {
+          // Outer: mostly residential
+          if (roll < 0.12) blockType = 'commercial';
+          else if (roll < 0.78) blockType = 'residential';
+          else if (roll < 0.90) blockType = 'park';
+          else blockType = 'utility';
+        }
+        this.blockTypes.set(`${c},${r}`, blockType);
+      }
+    }
+  }
+
   private clipRoadAroundPlaza(road: RoadSegment): RoadSegment[] {
     const pb = this.plazaBounds;
     if (road.horizontal) {
-      // Check vertical overlap
       if (road.y + road.h <= pb.y || road.y >= pb.y + pb.h) return [road];
       const segments: RoadSegment[] = [];
-      // Left portion
       if (road.x < pb.x) {
         segments.push({ x: road.x, y: road.y, w: pb.x - road.x, h: road.h, horizontal: true });
       }
-      // Right portion
       const roadRight = road.x + road.w;
       const plazaRight = pb.x + pb.w;
       if (roadRight > plazaRight) {
@@ -231,14 +270,11 @@ export class CityLayout {
       }
       return segments;
     } else {
-      // Check horizontal overlap
       if (road.x + road.w <= pb.x || road.x >= pb.x + pb.w) return [road];
       const segments: RoadSegment[] = [];
-      // Top portion
       if (road.y < pb.y) {
         segments.push({ x: road.x, y: road.y, w: road.w, h: pb.y - road.y, horizontal: false });
       }
-      // Bottom portion
       const roadBottom = road.y + road.h;
       const plazaBottom = pb.y + pb.h;
       if (roadBottom > plazaBottom) {
@@ -256,8 +292,6 @@ export class CityLayout {
     for (let r = 0; r <= this.gridRows; r++) {
       const ry = offsetY + r * cellSize - ROAD_WIDTH / 2;
       rawRoads.push({ x: offsetX - cellSize, y: ry, w: this.width + cellSize * 2, h: ROAD_WIDTH, horizontal: true });
-
-      // Sidewalks along horizontal roads
       this.walkableRects.push({
         x: 0, y: ry - SIDEWALK_WIDTH, w: this.width, h: SIDEWALK_WIDTH, type: 'sidewalk',
       });
@@ -270,8 +304,6 @@ export class CityLayout {
     for (let c = 0; c <= this.gridCols; c++) {
       const rx = offsetX + c * cellSize - ROAD_WIDTH / 2;
       rawRoads.push({ x: rx, y: offsetY - cellSize, w: ROAD_WIDTH, h: this.height + cellSize * 2, horizontal: false });
-
-      // Sidewalks along vertical roads
       this.walkableRects.push({
         x: rx - SIDEWALK_WIDTH, y: 0, w: SIDEWALK_WIDTH, h: this.height, type: 'sidewalk',
       });
@@ -284,8 +316,6 @@ export class CityLayout {
     for (const raw of rawRoads) {
       const clipped = this.clipRoadAroundPlaza(raw);
       this.roads.push(...clipped);
-
-      // If the road was clipped (overlaps plaza), record entrances
       if (clipped.length !== 1 || clipped[0] !== raw) {
         if (raw.horizontal) {
           const roadCenterY = raw.y + raw.h / 2;
@@ -308,13 +338,11 @@ export class CityLayout {
       for (let c = 0; c <= this.gridCols; c++) {
         const ix = offsetX + c * cellSize;
         const iy = offsetY + r * cellSize;
-        // Skip inside the plaza
         if (ix > pb.x && ix < pb.x + pb.w && iy > pb.y && iy < pb.y + pb.h) continue;
         this.walkableRects.push({
           x: ix - ROAD_WIDTH / 2 - 4, y: iy - ROAD_WIDTH / 2 - 4,
           w: ROAD_WIDTH + 8, h: ROAD_WIDTH + 8, type: 'crosswalk',
         });
-        // Check which directions have roads at this intersection
         const hasRoadAt = (x: number, y: number) =>
           this.roads.some(rd =>
             x >= rd.x - 2 && x <= rd.x + rd.w + 2 &&
@@ -348,7 +376,6 @@ export class CityLayout {
             const seed = c * 100 + r * 10 + i;
             const tx = bx + 15 + seededRandom(seed) * (blockW - 30);
             const ty = by + 15 + seededRandom(seed + 50) * (blockH - 30);
-            // Only trees near edges, not center
             const cx = bx + blockW / 2;
             const cy = by + blockH / 2;
             const distFromCenter = Math.sqrt((tx - cx) ** 2 + (ty - cy) ** 2);
@@ -359,50 +386,24 @@ export class CityLayout {
           continue;
         }
 
-        // Generate 1-4 buildings per block
-        const numBuildings = 1 + Math.floor(seededRandom(c * 37 + r * 73) * 3);
+        const blockType = this.blockTypes.get(`${c},${r}`) || 'commercial';
         const margin = 4;
 
-        if (numBuildings === 1) {
-          this.buildings.push({
-            x: bx + margin, y: by + margin,
-            w: blockW - margin * 2, h: blockH - margin * 2,
-            color: BUILDING_COLORS[buildingIdx % BUILDING_COLORS.length],
-            windowSeed: buildingIdx * 17,
-          });
-          buildingIdx++;
-        } else {
-          // Split block into sub-buildings
-          const splitH = seededRandom(c * 53 + r * 91) > 0.5;
-          if (splitH) {
-            const split = 0.35 + seededRandom(c * 41 + r * 67) * 0.3;
-            const h1 = Math.floor((blockH - margin * 3) * split);
-            const h2 = blockH - margin * 3 - h1;
-            this.buildings.push({
-              x: bx + margin, y: by + margin, w: blockW - margin * 2, h: h1,
-              color: BUILDING_COLORS[buildingIdx % BUILDING_COLORS.length], windowSeed: buildingIdx * 17,
-            });
-            buildingIdx++;
-            this.buildings.push({
-              x: bx + margin, y: by + margin * 2 + h1, w: blockW - margin * 2, h: h2,
-              color: BUILDING_COLORS[(buildingIdx) % BUILDING_COLORS.length], windowSeed: buildingIdx * 17,
-            });
-            buildingIdx++;
-          } else {
-            const split = 0.35 + seededRandom(c * 41 + r * 67) * 0.3;
-            const w1 = Math.floor((blockW - margin * 3) * split);
-            const w2 = blockW - margin * 3 - w1;
-            this.buildings.push({
-              x: bx + margin, y: by + margin, w: w1, h: blockH - margin * 2,
-              color: BUILDING_COLORS[buildingIdx % BUILDING_COLORS.length], windowSeed: buildingIdx * 17,
-            });
-            buildingIdx++;
-            this.buildings.push({
-              x: bx + margin * 2 + w1, y: by + margin, w: w2, h: blockH - margin * 2,
-              color: BUILDING_COLORS[(buildingIdx) % BUILDING_COLORS.length], windowSeed: buildingIdx * 17,
-            });
-            buildingIdx++;
-          }
+        switch (blockType) {
+          case 'commercial':
+            this.generateCommercialBlock(bx, by, blockW, blockH, margin, c, r, buildingIdx);
+            buildingIdx += 3; // approximate
+            break;
+          case 'residential':
+            this.generateResidentialBlock(bx, by, blockW, blockH, margin, c, r);
+            break;
+          case 'park':
+            this.generateParkBlock(bx, by, blockW, blockH, c, r);
+            break;
+          case 'utility':
+            this.generateUtilityBlock(bx, by, blockW, blockH, margin, c, r, buildingIdx);
+            buildingIdx += 2;
+            break;
         }
 
         // Trees along sidewalks (occasional)
@@ -418,12 +419,138 @@ export class CityLayout {
     }
   }
 
+  private generateCommercialBlock(bx: number, by: number, blockW: number, blockH: number, margin: number, c: number, r: number, buildingIdx: number) {
+    const numBuildings = 1 + Math.floor(seededRandom(c * 37 + r * 73) * 3);
+
+    if (numBuildings === 1) {
+      this.buildings.push({
+        x: bx + margin, y: by + margin,
+        w: blockW - margin * 2, h: blockH - margin * 2,
+        color: BUILDING_COLORS[buildingIdx % BUILDING_COLORS.length],
+        windowSeed: buildingIdx * 17,
+      });
+    } else {
+      const splitH = seededRandom(c * 53 + r * 91) > 0.5;
+      if (splitH) {
+        const split = 0.35 + seededRandom(c * 41 + r * 67) * 0.3;
+        const h1 = Math.floor((blockH - margin * 3) * split);
+        const h2 = blockH - margin * 3 - h1;
+        this.buildings.push({
+          x: bx + margin, y: by + margin, w: blockW - margin * 2, h: h1,
+          color: BUILDING_COLORS[buildingIdx % BUILDING_COLORS.length], windowSeed: buildingIdx * 17,
+        });
+        this.buildings.push({
+          x: bx + margin, y: by + margin * 2 + h1, w: blockW - margin * 2, h: h2,
+          color: BUILDING_COLORS[(buildingIdx + 1) % BUILDING_COLORS.length], windowSeed: (buildingIdx + 1) * 17,
+        });
+      } else {
+        const split = 0.35 + seededRandom(c * 41 + r * 67) * 0.3;
+        const w1 = Math.floor((blockW - margin * 3) * split);
+        const w2 = blockW - margin * 3 - w1;
+        this.buildings.push({
+          x: bx + margin, y: by + margin, w: w1, h: blockH - margin * 2,
+          color: BUILDING_COLORS[buildingIdx % BUILDING_COLORS.length], windowSeed: buildingIdx * 17,
+        });
+        this.buildings.push({
+          x: bx + margin * 2 + w1, y: by + margin, w: w2, h: blockH - margin * 2,
+          color: BUILDING_COLORS[(buildingIdx + 1) % BUILDING_COLORS.length], windowSeed: (buildingIdx + 1) * 17,
+        });
+      }
+    }
+  }
+
+  private generateResidentialBlock(bx: number, by: number, blockW: number, blockH: number, margin: number, c: number, r: number) {
+    // Generate 2-4 houses with gardens
+    const numHouses = 2 + Math.floor(seededRandom(c * 47 + r * 83) * 3);
+    const houseW = Math.floor((blockW - margin * (numHouses + 1)) / numHouses);
+    const roofColors = ['#8b4513', '#a0522d', '#6b3a2a', '#7a4830', '#5c3a1e', '#9c6b4a'];
+
+    for (let i = 0; i < numHouses; i++) {
+      const hx = bx + margin + i * (houseW + margin);
+      const seed = c * 100 + r * 10 + i;
+      const hasGarden = seededRandom(seed + 200) > 0.3;
+      const gardenH = hasGarden ? Math.floor(blockH * 0.35) : 0;
+      const gardenSide = seededRandom(seed + 300) > 0.5 ? 'bottom' as const : 'top' as const;
+
+      const hy = gardenSide === 'top' ? by + margin + gardenH : by + margin;
+      const hh = blockH - margin * 2 - gardenH;
+
+      this.houses.push({
+        x: hx, y: hy, w: houseW, h: hh,
+        color: HOUSE_COLORS[Math.floor(seededRandom(seed + 400) * HOUSE_COLORS.length)],
+        roofColor: roofColors[Math.floor(seededRandom(seed + 500) * roofColors.length)],
+        seed,
+        hasGarden,
+        gardenSide,
+        gardenColor: GARDEN_COLORS[Math.floor(seededRandom(seed + 600) * GARDEN_COLORS.length)],
+      });
+
+      // Garden trees
+      if (hasGarden) {
+        const gardenY = gardenSide === 'top' ? by + margin : by + margin + hh;
+        if (seededRandom(seed + 700) > 0.4) {
+          this.trees.push({
+            x: hx + houseW * (0.3 + seededRandom(seed + 800) * 0.4),
+            y: gardenY + gardenH * (0.3 + seededRandom(seed + 900) * 0.4),
+            radius: 6 + seededRandom(seed + 1000) * 4,
+            seed: seed + 1100,
+          });
+        }
+      }
+    }
+  }
+
+  private generateParkBlock(bx: number, by: number, blockW: number, blockH: number, c: number, r: number) {
+    const seed = c * 67 + r * 89;
+    const park: ParkDef = {
+      x: bx + 4, y: by + 4, w: blockW - 8, h: blockH - 8,
+      seed,
+      hasFountain: seededRandom(seed + 100) > 0.5,
+      hasPlayground: seededRandom(seed + 200) > 0.6,
+    };
+    this.parks.push(park);
+
+    // Park trees — scattered around
+    const treeCount = 4 + Math.floor(seededRandom(seed + 300) * 5);
+    for (let i = 0; i < treeCount; i++) {
+      const tx = bx + 15 + seededRandom(seed + i * 10) * (blockW - 30);
+      const ty = by + 15 + seededRandom(seed + i * 10 + 5) * (blockH - 30);
+      // Avoid center if fountain
+      if (park.hasFountain) {
+        const cx = bx + blockW / 2;
+        const cy = by + blockH / 2;
+        if (Math.hypot(tx - cx, ty - cy) < 25) continue;
+      }
+      this.trees.push({
+        x: tx, y: ty,
+        radius: 7 + seededRandom(seed + i * 10 + 50) * 6,
+        seed: seed + i * 100,
+      });
+    }
+
+    // Park benches
+    this.plazaBenches.push({ x: bx + blockW * 0.3, y: by + blockH * 0.7, angle: 0 });
+    this.plazaBenches.push({ x: bx + blockW * 0.7, y: by + blockH * 0.3, angle: Math.PI / 2 });
+
+    // Add walkable area for the park
+    this.walkableRects.push({ x: bx + 4, y: by + 4, w: blockW - 8, h: blockH - 8, type: 'sidewalk' });
+  }
+
+  private generateUtilityBlock(bx: number, by: number, blockW: number, blockH: number, margin: number, c: number, r: number, buildingIdx: number) {
+    // One large utilitarian building (power station, water, etc.)
+    this.buildings.push({
+      x: bx + margin, y: by + margin,
+      w: blockW - margin * 2, h: blockH - margin * 2,
+      color: '#707880',
+      windowSeed: buildingIdx * 17 + 500,
+    });
+  }
+
   private generateStreetLights(offsetX: number, offsetY: number, cellSize: number) {
     for (let r = 0; r <= this.gridRows; r++) {
       for (let c = 0; c <= this.gridCols; c++) {
         const ix = offsetX + c * cellSize;
         const iy = offsetY + r * cellSize;
-        // Place lights at corners of intersections
         const offset = ROAD_WIDTH / 2 + 5;
         this.streetLights.push({ x: ix - offset, y: iy - offset });
         this.streetLights.push({ x: ix + offset, y: iy + offset });
@@ -435,9 +562,8 @@ export class CityLayout {
     const pb = this.plazaBounds;
     const cx = pb.x + pb.w / 2;
     const cy = pb.y + pb.h / 2;
-    const innerMargin = 80; // keep lamps/benches away from venue edges
+    const innerMargin = 80;
 
-    // Plaza lamps — evenly spaced in the interior area
     const lampAreaW = pb.w - innerMargin * 2;
     const lampAreaH = pb.h - innerMargin * 2;
     const lampCols = Math.max(2, Math.floor(lampAreaW / 120));
@@ -446,7 +572,6 @@ export class CityLayout {
       for (let c = 0; c < lampCols; c++) {
         const lx = pb.x + innerMargin + (c + 0.5) * (lampAreaW / lampCols);
         const ly = pb.y + innerMargin + (r + 0.5) * (lampAreaH / lampRows);
-        // Avoid placing too close to center (where clock pedestrians gather)
         const dx = lx - cx;
         const dy = ly - cy;
         if (Math.abs(dx) < 40 && Math.abs(dy) < 30) continue;
@@ -454,11 +579,9 @@ export class CityLayout {
       }
     }
 
-    // Plaza benches — placed near lamps, facing inward
     for (const lamp of this.plazaLamps) {
       const dx = lamp.x - cx;
       const dy = lamp.y - cy;
-      // Place bench offset from lamp
       const angle = Math.abs(dx) > Math.abs(dy) ? 0 : Math.PI / 2;
       const offsetDist = 18;
       const bx = lamp.x + (dy > 0 ? -offsetDist : offsetDist) * (angle === 0 ? 0 : 1);
@@ -483,16 +606,15 @@ export class CityLayout {
     let vi = 0;
     const venueW = 55;
     const venueH = 30;
-    const edgeInset = 6;   // how far from the plaza edge the building sits
-    const seatingGap = 8;  // gap between building and seating
+    const edgeInset = 6;
+    const seatingGap = 8;
 
     const topLane = this.deliveryLanes[0];
     const botLane = this.deliveryLanes[1];
-    const laneGap = ROAD_WIDTH + 10; // clearance around lane centre
+    const laneGap = ROAD_WIDTH + 10;
 
-    // Top edge — buildings sit against top of plaza, face inward
+    // Top edge
     for (let x = pb.x + 25; x < pb.x + pb.w - venueW; x += venueW + 25) {
-      // Leave gap for delivery lane
       if (x < topLane.laneX + laneGap / 2 && x + venueW > topLane.laneX - laneGap / 2) continue;
       const v = venueTypes[vi % venueTypes.length];
       const bx = x;
@@ -511,9 +633,8 @@ export class CityLayout {
       vi++;
     }
 
-    // Bottom edge — buildings sit against bottom of plaza, face inward
+    // Bottom edge
     for (let x = pb.x + 45; x < pb.x + pb.w - venueW; x += venueW + 30) {
-      // Leave gap for delivery lane
       if (x < botLane.laneX + laneGap / 2 && x + venueW > botLane.laneX - laneGap / 2) continue;
       const v = venueTypes[vi % venueTypes.length];
       const bx = x;
@@ -532,7 +653,7 @@ export class CityLayout {
       vi++;
     }
 
-    // Left edge — buildings sit against left of plaza, face inward
+    // Left edge
     for (let y = pb.y + 35; y < pb.y + pb.h - venueW; y += venueW + 20) {
       const v = venueTypes[vi % venueTypes.length];
       const bx = pb.x + edgeInset;
@@ -551,7 +672,7 @@ export class CityLayout {
       vi++;
     }
 
-    // Right edge — buildings sit against right of plaza, face inward
+    // Right edge
     for (let y = pb.y + 55; y < pb.y + pb.h - venueW; y += venueW + 20) {
       const v = venueTypes[vi % venueTypes.length];
       const bx = pb.x + pb.w - edgeInset - venueH;
@@ -573,6 +694,10 @@ export class CityLayout {
 
   drawVenues(ctx: CanvasRenderingContext2D, nightAlpha: number) {
     for (const v of this.venues) {
+      // Shadow for depth
+      ctx.fillStyle = `rgba(0, 0, 0, ${0.18 + nightAlpha * 0.06})`;
+      ctx.fillRect(v.x + 3, v.y + 3, v.w, v.h);
+
       // Building body
       const darkFactor = 1 - nightAlpha * 0.4;
       const r = parseInt(v.color.slice(1, 3), 16);
@@ -584,7 +709,7 @@ export class CityLayout {
       ctx.lineWidth = 1;
       ctx.strokeRect(v.x, v.y, v.w, v.h);
 
-      // Awning (striped canopy extending toward plaza)
+      // Awning
       const aw = 14;
       const ar = parseInt(v.awningColor.slice(1, 3), 16);
       const ag = parseInt(v.awningColor.slice(3, 5), 16);
@@ -594,7 +719,6 @@ export class CityLayout {
       const awCol2 = `rgb(${Math.floor(ar * awningDark * 0.85)}, ${Math.floor(ag * awningDark * 0.85)}, ${Math.floor(ab * awningDark * 0.85)})`;
 
       if (v.facingPlaza === 'bottom') {
-        // Awning extends down
         for (let sx = v.x; sx < v.x + v.w; sx += 8) {
           ctx.fillStyle = (Math.floor((sx - v.x) / 8) % 2 === 0) ? awCol : awCol2;
           ctx.fillRect(sx, v.y + v.h, Math.min(8, v.x + v.w - sx), aw);
@@ -643,19 +767,15 @@ export class CityLayout {
         ctx.fillRect(doorX - 25, doorY - 25, 50, 50);
       }
 
-      // Outdoor seating — round tables with bistro chairs
+      // Outdoor seating
       for (const seat of v.seatingPositions) {
         const hasParasol = seededRandom(seat.x * 7 + seat.y * 13) > 0.4;
-
-        // Parasol shadow (drawn first, beneath everything)
         if (hasParasol) {
           ctx.fillStyle = `rgba(0, 0, 0, ${0.08 - nightAlpha * 0.03})`;
           ctx.beginPath();
           ctx.ellipse(seat.x + 1.5, seat.y + 1.5, 8, 7, 0, 0, Math.PI * 2);
           ctx.fill();
         }
-
-        // Two chairs (rounded rectangles beside table)
         const chairAlpha = 0.7 - nightAlpha * 0.3;
         ctx.fillStyle = `rgba(60, 60, 60, ${chairAlpha})`;
         for (const cx of [-7, 7]) {
@@ -669,8 +789,6 @@ export class CityLayout {
           ctx.arcTo(chairX, chairY, chairX + 4, chairY, 1);
           ctx.fill();
         }
-
-        // Table (round, wooden)
         ctx.fillStyle = `rgba(140, 100, 65, ${0.85 - nightAlpha * 0.3})`;
         ctx.beginPath();
         ctx.arc(seat.x, seat.y, 4.5, 0, Math.PI * 2);
@@ -678,20 +796,16 @@ export class CityLayout {
         ctx.strokeStyle = `rgba(100, 70, 40, ${0.4 - nightAlpha * 0.15})`;
         ctx.lineWidth = 0.7;
         ctx.stroke();
-
-        // Parasol canopy on top
         if (hasParasol) {
           const umColor = seededRandom(seat.x * 3 + seat.y * 11) > 0.5 ? '#c44569' : '#e8a84c';
           const ur = parseInt(umColor.slice(1, 3), 16);
           const ug = parseInt(umColor.slice(3, 5), 16);
           const ub = parseInt(umColor.slice(5, 7), 16);
           const pDark = 1 - nightAlpha * 0.3;
-          // Scalloped edge parasol
           ctx.fillStyle = `rgba(${Math.floor(ur * pDark)}, ${Math.floor(ug * pDark)}, ${Math.floor(ub * pDark)}, 0.7)`;
           ctx.beginPath();
           ctx.arc(seat.x, seat.y, 7.5, 0, Math.PI * 2);
           ctx.fill();
-          // Center pole dot
           ctx.fillStyle = `rgba(80, 80, 80, 0.5)`;
           ctx.beginPath();
           ctx.arc(seat.x, seat.y, 1, 0, Math.PI * 2);
@@ -707,7 +821,6 @@ export class CityLayout {
     for (const lane of this.deliveryLanes) {
       ctx.fillRect(lane.stripX, lane.stripY, lane.stripW, lane.stripH);
     }
-    // Dashed centre lines
     ctx.strokeStyle = `rgba(255, 255, 200, ${0.4 - nightAlpha * 0.1})`;
     ctx.lineWidth = 1.5;
     ctx.setLineDash([6, 8]);
@@ -726,8 +839,6 @@ export class CityLayout {
     for (const road of this.roads) {
       ctx.fillRect(road.x, road.y, road.w, road.h);
     }
-
-    // Lane markings (dashed center lines)
     ctx.strokeStyle = `rgba(255, 255, 200, ${0.3 - nightAlpha * 0.1})`;
     ctx.lineWidth = 1.5;
     ctx.setLineDash([8, 12]);
@@ -759,7 +870,6 @@ export class CityLayout {
     ctx.fillStyle = `rgba(255, 255, 255, ${0.5 - nightAlpha * 0.2})`;
     for (const wr of this.walkableRects) {
       if (wr.type === 'crosswalk') {
-        // Draw zebra stripes
         const stripeW = 4;
         const gap = 4;
         for (let sx = wr.x + 2; sx < wr.x + wr.w - 2; sx += stripeW + gap) {
@@ -789,6 +899,10 @@ export class CityLayout {
 
   drawBuildings(ctx: CanvasRenderingContext2D, nightAlpha: number) {
     for (const b of this.buildings) {
+      // Shadow for depth
+      ctx.fillStyle = `rgba(0, 0, 0, ${0.15 + nightAlpha * 0.06})`;
+      ctx.fillRect(b.x + 3, b.y + 3, b.w, b.h);
+
       // Building body
       const r = parseInt(b.color.slice(1, 3), 16);
       const g = parseInt(b.color.slice(3, 5), 16);
@@ -825,25 +939,195 @@ export class CityLayout {
     }
   }
 
+  drawHouses(ctx: CanvasRenderingContext2D, nightAlpha: number) {
+    for (const h of this.houses) {
+      const darkFactor = 1 - nightAlpha * 0.45;
+
+      // Garden
+      if (h.hasGarden) {
+        const gr = parseInt(h.gardenColor.slice(1, 3), 16);
+        const gg = parseInt(h.gardenColor.slice(3, 5), 16);
+        const gb = parseInt(h.gardenColor.slice(5, 7), 16);
+        const gdf = 1 - nightAlpha * 0.5;
+        ctx.fillStyle = `rgb(${Math.floor(gr * gdf)}, ${Math.floor(gg * gdf)}, ${Math.floor(gb * gdf)})`;
+        const gardenH = h.gardenSide === 'top' || h.gardenSide === 'bottom'
+          ? Math.floor(h.h * 0.5) : Math.floor(h.w * 0.5);
+        if (h.gardenSide === 'top') {
+          ctx.fillRect(h.x, h.y - gardenH, h.w, gardenH);
+          // Fence
+          ctx.strokeStyle = `rgba(139, 119, 90, ${0.5 - nightAlpha * 0.2})`;
+          ctx.lineWidth = 0.8;
+          ctx.strokeRect(h.x, h.y - gardenH, h.w, gardenH);
+          // Flower dots
+          for (let i = 0; i < 3; i++) {
+            const fx = h.x + 5 + seededRandom(h.seed + i * 20) * (h.w - 10);
+            const fy = h.y - gardenH + 5 + seededRandom(h.seed + i * 20 + 5) * (gardenH - 10);
+            const flowerColors = ['#ff6b9d', '#ffd93d', '#6bcb77', '#4d96ff'];
+            ctx.fillStyle = flowerColors[i % flowerColors.length];
+            ctx.beginPath();
+            ctx.arc(fx, fy, 1.5, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        } else {
+          ctx.fillRect(h.x, h.y + h.h, h.w, gardenH);
+          ctx.strokeStyle = `rgba(139, 119, 90, ${0.5 - nightAlpha * 0.2})`;
+          ctx.lineWidth = 0.8;
+          ctx.strokeRect(h.x, h.y + h.h, h.w, gardenH);
+          for (let i = 0; i < 3; i++) {
+            const fx = h.x + 5 + seededRandom(h.seed + i * 20) * (h.w - 10);
+            const fy = h.y + h.h + 5 + seededRandom(h.seed + i * 20 + 5) * (gardenH - 10);
+            const flowerColors = ['#ff6b9d', '#ffd93d', '#6bcb77', '#4d96ff'];
+            ctx.fillStyle = flowerColors[i % flowerColors.length];
+            ctx.beginPath();
+            ctx.arc(fx, fy, 1.5, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+      }
+
+      // House shadow
+      ctx.fillStyle = `rgba(0, 0, 0, ${0.12 + nightAlpha * 0.05})`;
+      ctx.fillRect(h.x + 2, h.y + 2, h.w, h.h);
+
+      // House body
+      const hr = parseInt(h.color.slice(1, 3), 16);
+      const hg = parseInt(h.color.slice(3, 5), 16);
+      const hb = parseInt(h.color.slice(5, 7), 16);
+      ctx.fillStyle = `rgb(${Math.floor(hr * darkFactor)}, ${Math.floor(hg * darkFactor)}, ${Math.floor(hb * darkFactor)})`;
+      ctx.fillRect(h.x, h.y, h.w, h.h);
+      ctx.strokeStyle = `rgba(0,0,0,${0.12 + nightAlpha * 0.08})`;
+      ctx.lineWidth = 0.8;
+      ctx.strokeRect(h.x, h.y, h.w, h.h);
+
+      // Roof (top-down view: darker strip at the top)
+      const rr = parseInt(h.roofColor.slice(1, 3), 16);
+      const rg = parseInt(h.roofColor.slice(3, 5), 16);
+      const rb = parseInt(h.roofColor.slice(5, 7), 16);
+      ctx.fillStyle = `rgb(${Math.floor(rr * darkFactor)}, ${Math.floor(rg * darkFactor)}, ${Math.floor(rb * darkFactor)})`;
+      const roofH = Math.max(4, h.h * 0.2);
+      ctx.fillRect(h.x, h.y, h.w, roofH);
+
+      // Door
+      ctx.fillStyle = `rgba(100, 60, 30, ${0.7 - nightAlpha * 0.2})`;
+      const doorW = Math.min(6, h.w * 0.2);
+      const doorH = Math.min(8, h.h * 0.3);
+      ctx.fillRect(h.x + h.w / 2 - doorW / 2, h.y + h.h - doorH, doorW, doorH);
+
+      // Windows
+      if (nightAlpha > 0.1) {
+        const winAlpha = nightAlpha * 1.0;
+        const winSize = 3;
+        const windowPositions = [
+          { x: h.x + h.w * 0.25, y: h.y + roofH + 4 },
+          { x: h.x + h.w * 0.65, y: h.y + roofH + 4 },
+        ];
+        for (const wp of windowPositions) {
+          if (wp.x + winSize < h.x + h.w && wp.y + winSize < h.y + h.h) {
+            const isLit = seededRandom(h.seed + wp.x * 7 + wp.y * 13) > 0.3;
+            if (isLit) {
+              ctx.fillStyle = `rgba(255, 220, 120, ${winAlpha * 0.9})`;
+              ctx.fillRect(wp.x, wp.y, winSize, winSize);
+            }
+          }
+        }
+      } else {
+        // Daytime window outlines
+        ctx.fillStyle = `rgba(180, 210, 230, 0.5)`;
+        const winSize = 3;
+        const windowPositions = [
+          { x: h.x + h.w * 0.25, y: h.y + roofH + 4 },
+          { x: h.x + h.w * 0.65, y: h.y + roofH + 4 },
+        ];
+        for (const wp of windowPositions) {
+          if (wp.x + winSize < h.x + h.w && wp.y + winSize < h.y + h.h) {
+            ctx.fillRect(wp.x, wp.y, winSize, winSize);
+          }
+        }
+      }
+    }
+  }
+
+  drawParks(ctx: CanvasRenderingContext2D, nightAlpha: number) {
+    for (const park of this.parks) {
+      const darkFactor = 1 - nightAlpha * 0.5;
+
+      // Grass
+      const grassGreen = Math.floor(140 * darkFactor);
+      const grassBase = Math.floor(100 * darkFactor);
+      ctx.fillStyle = `rgb(${Math.floor(80 * darkFactor)}, ${grassGreen}, ${Math.floor(60 * darkFactor)})`;
+      ctx.fillRect(park.x, park.y, park.w, park.h);
+
+      // Subtle grass texture
+      ctx.strokeStyle = `rgba(0, 0, 0, 0.04)`;
+      ctx.lineWidth = 0.5;
+      for (let i = 0; i < 8; i++) {
+        const lx = park.x + seededRandom(park.seed + i * 10) * park.w;
+        const ly = park.y + seededRandom(park.seed + i * 10 + 5) * park.h;
+        ctx.beginPath();
+        ctx.arc(lx, ly, 3 + seededRandom(park.seed + i * 10 + 15) * 4, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
+      // Path through park
+      ctx.fillStyle = `rgba(${Math.floor(180 * darkFactor)}, ${Math.floor(165 * darkFactor)}, ${Math.floor(140 * darkFactor)}, 0.6)`;
+      ctx.fillRect(park.x + park.w * 0.1, park.y + park.h / 2 - 3, park.w * 0.8, 6);
+      ctx.fillRect(park.x + park.w / 2 - 3, park.y + park.h * 0.1, 6, park.h * 0.8);
+
+      // Fountain
+      if (park.hasFountain) {
+        const fx = park.x + park.w / 2;
+        const fy = park.y + park.h / 2;
+        // Water basin
+        ctx.fillStyle = `rgba(${Math.floor(120 * darkFactor)}, ${Math.floor(160 * darkFactor)}, ${Math.floor(200 * darkFactor)}, 0.7)`;
+        ctx.beginPath();
+        ctx.arc(fx, fy, 10, 0, Math.PI * 2);
+        ctx.fill();
+        // Stone rim
+        ctx.strokeStyle = `rgba(${Math.floor(160 * darkFactor)}, ${Math.floor(155 * darkFactor)}, ${Math.floor(145 * darkFactor)}, 0.8)`;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        // Center column
+        ctx.fillStyle = `rgba(${Math.floor(180 * darkFactor)}, ${Math.floor(175 * darkFactor)}, ${Math.floor(165 * darkFactor)}, 0.9)`;
+        ctx.beginPath();
+        ctx.arc(fx, fy, 3, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Playground
+      if (park.hasPlayground) {
+        const px = park.x + park.w * 0.75;
+        const py = park.y + park.h * 0.25;
+        // Sandbox
+        ctx.fillStyle = `rgba(${Math.floor(220 * darkFactor)}, ${Math.floor(200 * darkFactor)}, ${Math.floor(150 * darkFactor)}, 0.6)`;
+        ctx.fillRect(px - 8, py - 8, 16, 16);
+        ctx.strokeStyle = `rgba(139, 119, 90, ${0.4 - nightAlpha * 0.15})`;
+        ctx.lineWidth = 0.8;
+        ctx.strokeRect(px - 8, py - 8, 16, 16);
+      }
+
+      // Park border
+      ctx.strokeStyle = `rgba(0, 0, 0, ${0.08 + nightAlpha * 0.04})`;
+      ctx.lineWidth = 0.5;
+      ctx.strokeRect(park.x, park.y, park.w, park.h);
+    }
+  }
+
   drawTrees(ctx: CanvasRenderingContext2D, time: number, nightAlpha: number) {
     for (const t of this.trees) {
       const sway = Math.sin(time * 0.5 + t.seed) * 1.5;
       const green = Math.max(0, 120 - nightAlpha * 60);
       const lightness = 35 - nightAlpha * 15;
 
-      // Shadow
       ctx.fillStyle = `rgba(0, 0, 0, ${0.15 + nightAlpha * 0.1})`;
       ctx.beginPath();
       ctx.ellipse(t.x + 2, t.y + 2, t.radius, t.radius * 0.8, 0, 0, Math.PI * 2);
       ctx.fill();
 
-      // Canopy
       ctx.fillStyle = `hsl(${green}, 50%, ${lightness}%)`;
       ctx.beginPath();
       ctx.arc(t.x + sway, t.y, t.radius, 0, Math.PI * 2);
       ctx.fill();
 
-      // Highlight
       ctx.fillStyle = `rgba(255, 255, 255, ${0.1 - nightAlpha * 0.05})`;
       ctx.beginPath();
       ctx.arc(t.x + sway - t.radius * 0.2, t.y - t.radius * 0.2, t.radius * 0.4, 0, Math.PI * 2);
@@ -853,9 +1137,7 @@ export class CityLayout {
 
   drawStreetLights(ctx: CanvasRenderingContext2D, nightAlpha: number) {
     if (nightAlpha < 0.05) return;
-
     for (const sl of this.streetLights) {
-      // Glow
       const grad = ctx.createRadialGradient(sl.x, sl.y, 0, sl.x, sl.y, 60);
       grad.addColorStop(0, `rgba(255, 210, 120, ${nightAlpha * 0.35})`);
       grad.addColorStop(0.5, `rgba(255, 200, 100, ${nightAlpha * 0.1})`);
@@ -863,7 +1145,6 @@ export class CityLayout {
       ctx.fillStyle = grad;
       ctx.fillRect(sl.x - 60, sl.y - 60, 120, 120);
 
-      // Light pole dot
       ctx.fillStyle = `rgba(255, 240, 180, ${nightAlpha})`;
       ctx.beginPath();
       ctx.arc(sl.x, sl.y, 2.5, 0, Math.PI * 2);
@@ -872,8 +1153,8 @@ export class CityLayout {
   }
 
   drawPlazaBenches(ctx: CanvasRenderingContext2D, nightAlpha: number) {
-    const benchL = 18;  // bench length
-    const benchW = 5;   // bench depth
+    const benchL = 18;
+    const benchW = 5;
     const legH = 2;
 
     for (const b of this.plazaBenches) {
@@ -882,11 +1163,9 @@ export class CityLayout {
       ctx.rotate(b.angle);
 
       const dark = 1 - nightAlpha * 0.45;
-      // Shadow
       ctx.fillStyle = `rgba(0,0,0,${0.12 + nightAlpha * 0.06})`;
       ctx.fillRect(-benchL / 2 + 1.5, -benchW / 2 + 1.5, benchL, benchW);
 
-      // Seat slats (3 planks)
       const slatColors = [
         `rgba(${Math.floor(160 * dark)}, ${Math.floor(110 * dark)}, ${Math.floor(60 * dark)}, 0.95)`,
         `rgba(${Math.floor(150 * dark)}, ${Math.floor(100 * dark)}, ${Math.floor(55 * dark)}, 0.95)`,
@@ -898,11 +1177,9 @@ export class CityLayout {
         ctx.fillRect(-benchL / 2, -benchW / 2 + i * slatH, benchL, slatH - 0.4);
       }
 
-      // Backrest (a thin plank set back)
       ctx.fillStyle = `rgba(${Math.floor(140 * dark)}, ${Math.floor(95 * dark)}, ${Math.floor(50 * dark)}, 0.9)`;
       ctx.fillRect(-benchL / 2, -benchW / 2 - 3, benchL, 2.5);
 
-      // Metal legs (two pairs)
       ctx.fillStyle = `rgba(${Math.floor(80 * dark)}, ${Math.floor(80 * dark)}, ${Math.floor(80 * dark)}, 0.8)`;
       const legPositions = [-benchL / 2 + 3, benchL / 2 - 3];
       for (const lx of legPositions) {
@@ -918,19 +1195,16 @@ export class CityLayout {
     for (const lamp of this.plazaLamps) {
       const dark = 1 - nightAlpha * 0.35;
 
-      // Ground shadow (top-down: shadow falls slightly south-east)
       ctx.fillStyle = `rgba(0,0,0,${0.18 + nightAlpha * 0.04})`;
       ctx.beginPath();
       ctx.ellipse(lamp.x + 2, lamp.y + 2, 4, 3, 0.4, 0, Math.PI * 2);
       ctx.fill();
 
-      // Base disc (the base plate of the post)
       ctx.fillStyle = `rgba(${Math.floor(75 * dark)}, ${Math.floor(75 * dark)}, ${Math.floor(85 * dark)}, 1)`;
       ctx.beginPath();
       ctx.arc(lamp.x, lamp.y, 3, 0, Math.PI * 2);
       ctx.fill();
 
-      // Lamp head (the housing — top-down circle, slightly larger)
       const lampLit = nightAlpha > 0.1;
       ctx.fillStyle = lampLit
         ? `rgba(255, 245, 190, ${0.6 + nightAlpha * 0.4})`
@@ -939,14 +1213,12 @@ export class CityLayout {
       ctx.arc(lamp.x, lamp.y, 4.5, 0, Math.PI * 2);
       ctx.fill();
 
-      // Rim ring
       ctx.strokeStyle = `rgba(${Math.floor(60 * dark)}, ${Math.floor(60 * dark)}, ${Math.floor(70 * dark)}, 0.9)`;
       ctx.lineWidth = 0.8;
       ctx.beginPath();
       ctx.arc(lamp.x, lamp.y, 4.5, 0, Math.PI * 2);
       ctx.stroke();
 
-      // Centre dot (the bulb or lens)
       ctx.fillStyle = lampLit
         ? `rgba(255, 255, 220, ${0.8 + nightAlpha * 0.2})`
         : `rgba(180, 185, 195, 0.8)`;
@@ -972,7 +1244,6 @@ export class CityLayout {
   drawTrafficLights(ctx: CanvasRenderingContext2D, nightAlpha: number, trafficPhase: number) {
     const hw = ROAD_WIDTH / 2;
     for (const inter of this.intersections) {
-      // Determine signal colors for horizontal and vertical roads
       let hColor: string;
       let vColor: string;
       if (trafficPhase < 0.45) {
@@ -991,19 +1262,17 @@ export class CityLayout {
         return `rgba(220, 200, 50, ${a})`;
       };
 
-      // Draw dots at intersection corners — one per corner
       const corners = [
-        { x: inter.x - hw + 2, y: inter.y - hw + 2, dir: 'h' }, // top-left → horizontal
-        { x: inter.x + hw - 2, y: inter.y - hw + 2, dir: 'v' }, // top-right → vertical
-        { x: inter.x - hw + 2, y: inter.y + hw - 2, dir: 'v' }, // bottom-left → vertical
-        { x: inter.x + hw - 2, y: inter.y + hw - 2, dir: 'h' }, // bottom-right → horizontal
+        { x: inter.x - hw + 2, y: inter.y - hw + 2, dir: 'h' },
+        { x: inter.x + hw - 2, y: inter.y - hw + 2, dir: 'v' },
+        { x: inter.x - hw + 2, y: inter.y + hw - 2, dir: 'v' },
+        { x: inter.x + hw - 2, y: inter.y + hw - 2, dir: 'h' },
       ];
 
       for (const corner of corners) {
         const signal = corner.dir === 'h' ? hColor : vColor;
         const alpha = 0.7;
 
-        // Night glow
         if (nightAlpha > 0.1) {
           const glowR = 5;
           const grad = ctx.createRadialGradient(corner.x, corner.y, 0, corner.x, corner.y, glowR);
@@ -1013,7 +1282,6 @@ export class CityLayout {
           ctx.fillRect(corner.x - glowR, corner.y - glowR, glowR * 2, glowR * 2);
         }
 
-        // Dot
         ctx.fillStyle = colorToRgba(signal, alpha);
         ctx.beginPath();
         ctx.arc(corner.x, corner.y, 2, 0, Math.PI * 2);
@@ -1023,7 +1291,6 @@ export class CityLayout {
   }
 
   getRandomWalkablePosition(seed: number): { x: number; y: number } {
-    // Pick a random walkable rect weighted by area
     const sidewalksAndPlaza = this.walkableRects.filter(w => w.type === 'sidewalk' || w.type === 'plaza');
     const idx = Math.floor(seededRandom(seed) * sidewalksAndPlaza.length);
     const rect = sidewalksAndPlaza[idx];
@@ -1040,6 +1307,14 @@ export class CityLayout {
       x: rect.x + Math.random() * rect.w,
       y: rect.y + Math.random() * rect.h,
     };
+  }
+
+  /** Get a random house position for pedestrian "going home" behavior */
+  getRandomHousePosition(): { x: number; y: number } | null {
+    if (this.houses.length === 0) return null;
+    const h = this.houses[Math.floor(Math.random() * this.houses.length)];
+    // Return the front door position
+    return { x: h.x + h.w / 2, y: h.y + h.h };
   }
 
   isOnRoad(x: number, y: number): boolean {
@@ -1105,6 +1380,10 @@ export class CityLayout {
     for (const v of this.venues) {
       if (x >= v.x - margin && x <= v.x + v.w + margin &&
           y >= v.y - margin && y <= v.y + v.h + margin) return true;
+    }
+    for (const h of this.houses) {
+      if (x >= h.x - margin && x <= h.x + h.w + margin &&
+          y >= h.y - margin && y <= h.y + h.h + margin) return true;
     }
     return false;
   }

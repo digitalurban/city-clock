@@ -4,7 +4,7 @@ import { Car } from './entities/Car';
 import { ClockManager } from './clock/ClockManager';
 import { DayNightCycle } from './rendering/DayNightCycle';
 import { Weather } from './rendering/Weather';
-import { TOTAL_PEDESTRIANS, CLOCK_ELIGIBLE_COUNT, TOTAL_CARS } from './utils/constants';
+import { TOTAL_PEDESTRIANS, CLOCK_ELIGIBLE_COUNT, TOTAL_CARS, setTotalPedestrians, setTotalCars } from './utils/constants';
 
 const canvas = document.getElementById('cityCanvas') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d', { alpha: false })!;
@@ -24,21 +24,22 @@ let staticCanvas: HTMLCanvasElement | null = null;
 let lastStaticNightAlpha = -1;
 
 // The city world is WORLD_SCALE times the viewport in each dimension.
-// At minZoom the full world fits in the viewport; zooming in shows detail.
 const WORLD_SCALE = 2.0;
 
 // Zoom / pan state
 let zoom = 1.0;
 let panX = 0;
 let panY = 0;
-let minZoom = 0.5;  // updated dynamically in resize()
+let minZoom = 0.5;
 const MAX_ZOOM = 5.0;
 
+// Current slider values (for live adjustment without full resize)
+let currentCarCount = TOTAL_CARS;
+let currentPedCount = TOTAL_PEDESTRIANS;
+
 function clampPan(w: number, h: number) {
-  // World dimensions in CSS pixels
   const worldW = w * WORLD_SCALE;
   const worldH = h * WORLD_SCALE;
-  // Pan limits: keep world edges from scrolling past screen edges
   const minPanX = w - worldW * zoom;
   const maxPanX = 0;
   const minPanY = h - worldH * zoom;
@@ -114,7 +115,6 @@ canvas.addEventListener('touchstart', (e) => {
   for (const t of e.changedTouches) {
     activeTouches.set(t.identifier, { x: t.clientX - rect.left, y: t.clientY - rect.top });
   }
-  // Start single-finger drag
   if (activeTouches.size === 1) {
     const t = e.changedTouches[0];
     touchDragId = t.identifier;
@@ -133,7 +133,6 @@ canvas.addEventListener('touchmove', (e) => {
   }
 
   if (activeTouches.size === 1 && touchDragId !== null) {
-    // Single-finger drag → pan
     for (const t of e.changedTouches) {
       if (t.identifier === touchDragId) {
         const dx = t.clientX - touchDragStartX;
@@ -144,7 +143,6 @@ canvas.addEventListener('touchmove', (e) => {
       }
     }
   } else if (activeTouches.size === 2) {
-    // Two-finger pinch → zoom
     const [a, b] = [...activeTouches.values()];
     const dist = Math.hypot(a.x - b.x, a.y - b.y);
     if (lastPinchDist > 0 && dist > 0) {
@@ -154,7 +152,7 @@ canvas.addEventListener('touchmove', (e) => {
       applyZoom(factor, mx, my, window.innerWidth, window.innerHeight);
     }
     lastPinchDist = dist;
-    touchDragId = null; // cancel drag when pinching
+    touchDragId = null;
   }
 }, { passive: false });
 
@@ -164,7 +162,6 @@ canvas.addEventListener('touchend', (e) => {
     if (t.identifier === touchDragId) touchDragId = null;
   }
   if (activeTouches.size < 2) lastPinchDist = -1;
-  // If one finger remains after lifting second, start a new drag
   if (activeTouches.size === 1) {
     const [id, pos] = [...activeTouches.entries()][0];
     touchDragId = id;
@@ -174,6 +171,144 @@ canvas.addEventListener('touchend', (e) => {
     touchDragStartPanY = panY;
   }
 }, { passive: true });
+
+// ==================== Options UI ====================
+function createOptionsUI() {
+  // Container
+  const container = document.createElement('div');
+  container.id = 'options-container';
+  container.style.cssText = `
+    position: fixed; bottom: 16px; right: 16px; z-index: 100;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    user-select: none;
+  `;
+
+  // Toggle button
+  const toggleBtn = document.createElement('button');
+  toggleBtn.id = 'options-toggle';
+  toggleBtn.innerHTML = '⚙';
+  toggleBtn.style.cssText = `
+    width: 40px; height: 40px; border-radius: 50%; border: none;
+    background: rgba(0,0,0,0.6); color: #fff; font-size: 20px;
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    transition: transform 0.2s, background 0.2s;
+  `;
+  toggleBtn.addEventListener('mouseenter', () => { toggleBtn.style.background = 'rgba(0,0,0,0.8)'; });
+  toggleBtn.addEventListener('mouseleave', () => { toggleBtn.style.background = 'rgba(0,0,0,0.6)'; });
+
+  // Panel
+  const panel = document.createElement('div');
+  panel.id = 'options-panel';
+  panel.style.cssText = `
+    display: none; position: absolute; bottom: 50px; right: 0;
+    background: rgba(15, 15, 25, 0.85); color: #fff; padding: 16px 20px;
+    border-radius: 12px; min-width: 220px;
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+    font-size: 13px;
+  `;
+
+  // Max cars: cap at a safe level to prevent gridlock
+  const maxCars = 120;
+  const maxPeds = 300;
+
+  panel.innerHTML = `
+    <div style="font-size: 14px; font-weight: 600; margin-bottom: 12px; color: #aab;">City Options</div>
+    <div style="margin-bottom: 10px;">
+      <label style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+        <span>Traffic</span>
+        <span id="car-count-label">${currentCarCount}</span>
+      </label>
+      <input type="range" id="car-slider" min="10" max="${maxCars}" value="${currentCarCount}" style="width: 100%; accent-color: #4a9eff;">
+    </div>
+    <div style="margin-bottom: 6px;">
+      <label style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+        <span>People</span>
+        <span id="ped-count-label">${currentPedCount}</span>
+      </label>
+      <input type="range" id="ped-slider" min="20" max="${maxPeds}" value="${currentPedCount}" style="width: 100%; accent-color: #4a9eff;">
+    </div>
+  `;
+
+  container.appendChild(panel);
+  container.appendChild(toggleBtn);
+  document.body.appendChild(container);
+
+  let panelOpen = false;
+  toggleBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    panelOpen = !panelOpen;
+    panel.style.display = panelOpen ? 'block' : 'none';
+    toggleBtn.style.transform = panelOpen ? 'rotate(90deg)' : '';
+  });
+
+  // Close panel when clicking outside
+  document.addEventListener('click', (e) => {
+    if (panelOpen && !container.contains(e.target as Node)) {
+      panelOpen = false;
+      panel.style.display = 'none';
+      toggleBtn.style.transform = '';
+    }
+  });
+
+  // Slider handlers
+  const carSlider = panel.querySelector('#car-slider') as HTMLInputElement;
+  const pedSlider = panel.querySelector('#ped-slider') as HTMLInputElement;
+  const carLabel = panel.querySelector('#car-count-label') as HTMLSpanElement;
+  const pedLabel = panel.querySelector('#ped-count-label') as HTMLSpanElement;
+
+  carSlider.addEventListener('input', () => {
+    const val = parseInt(carSlider.value);
+    carLabel.textContent = String(val);
+    adjustCarCount(val);
+  });
+
+  pedSlider.addEventListener('input', () => {
+    const val = parseInt(pedSlider.value);
+    pedLabel.textContent = String(val);
+    adjustPedCount(val);
+  });
+
+  // Prevent canvas interactions when interacting with sliders
+  panel.addEventListener('mousedown', (e) => e.stopPropagation());
+  panel.addEventListener('touchstart', (e) => e.stopPropagation());
+}
+
+function adjustCarCount(target: number) {
+  currentCarCount = target;
+  setTotalCars(target);
+
+  while (cars.length > target) {
+    cars.pop();
+  }
+  while (cars.length < target) {
+    const deliveryCount = Math.floor(target * 0.15);
+    const emergencyCount = Math.max(2, Math.floor(target * 0.04));
+    const emergencyTypes: Array<'police' | 'ambulance' | 'firetruck'> = ['police', 'ambulance', 'firetruck'];
+    const i = cars.length;
+    if (i < deliveryCount) {
+      cars.push(new Car(layout, 'delivery'));
+    } else if (i < deliveryCount + emergencyCount) {
+      cars.push(new Car(layout, emergencyTypes[i % emergencyTypes.length]));
+    } else {
+      cars.push(new Car(layout, 'normal'));
+    }
+  }
+}
+
+function adjustPedCount(target: number) {
+  currentPedCount = target;
+  setTotalPedestrians(target);
+
+  while (pedestrians.length > target) {
+    pedestrians.pop();
+  }
+  while (pedestrians.length < target) {
+    pedestrians.push(new Pedestrian(layout, pedestrians.length, CLOCK_ELIGIBLE_COUNT));
+  }
+}
 
 // ==================== Resize / init ====================
 function resize() {
@@ -190,15 +325,13 @@ function resize() {
 
   layout = new CityLayout(worldW, worldH);
 
-  // Zoom so the plaza fills ~80% of the viewport, centered on screen.
-  // This works regardless of device/viewport size.
+  // Zoom so the plaza fills ~80% of the viewport
   const plazaCX = layout.plazaBounds.x + layout.plazaBounds.w / 2;
   const plazaCY = layout.plazaBounds.y + layout.plazaBounds.h / 2;
   const plazaFillFraction = 0.8;
   const zoomToFitW = (width * plazaFillFraction) / layout.plazaBounds.w;
   const zoomToFitH = (height * plazaFillFraction) / layout.plazaBounds.h;
   const initialZoom = Math.min(zoomToFitW, zoomToFitH);
-  // Allow zooming out to 1.5× of the initial view (no further)
   minZoom = initialZoom / 1.5;
   zoom = Math.max(minZoom, Math.min(MAX_ZOOM, initialZoom));
   panX = width / 2 - plazaCX * zoom;
@@ -207,18 +340,17 @@ function resize() {
 
   // Re-spawn entities
   pedestrians = [];
-  for (let i = 0; i < TOTAL_PEDESTRIANS; i++) {
+  for (let i = 0; i < currentPedCount; i++) {
     pedestrians.push(new Pedestrian(layout, i, CLOCK_ELIGIBLE_COUNT));
   }
 
   cars = [];
-  Car.droppedPackages = []; // clear packages on resize
-  clearPedestrianState(); // clear shared queues/benches state
-  // Allocate car types: ~15% delivery, ~4% emergency, rest normal
-  const deliveryCount = Math.floor(TOTAL_CARS * 0.15);
-  const emergencyCount = Math.max(2, Math.floor(TOTAL_CARS * 0.04));
+  Car.droppedPackages = [];
+  clearPedestrianState();
+  const deliveryCount = Math.floor(currentCarCount * 0.15);
+  const emergencyCount = Math.max(2, Math.floor(currentCarCount * 0.04));
   const emergencyTypes: Array<'police' | 'ambulance' | 'firetruck'> = ['police', 'ambulance', 'firetruck'];
-  for (let i = 0; i < TOTAL_CARS; i++) {
+  for (let i = 0; i < currentCarCount; i++) {
     if (i < deliveryCount) {
       cars.push(new Car(layout, 'delivery'));
     } else if (i < deliveryCount + emergencyCount) {
@@ -261,8 +393,13 @@ function buildStaticCanvas(nightAlpha: number) {
   layout.drawSidewalks(sctx, nightAlpha);
   layout.drawCrosswalks(sctx, nightAlpha);
   layout.drawPlaza(sctx, nightAlpha);
+
+  // Draw parks before buildings so buildings render on top
+  layout.drawParks(sctx, nightAlpha);
+
   layout.drawPlazaBenches(sctx, nightAlpha);
   layout.drawBuildings(sctx, nightAlpha);
+  layout.drawHouses(sctx, nightAlpha);
   layout.drawVenues(sctx, nightAlpha);
   layout.drawPlazaLampPosts(sctx, nightAlpha);
 
@@ -275,8 +412,6 @@ function loop() {
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const w = window.innerWidth;
   const h = window.innerHeight;
-  const worldW = w * WORLD_SCALE;
-  const worldH = h * WORLD_SCALE;
 
   // Update traffic light phase (~8 second cycle)
   trafficPhase = (trafficPhase + 1 / 480) % 1;
@@ -290,16 +425,17 @@ function loop() {
     buildStaticCanvas(nightAlpha);
   }
 
-  // Fill entire canvas with sky colour (visible when zoomed out past world edges)
+  // Fill entire canvas with sky colour
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.fillStyle = dayNight.getSkyColor(nightAlpha);
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
   // Apply zoom + pan + DPR transform
-  // World coord (wx, wy) → screen physical pixel (panX*dpr + wx*zoom*dpr, panY*dpr + wy*zoom*dpr)
   ctx.setTransform(dpr * zoom, 0, 0, dpr * zoom, panX * dpr, panY * dpr);
 
-  // Draw cached static city (maps from world 0,0,worldW,worldH)
+  // Draw cached static city
+  const worldW = w * WORLD_SCALE;
+  const worldH = h * WORLD_SCALE;
   if (staticCanvas) {
     ctx.drawImage(staticCanvas, 0, 0, worldW, worldH);
   }
@@ -328,21 +464,21 @@ function loop() {
   // Trees on top (canopies)
   layout.drawTrees(ctx, time, nightAlpha);
 
-  // Street light glows + plaza lamp glows (drawn after trees so they composite on top)
+  // Street light glows + plaza lamp glows
   layout.drawStreetLights(ctx, nightAlpha);
   layout.drawPlazaLampGlows(ctx, nightAlpha);
 
-  // Traffic lights (drawn after trees and street lights)
+  // Traffic lights
   layout.drawTrafficLights(ctx, nightAlpha, trafficPhase);
 
-  // Weather effects in world space (clouds, rain, puddles)
+  // Weather effects in world space
   weather.drawWorldEffects(ctx, nightAlpha);
 
-  // Night overlay — drawn in screen space so it always covers the full viewport
+  // Night overlay — drawn in screen space
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   dayNight.drawNightOverlay(ctx, canvas.width, canvas.height, nightAlpha);
 
-  // Weather screen overlay (rain tint)
+  // Weather screen overlay
   weather.drawScreenOverlay(ctx, canvas.width, canvas.height);
 
   requestAnimationFrame(loop);
@@ -352,5 +488,6 @@ window.addEventListener('resize', () => {
   resize();
 });
 
+createOptionsUI();
 resize();
 loop();

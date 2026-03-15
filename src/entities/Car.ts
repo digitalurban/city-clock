@@ -311,8 +311,8 @@ export class Car {
     this.vy = this.dirY * this.currentSpeed;
   }
 
-  /** Move directly toward a target point (ignoring road constraints). Returns true when arrived. */
-  private moveToward(tx: number, ty: number, speed: number): boolean {
+  /** Move directly toward a target point with building collision avoidance. Returns true when arrived. */
+  private moveToward(tx: number, ty: number, speed: number, layout?: CityLayout): boolean {
     const dx = tx - this.x;
     const dy = ty - this.y;
     const dist = Math.sqrt(dx * dx + dy * dy);
@@ -321,10 +321,53 @@ export class Car {
       this.y = ty;
       return true;
     }
-    const nx = dx / dist;
-    const ny = dy / dist;
-    this.x += nx * speed;
-    this.y += ny * speed;
+    let nx = dx / dist;
+    let ny = dy / dist;
+    let nextX = this.x + nx * speed;
+    let nextY = this.y + ny * speed;
+
+    // Building collision avoidance (skip if no layout provided)
+    if (layout) {
+      const m = 6;
+      const allObstacles = [...layout.buildings, ...layout.venues];
+      for (const b of allObstacles) {
+        // Don't collide with target venue (truck delivering to it)
+        if (this.targetVenue && b === this.targetVenue) continue;
+        if (nextX >= b.x - m && nextX <= b.x + b.w + m &&
+            nextY >= b.y - m && nextY <= b.y + b.h + m) {
+          // Steer perpendicular to avoid the building
+          const bCx = b.x + b.w / 2;
+          const bCy = b.y + b.h / 2;
+          const avoidDx = nextX - bCx;
+          const avoidDy = nextY - bCy;
+          const avoidDist = Math.sqrt(avoidDx * avoidDx + avoidDy * avoidDy) || 1;
+          nx = avoidDx / avoidDist;
+          ny = avoidDy / avoidDist;
+          nextX = this.x + nx * speed;
+          nextY = this.y + ny * speed;
+          break;
+        }
+      }
+      // Also avoid houses
+      for (const h of layout.houses) {
+        if (nextX >= h.x - m && nextX <= h.x + h.w + m &&
+            nextY >= h.y - m && nextY <= h.y + h.h + m) {
+          const bCx = h.x + h.w / 2;
+          const bCy = h.y + h.h / 2;
+          const avoidDx = nextX - bCx;
+          const avoidDy = nextY - bCy;
+          const avoidDist = Math.sqrt(avoidDx * avoidDx + avoidDy * avoidDy) || 1;
+          nx = avoidDx / avoidDist;
+          ny = avoidDy / avoidDist;
+          nextX = this.x + nx * speed;
+          nextY = this.y + ny * speed;
+          break;
+        }
+      }
+    }
+
+    this.x = nextX;
+    this.y = nextY;
     this.vx = nx * speed;
     this.vy = ny * speed;
     // Smoothly rotate toward target
@@ -576,13 +619,18 @@ export class Car {
       const dy = other.y - frontY;
       const along = dx * this.dirX + dy * this.dirY;
       const perp = Math.abs(dx * this.dirY - dy * this.dirX);
-      if (along > 0 && along < 30 && perp < 10) {
-        targetSpeed = Math.min(targetSpeed, this.baseSpeed * (along / 30) * 0.3);
+      if (along > 0 && along < 35 && perp < 10) {
+        targetSpeed = Math.min(targetSpeed, this.baseSpeed * (along / 35) * 0.4);
       }
     }
 
-    this.currentSpeed += (targetSpeed - this.currentSpeed) * 0.1;
-    if (this.currentSpeed < 0.02) this.currentSpeed = 0;
+    this.currentSpeed += (targetSpeed - this.currentSpeed) * 0.12;
+    // Prevent full gridlock: always creep forward slightly if stopped too long
+    if (this.currentSpeed < 0.05 && targetSpeed <= 0) {
+      this.currentSpeed = 0.03; // creep to resolve jams
+    } else if (this.currentSpeed < 0.02) {
+      this.currentSpeed = 0;
+    }
 
     this.vx = this.dirX * this.currentSpeed;
     this.vy = this.dirY * this.currentSpeed;
@@ -723,7 +771,7 @@ export class Car {
 
       case 'to_entrance': {
         // Short direct drive from the plaza-bordering road into the entrance
-        const arrived = this.moveToward(this.targetX, this.targetY, plazaSpeed);
+        const arrived = this.moveToward(this.targetX, this.targetY, plazaSpeed, layout);
         if (arrived && this.targetVenue) {
           // Build path through plaza center to avoid cutting through venues
           const dp = this.getVenueDeliveryPoint(this.targetVenue);
@@ -741,7 +789,7 @@ export class Car {
 
       case 'to_venue': {
         // Follow plaza waypoints to the venue front
-        const arrived = this.moveToward(this.targetX, this.targetY, plazaSpeed * 0.7);
+        const arrived = this.moveToward(this.targetX, this.targetY, plazaSpeed * 0.7, layout);
         if (arrived) {
           this.plazaWaypointIdx++;
           if (this.plazaWaypointIdx < this.plazaWaypoints.length) {
@@ -804,7 +852,7 @@ export class Car {
 
       case 'to_exit': {
         // Follow plaza waypoints back toward an entrance
-        const arrived = this.moveToward(this.targetX, this.targetY, plazaSpeed);
+        const arrived = this.moveToward(this.targetX, this.targetY, plazaSpeed, layout);
         if (arrived) {
           this.plazaWaypointIdx++;
           if (this.plazaWaypointIdx < this.plazaWaypoints.length) {
@@ -827,7 +875,7 @@ export class Car {
 
       case 'rejoin_road': {
         // Drive from entrance to the nearest road
-        const arrived = this.moveToward(this.targetX, this.targetY, plazaSpeed);
+        const arrived = this.moveToward(this.targetX, this.targetY, plazaSpeed, layout);
         if (arrived) {
           // Snap onto road — bias direction away from plaza
           const roadCenter = { x: this.road.x + this.road.w / 2, y: this.road.y + this.road.h / 2 };
@@ -919,8 +967,8 @@ export class Car {
     ctx.fillStyle = `rgba(150, 200, 230, ${0.6 - nightAlpha * 0.3})`;
     ctx.fillRect(this.length * 0.15, -this.width / 2 + 1.5, this.length * 0.2, this.width - 3);
 
-    // Headlights at night
-    if (nightAlpha > 0.1) {
+    // Headlights at night — only when car is actually moving to prevent phantom lights
+    if (nightAlpha > 0.1 && this.currentSpeed > 0.05) {
       const headlightAlpha = 0.3 + nightAlpha * 0.7;
       ctx.fillStyle = `rgba(255, 240, 180, ${headlightAlpha})`;
       ctx.beginPath();
@@ -930,12 +978,12 @@ export class Car {
       ctx.arc(this.length / 2, this.width / 2 - 1.5, 1.5, 0, Math.PI * 2);
       ctx.fill();
 
-      if (nightAlpha > 0.3) {
+      if (nightAlpha > 0.3 && this.currentSpeed > 0.1) {
         const grad = ctx.createRadialGradient(this.length / 2 + 5, 0, 0, this.length / 2 + 5, 0, 25);
-        grad.addColorStop(0, `rgba(255, 240, 180, ${nightAlpha * 0.2})`);
+        grad.addColorStop(0, `rgba(255, 240, 180, ${nightAlpha * 0.15})`);
         grad.addColorStop(1, 'rgba(255, 240, 180, 0)');
         ctx.fillStyle = grad;
-        ctx.fillRect(this.length / 2, -15, 30, 30);
+        ctx.fillRect(this.length / 2, -12, 25, 24);
       }
     }
 
