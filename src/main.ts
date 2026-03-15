@@ -16,6 +16,9 @@ const clockManager = new ClockManager();
 const dayNight = new DayNightCycle();
 const weather = new Weather();
 
+// Traffic light phase: cycles 0→1 over ~8 seconds
+let trafficPhase = 0;
+
 // Offscreen canvas for static city elements
 let staticCanvas: HTMLCanvasElement | null = null;
 let lastStaticNightAlpha = -1;
@@ -275,6 +278,9 @@ function loop() {
   const worldW = w * WORLD_SCALE;
   const worldH = h * WORLD_SCALE;
 
+  // Update traffic light phase (~8 second cycle)
+  trafficPhase = (trafficPhase + 1 / 480) % 1;
+
   // Update weather
   weather.update();
 
@@ -305,7 +311,7 @@ function loop() {
 
   // Update and draw cars
   for (const car of cars) {
-    car.update(layout, pedestrians, cars);
+    car.update(layout, pedestrians, cars, trafficPhase);
     car.draw(ctx, nightAlpha);
   }
 
@@ -325,6 +331,9 @@ function loop() {
   // Street light glows + plaza lamp glows (drawn after trees so they composite on top)
   layout.drawStreetLights(ctx, nightAlpha);
   layout.drawPlazaLampGlows(ctx, nightAlpha);
+
+  // Traffic lights (drawn after trees and street lights)
+  layout.drawTrafficLights(ctx, nightAlpha, trafficPhase);
 
   // Weather effects in world space (clouds, rain, puddles)
   weather.drawWorldEffects(ctx, nightAlpha);

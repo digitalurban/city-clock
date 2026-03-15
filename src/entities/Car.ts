@@ -1,5 +1,5 @@
 import { CAR_SPEED, ROAD_WIDTH } from '../utils/constants';
-import type { CityLayout, RoadSegment, VenueDef, PlazaEntrance } from '../city/CityLayout';
+import type { CityLayout, RoadSegment, VenueDef, PlazaEntrance, IntersectionDef } from '../city/CityLayout';
 import type { Pedestrian } from './Pedestrian';
 
 const CAR_COLORS = [
@@ -65,6 +65,25 @@ export class Car {
   // Plaza interior waypoints (to avoid cutting through venue buildings)
   plazaWaypoints: { x: number; y: number }[] = [];
   plazaWaypointIdx: number = 0;
+
+  // Smooth turning fields
+  isTurning: boolean = false;
+  turnProgress: number = 0;
+  turnStartX: number = 0;
+  turnStartY: number = 0;
+  turnEndX: number = 0;
+  turnEndY: number = 0;
+  turnCenterX: number = 0;
+  turnCenterY: number = 0;
+  turnStartAngle: number = 0;
+  turnEndAngle: number = 0;
+  turnRadius: number = 0;
+  turnArcLength: number = 0;
+  pendingRoad: RoadSegment | null = null;
+  pendingToward: { x: number; y: number } | undefined = undefined;
+
+  // Traffic light: stopped at red
+  stoppedAtLight: boolean = false;
 
   // Emergency fields
   sirenPhase: number = 0;
@@ -188,7 +207,11 @@ export class Car {
   }
 
   private transitionToRoad(road: RoadSegment, toward?: { x: number; y: number }) {
-    this.road = road;
+    const wasSameOrientation = (this.road.horizontal === road.horizontal);
+
+    // Compute target position and direction on the new road
+    let newDirX = 0, newDirY = 0, newX = this.x, newY = this.y, newAngle = 0;
+
     if (road.horizontal) {
       let dir: number;
       if (this.dirX !== 0) {
@@ -198,11 +221,11 @@ export class Car {
       } else {
         dir = Math.random() > 0.5 ? 1 : -1;
       }
-      this.dirX = dir;
-      this.dirY = 0;
-      this.x = Math.max(road.x + 5, Math.min(road.x + road.w - 5, this.x));
-      this.y = road.y + (dir > 0 ? road.h * 0.25 : road.h * 0.75);
-      this.angle = dir > 0 ? 0 : Math.PI;
+      newDirX = dir;
+      newDirY = 0;
+      newX = Math.max(road.x + 5, Math.min(road.x + road.w - 5, this.x));
+      newY = road.y + (dir > 0 ? road.h * 0.25 : road.h * 0.75);
+      newAngle = dir > 0 ? 0 : Math.PI;
     } else {
       let dir: number;
       if (this.dirY !== 0) {
@@ -212,12 +235,78 @@ export class Car {
       } else {
         dir = Math.random() > 0.5 ? 1 : -1;
       }
-      this.dirX = 0;
-      this.dirY = dir;
-      this.y = Math.max(road.y + 5, Math.min(road.y + road.h - 5, this.y));
-      this.x = road.x + (dir > 0 ? road.w * 0.25 : road.w * 0.75);
-      this.angle = dir > 0 ? Math.PI / 2 : -Math.PI / 2;
+      newDirX = 0;
+      newDirY = dir;
+      newY = Math.max(road.y + 5, Math.min(road.y + road.h - 5, this.y));
+      newX = road.x + (dir > 0 ? road.w * 0.25 : road.w * 0.75);
+      newAngle = dir > 0 ? Math.PI / 2 : -Math.PI / 2;
     }
+
+    // For perpendicular transitions, animate a smooth turn
+    if (!wasSameOrientation && this.currentSpeed > 0.05) {
+      const turnR = ROAD_WIDTH * 0.4;
+
+      // Calculate arc center: offset from current position perpendicular to current direction
+      // toward the target position
+      const dx = newX - this.x;
+      const dy = newY - this.y;
+
+      // Determine turn direction (clockwise or counter-clockwise)
+      const cross = this.dirX * dy - this.dirY * dx;
+
+      // Arc center is perpendicular to current travel direction
+      let cx: number, cy: number;
+      if (cross > 0) {
+        // Turn right (clockwise looking down)
+        cx = this.x + this.dirY * turnR;
+        cy = this.y - this.dirX * turnR;
+      } else {
+        // Turn left (counter-clockwise)
+        cx = this.x - this.dirY * turnR;
+        cy = this.y + this.dirX * turnR;
+      }
+
+      // Calculate start and end angles on the arc
+      const startA = Math.atan2(this.y - cy, this.x - cx);
+      let endA = Math.atan2(newY - cy, newX - cx);
+
+      // Ensure correct arc direction
+      let angleDelta = endA - startA;
+      if (cross > 0) {
+        // Clockwise: angleDelta should be negative
+        while (angleDelta > 0) angleDelta -= Math.PI * 2;
+        while (angleDelta < -Math.PI) angleDelta += Math.PI * 2;
+      } else {
+        // Counter-clockwise: angleDelta should be positive
+        while (angleDelta < 0) angleDelta += Math.PI * 2;
+        while (angleDelta > Math.PI) angleDelta -= Math.PI * 2;
+      }
+      endA = startA + angleDelta;
+
+      this.isTurning = true;
+      this.turnProgress = 0;
+      this.turnStartX = this.x;
+      this.turnStartY = this.y;
+      this.turnEndX = newX;
+      this.turnEndY = newY;
+      this.turnCenterX = cx;
+      this.turnCenterY = cy;
+      this.turnStartAngle = startA;
+      this.turnEndAngle = endA;
+      this.turnRadius = turnR;
+      this.turnArcLength = Math.abs(angleDelta) * turnR;
+      this.pendingRoad = road;
+      this.pendingToward = toward;
+      return;
+    }
+
+    // Same orientation or too slow — snap directly
+    this.road = road;
+    this.dirX = newDirX;
+    this.dirY = newDirY;
+    this.x = newX;
+    this.y = newY;
+    this.angle = newAngle;
     this.vx = this.dirX * this.currentSpeed;
     this.vy = this.dirY * this.currentSpeed;
   }
@@ -354,11 +443,90 @@ export class Car {
     return best;
   }
 
-  update(layout: CityLayout, pedestrians: Pedestrian[], cars: Car[]) {
+  /** Check if the car is approaching an intersection with a red/yellow light */
+  private getTrafficSignal(layout: CityLayout, trafficPhase: number): 'green' | 'yellow' | 'red' {
+    const lookAhead = 40;
+    const frontX = this.x + this.dirX * lookAhead;
+    const frontY = this.y + this.dirY * lookAhead;
+
+    for (const inter of layout.intersections) {
+      const dist = Math.hypot(inter.x - this.x, inter.y - this.y);
+      if (dist > 50) continue;
+
+      // Check if we're approaching (not past) the intersection
+      const toInterX = inter.x - this.x;
+      const toInterY = inter.y - this.y;
+      const dotAlong = toInterX * this.dirX + toInterY * this.dirY;
+      if (dotAlong < 5 || dotAlong > 45) continue;
+
+      // Determine if car is moving horizontally or vertically
+      const isHorizontal = Math.abs(this.dirX) > Math.abs(this.dirY);
+
+      let signal: 'green' | 'yellow' | 'red';
+      if (trafficPhase < 0.45) {
+        signal = isHorizontal ? 'green' : 'red';
+      } else if (trafficPhase < 0.50) {
+        signal = 'yellow';
+      } else if (trafficPhase < 0.95) {
+        signal = isHorizontal ? 'red' : 'green';
+      } else {
+        signal = 'yellow';
+      }
+      return signal;
+    }
+    return 'green';
+  }
+
+  update(layout: CityLayout, pedestrians: Pedestrian[], cars: Car[], trafficPhase: number = 0) {
+    // Handle smooth turning animation
+    if (this.isTurning) {
+      this.turnProgress += this.currentSpeed / Math.max(this.turnArcLength, 1);
+      if (this.turnProgress >= 1) {
+        // Finish turn
+        this.isTurning = false;
+        this.x = this.turnEndX;
+        this.y = this.turnEndY;
+        this.angle = this.turnEndAngle;
+        if (this.pendingRoad) {
+          this.road = this.pendingRoad;
+          // Set direction based on turn end angle
+          if (this.pendingRoad.horizontal) {
+            this.dirX = Math.cos(this.turnEndAngle) > 0 ? 1 : -1;
+            this.dirY = 0;
+            this.angle = this.dirX > 0 ? 0 : Math.PI;
+          } else {
+            this.dirX = 0;
+            this.dirY = Math.sin(this.turnEndAngle) > 0 ? 1 : -1;
+            this.angle = this.dirY > 0 ? Math.PI / 2 : -Math.PI / 2;
+          }
+          this.vx = this.dirX * this.currentSpeed;
+          this.vy = this.dirY * this.currentSpeed;
+          this.pendingRoad = null;
+        }
+      } else {
+        // Interpolate along arc
+        const t = this.turnProgress;
+        const a = this.turnStartAngle + (this.turnEndAngle - this.turnStartAngle) * t;
+        this.x = this.turnCenterX + Math.cos(a) * this.turnRadius;
+        this.y = this.turnCenterY + Math.sin(a) * this.turnRadius;
+        // Car visual angle is tangent to arc
+        this.angle = a + Math.PI / 2;
+        // Adjust angle direction based on whether we're turning CW or CCW
+        if (this.turnEndAngle < this.turnStartAngle) {
+          this.angle = a - Math.PI / 2;
+        }
+      }
+      // Update siren phase for emergency vehicles
+      if (this.carType === 'police' || this.carType === 'ambulance' || this.carType === 'firetruck') {
+        this.sirenPhase += 0.15;
+      }
+      return;
+    }
+
     if (this.carType === 'delivery') {
-      this.updateDelivery(layout, pedestrians, cars);
+      this.updateDelivery(layout, pedestrians, cars, trafficPhase);
     } else {
-      this.updateNormal(layout, pedestrians, cars);
+      this.updateNormal(layout, pedestrians, cars, trafficPhase);
     }
 
     // Update siren phase for emergency vehicles
@@ -367,10 +535,30 @@ export class Car {
     }
   }
 
-  private updateNormal(layout: CityLayout, pedestrians: Pedestrian[], cars: Car[]) {
+  private updateNormal(layout: CityLayout, pedestrians: Pedestrian[], cars: Car[], trafficPhase: number) {
     let targetSpeed = this.baseSpeed;
     const frontX = this.x + this.dirX * this.length * 0.5;
     const frontY = this.y + this.dirY * this.length * 0.5;
+
+    // Traffic light check (emergency vehicles ignore)
+    const isEmergency = this.carType === 'police' || this.carType === 'ambulance' || this.carType === 'firetruck';
+    if (!isEmergency) {
+      const signal = this.getTrafficSignal(layout, trafficPhase);
+      if (signal === 'red') {
+        targetSpeed = 0;
+      } else if (signal === 'yellow') {
+        // Check distance to intersection — stop if far, continue if close
+        for (const inter of layout.intersections) {
+          const dist = Math.hypot(inter.x - this.x, inter.y - this.y);
+          if (dist > 50) continue;
+          const dotAlong = (inter.x - this.x) * this.dirX + (inter.y - this.y) * this.dirY;
+          if (dotAlong > 20) {
+            targetSpeed = 0; // far enough to stop
+          }
+          break;
+        }
+      }
+    }
 
     for (const p of pedestrians) {
       const dx = p.x - frontX;
@@ -416,13 +604,13 @@ export class Car {
    * Delivery truck state machine: drives on roads toward the plaza,
    * then enters through an entrance to deliver packages to venue fronts.
    */
-  private updateDelivery(layout: CityLayout, pedestrians: Pedestrian[], cars: Car[]) {
+  private updateDelivery(layout: CityLayout, pedestrians: Pedestrian[], cars: Car[], trafficPhase: number = 0) {
     const plazaSpeed = this.baseSpeed * 0.6; // slow inside plaza
 
     switch (this.deliveryState) {
       case 'road': {
         // Normal road driving, count down to next delivery
-        this.updateNormal(layout, pedestrians, cars);
+        this.updateNormal(layout, pedestrians, cars, trafficPhase);
         this.deliveryTimer--;
         if (this.deliveryTimer <= 0 && layout.venues.length > 0) {
           // Pick a random venue that no other truck is targeting
@@ -466,8 +654,23 @@ export class Car {
           break;
         }
 
-        // Drive on road with pedestrian/car avoidance
+        // Drive on road with pedestrian/car avoidance + traffic lights
         let targetSpeed = this.baseSpeed;
+
+        // Traffic light check for delivery trucks
+        const signal = this.getTrafficSignal(layout, trafficPhase);
+        if (signal === 'red') {
+          targetSpeed = 0;
+        } else if (signal === 'yellow') {
+          for (const inter of layout.intersections) {
+            const dist = Math.hypot(inter.x - this.x, inter.y - this.y);
+            if (dist > 50) continue;
+            const dotAlong = (inter.x - this.x) * this.dirX + (inter.y - this.y) * this.dirY;
+            if (dotAlong > 20) targetSpeed = 0;
+            break;
+          }
+        }
+
         const frontX = this.x + this.dirX * this.length * 0.5;
         const frontY = this.y + this.dirY * this.length * 0.5;
         for (const p of pedestrians) {

@@ -65,6 +65,15 @@ export interface DeliveryLane {
   stripH: number;
 }
 
+export interface IntersectionDef {
+  x: number;
+  y: number;
+  hasNorth: boolean;
+  hasSouth: boolean;
+  hasEast: boolean;
+  hasWest: boolean;
+}
+
 export type VenueType = 'cafe' | 'bar' | 'shop' | 'restaurant' | 'bookshop';
 
 export interface VenueDef {
@@ -98,6 +107,7 @@ export class CityLayout {
   venues: VenueDef[] = [];
   entrances: PlazaEntrance[] = [];
   deliveryLanes: DeliveryLane[] = [];
+  intersections: IntersectionDef[] = [];
   plazaLamps: PlazaLampDef[] = [];
   plazaBenches: PlazaBenchDef[] = [];
   plazaBounds: { x: number; y: number; w: number; h: number };
@@ -293,16 +303,30 @@ export class CityLayout {
       }
     }
 
-    // Crosswalks at intersections (only outside plaza)
+    // Crosswalks + intersections at grid crossings (only outside plaza)
     for (let r = 0; r <= this.gridRows; r++) {
       for (let c = 0; c <= this.gridCols; c++) {
         const ix = offsetX + c * cellSize;
         const iy = offsetY + r * cellSize;
-        // Skip crosswalks inside the plaza
+        // Skip inside the plaza
         if (ix > pb.x && ix < pb.x + pb.w && iy > pb.y && iy < pb.y + pb.h) continue;
         this.walkableRects.push({
           x: ix - ROAD_WIDTH / 2 - 4, y: iy - ROAD_WIDTH / 2 - 4,
           w: ROAD_WIDTH + 8, h: ROAD_WIDTH + 8, type: 'crosswalk',
+        });
+        // Check which directions have roads at this intersection
+        const hasRoadAt = (x: number, y: number) =>
+          this.roads.some(rd =>
+            x >= rd.x - 2 && x <= rd.x + rd.w + 2 &&
+            y >= rd.y - 2 && y <= rd.y + rd.h + 2
+          );
+        const offset = ROAD_WIDTH;
+        this.intersections.push({
+          x: ix, y: iy,
+          hasNorth: hasRoadAt(ix, iy - offset),
+          hasSouth: hasRoadAt(ix, iy + offset),
+          hasEast: hasRoadAt(ix + offset, iy),
+          hasWest: hasRoadAt(ix - offset, iy),
         });
       }
     }
@@ -942,6 +966,59 @@ export class CityLayout {
       grad.addColorStop(1, 'rgba(255, 200, 100, 0)');
       ctx.fillStyle = grad;
       ctx.fillRect(lamp.x - glowR, lamp.y - glowR, glowR * 2, glowR * 2);
+    }
+  }
+
+  drawTrafficLights(ctx: CanvasRenderingContext2D, nightAlpha: number, trafficPhase: number) {
+    const hw = ROAD_WIDTH / 2;
+    for (const inter of this.intersections) {
+      // Determine signal colors for horizontal and vertical roads
+      let hColor: string;
+      let vColor: string;
+      if (trafficPhase < 0.45) {
+        hColor = 'green'; vColor = 'red';
+      } else if (trafficPhase < 0.50) {
+        hColor = 'yellow'; vColor = 'yellow';
+      } else if (trafficPhase < 0.95) {
+        hColor = 'red'; vColor = 'green';
+      } else {
+        hColor = 'yellow'; vColor = 'yellow';
+      }
+
+      const colorToRgba = (c: string, a: number) => {
+        if (c === 'green') return `rgba(50, 200, 50, ${a})`;
+        if (c === 'red') return `rgba(200, 50, 50, ${a})`;
+        return `rgba(220, 200, 50, ${a})`;
+      };
+
+      // Draw dots at intersection corners — one per corner
+      const corners = [
+        { x: inter.x - hw + 2, y: inter.y - hw + 2, dir: 'h' }, // top-left → horizontal
+        { x: inter.x + hw - 2, y: inter.y - hw + 2, dir: 'v' }, // top-right → vertical
+        { x: inter.x - hw + 2, y: inter.y + hw - 2, dir: 'v' }, // bottom-left → vertical
+        { x: inter.x + hw - 2, y: inter.y + hw - 2, dir: 'h' }, // bottom-right → horizontal
+      ];
+
+      for (const corner of corners) {
+        const signal = corner.dir === 'h' ? hColor : vColor;
+        const alpha = 0.7;
+
+        // Night glow
+        if (nightAlpha > 0.1) {
+          const glowR = 5;
+          const grad = ctx.createRadialGradient(corner.x, corner.y, 0, corner.x, corner.y, glowR);
+          grad.addColorStop(0, colorToRgba(signal, nightAlpha * 0.4));
+          grad.addColorStop(1, colorToRgba(signal, 0));
+          ctx.fillStyle = grad;
+          ctx.fillRect(corner.x - glowR, corner.y - glowR, glowR * 2, glowR * 2);
+        }
+
+        // Dot
+        ctx.fillStyle = colorToRgba(signal, alpha);
+        ctx.beginPath();
+        ctx.arc(corner.x, corner.y, 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
   }
 
