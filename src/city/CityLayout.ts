@@ -952,98 +952,255 @@ export class CityLayout {
         ctx.fillStyle = `rgb(${Math.floor(gr * gdf)}, ${Math.floor(gg * gdf)}, ${Math.floor(gb * gdf)})`;
         const gardenH = h.gardenSide === 'top' || h.gardenSide === 'bottom'
           ? Math.floor(h.h * 0.5) : Math.floor(h.w * 0.5);
-        if (h.gardenSide === 'top') {
-          ctx.fillRect(h.x, h.y - gardenH, h.w, gardenH);
-          // Fence
-          ctx.strokeStyle = `rgba(139, 119, 90, ${0.5 - nightAlpha * 0.2})`;
-          ctx.lineWidth = 0.8;
-          ctx.strokeRect(h.x, h.y - gardenH, h.w, gardenH);
-          // Flower dots
-          for (let i = 0; i < 3; i++) {
-            const fx = h.x + 5 + seededRandom(h.seed + i * 20) * (h.w - 10);
-            const fy = h.y - gardenH + 5 + seededRandom(h.seed + i * 20 + 5) * (gardenH - 10);
-            const flowerColors = ['#ff6b9d', '#ffd93d', '#6bcb77', '#4d96ff'];
-            ctx.fillStyle = flowerColors[i % flowerColors.length];
-            ctx.beginPath();
-            ctx.arc(fx, fy, 1.5, 0, Math.PI * 2);
-            ctx.fill();
-          }
-        } else {
-          ctx.fillRect(h.x, h.y + h.h, h.w, gardenH);
-          ctx.strokeStyle = `rgba(139, 119, 90, ${0.5 - nightAlpha * 0.2})`;
-          ctx.lineWidth = 0.8;
-          ctx.strokeRect(h.x, h.y + h.h, h.w, gardenH);
-          for (let i = 0; i < 3; i++) {
-            const fx = h.x + 5 + seededRandom(h.seed + i * 20) * (h.w - 10);
-            const fy = h.y + h.h + 5 + seededRandom(h.seed + i * 20 + 5) * (gardenH - 10);
-            const flowerColors = ['#ff6b9d', '#ffd93d', '#6bcb77', '#4d96ff'];
-            ctx.fillStyle = flowerColors[i % flowerColors.length];
-            ctx.beginPath();
-            ctx.arc(fx, fy, 1.5, 0, Math.PI * 2);
-            ctx.fill();
-          }
+        const gardenY = h.gardenSide === 'top' ? h.y - gardenH : h.y + h.h;
+        ctx.fillRect(h.x, gardenY, h.w, gardenH);
+        // Fence
+        ctx.strokeStyle = `rgba(139, 119, 90, ${0.5 - nightAlpha * 0.2})`;
+        ctx.lineWidth = 0.8;
+        ctx.strokeRect(h.x, gardenY, h.w, gardenH);
+        // Fence posts
+        for (let fp = h.x; fp <= h.x + h.w; fp += 8) {
+          ctx.fillStyle = `rgba(139, 119, 90, ${0.35 - nightAlpha * 0.15})`;
+          ctx.fillRect(fp - 0.5, gardenY, 1, 1.5);
+          ctx.fillRect(fp - 0.5, gardenY + gardenH - 1.5, 1, 1.5);
+        }
+        // Flower dots and small garden bushes
+        for (let i = 0; i < 4; i++) {
+          const fx = h.x + 4 + seededRandom(h.seed + i * 20) * (h.w - 8);
+          const fy = gardenY + 4 + seededRandom(h.seed + i * 20 + 5) * (gardenH - 8);
+          const flowerColors = ['#ff6b9d', '#ffd93d', '#6bcb77', '#4d96ff', '#ff9ff3'];
+          ctx.fillStyle = flowerColors[i % flowerColors.length];
+          ctx.beginPath();
+          ctx.arc(fx, fy, 1.2 + seededRandom(h.seed + i * 30) * 0.8, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        // Small garden bush
+        if (seededRandom(h.seed + 750) > 0.4) {
+          const bx = h.x + h.w * (0.2 + seededRandom(h.seed + 760) * 0.6);
+          const by = gardenY + gardenH * 0.5;
+          const bushGreen = Math.max(0, 100 - nightAlpha * 50);
+          ctx.fillStyle = `hsl(${bushGreen + 20}, 45%, ${30 - nightAlpha * 12}%)`;
+          ctx.beginPath();
+          ctx.arc(bx, by, 3 + seededRandom(h.seed + 770) * 2, 0, Math.PI * 2);
+          ctx.fill();
         }
       }
 
       // House shadow
-      ctx.fillStyle = `rgba(0, 0, 0, ${0.12 + nightAlpha * 0.05})`;
-      ctx.fillRect(h.x + 2, h.y + 2, h.w, h.h);
+      ctx.fillStyle = `rgba(0, 0, 0, ${0.14 + nightAlpha * 0.06})`;
+      ctx.fillRect(h.x + 2.5, h.y + 2.5, h.w, h.h);
 
-      // House body
-      const hr = parseInt(h.color.slice(1, 3), 16);
-      const hg = parseInt(h.color.slice(3, 5), 16);
-      const hb = parseInt(h.color.slice(5, 7), 16);
-      ctx.fillStyle = `rgb(${Math.floor(hr * darkFactor)}, ${Math.floor(hg * darkFactor)}, ${Math.floor(hb * darkFactor)})`;
-      ctx.fillRect(h.x, h.y, h.w, h.h);
-      ctx.strokeStyle = `rgba(0,0,0,${0.12 + nightAlpha * 0.08})`;
-      ctx.lineWidth = 0.8;
-      ctx.strokeRect(h.x, h.y, h.w, h.h);
+      // Determine roof style from seed: 0 = gabled (ridge runs left-right),
+      // 1 = hip roof, 2 = gabled rotated (ridge runs top-bottom)
+      const roofStyle = Math.floor(seededRandom(h.seed + 1500) * 3);
 
-      // Roof (top-down view: darker strip at the top)
       const rr = parseInt(h.roofColor.slice(1, 3), 16);
       const rg = parseInt(h.roofColor.slice(3, 5), 16);
       const rb = parseInt(h.roofColor.slice(5, 7), 16);
-      ctx.fillStyle = `rgb(${Math.floor(rr * darkFactor)}, ${Math.floor(rg * darkFactor)}, ${Math.floor(rb * darkFactor)})`;
-      const roofH = Math.max(4, h.h * 0.2);
-      ctx.fillRect(h.x, h.y, h.w, roofH);
+      const roofBase = `rgb(${Math.floor(rr * darkFactor)}, ${Math.floor(rg * darkFactor)}, ${Math.floor(rb * darkFactor)})`;
+      const roofLight = `rgb(${Math.floor(rr * darkFactor * 1.15)}, ${Math.floor(rg * darkFactor * 1.1)}, ${Math.floor(rb * darkFactor * 1.05)})`;
+      const roofDark = `rgb(${Math.floor(rr * darkFactor * 0.8)}, ${Math.floor(rg * darkFactor * 0.8)}, ${Math.floor(rb * darkFactor * 0.8)})`;
 
-      // Door
-      ctx.fillStyle = `rgba(100, 60, 30, ${0.7 - nightAlpha * 0.2})`;
-      const doorW = Math.min(6, h.w * 0.2);
-      const doorH = Math.min(8, h.h * 0.3);
-      ctx.fillRect(h.x + h.w / 2 - doorW / 2, h.y + h.h - doorH, doorW, doorH);
+      const cx = h.x + h.w / 2;
+      const cy = h.y + h.h / 2;
 
-      // Windows
-      if (nightAlpha > 0.1) {
-        const winAlpha = nightAlpha * 1.0;
-        const winSize = 3;
-        const windowPositions = [
-          { x: h.x + h.w * 0.25, y: h.y + roofH + 4 },
-          { x: h.x + h.w * 0.65, y: h.y + roofH + 4 },
-        ];
-        for (const wp of windowPositions) {
-          if (wp.x + winSize < h.x + h.w && wp.y + winSize < h.y + h.h) {
-            const isLit = seededRandom(h.seed + wp.x * 7 + wp.y * 13) > 0.3;
-            if (isLit) {
-              ctx.fillStyle = `rgba(255, 220, 120, ${winAlpha * 0.9})`;
-              ctx.fillRect(wp.x, wp.y, winSize, winSize);
-            }
-          }
+      if (roofStyle === 0) {
+        // Gabled roof — ridge runs left↔right, slopes face top and bottom
+        // Two triangular slopes meeting at a horizontal ridge line
+
+        // South-facing slope (lighter — catches more sun from bird's eye)
+        ctx.fillStyle = roofLight;
+        ctx.beginPath();
+        ctx.moveTo(h.x, h.y + h.h);         // bottom-left
+        ctx.lineTo(h.x + h.w, h.y + h.h);   // bottom-right
+        ctx.lineTo(h.x + h.w, cy);           // ridge-right
+        ctx.lineTo(h.x, cy);                 // ridge-left
+        ctx.closePath();
+        ctx.fill();
+
+        // North-facing slope (darker — in shadow)
+        ctx.fillStyle = roofDark;
+        ctx.beginPath();
+        ctx.moveTo(h.x, h.y);               // top-left
+        ctx.lineTo(h.x + h.w, h.y);         // top-right
+        ctx.lineTo(h.x + h.w, cy);          // ridge-right
+        ctx.lineTo(h.x, cy);                // ridge-left
+        ctx.closePath();
+        ctx.fill();
+
+        // Ridge line
+        ctx.strokeStyle = `rgba(0,0,0,${0.25 + nightAlpha * 0.1})`;
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(h.x, cy);
+        ctx.lineTo(h.x + h.w, cy);
+        ctx.stroke();
+
+        // Tile lines (horizontal rows)
+        ctx.strokeStyle = `rgba(0,0,0,${0.06})`;
+        ctx.lineWidth = 0.4;
+        const tileSpacing = 4;
+        for (let ty = h.y + tileSpacing; ty < h.y + h.h; ty += tileSpacing) {
+          if (Math.abs(ty - cy) < 1) continue; // skip ridge
+          ctx.beginPath();
+          ctx.moveTo(h.x + 1, ty);
+          ctx.lineTo(h.x + h.w - 1, ty);
+          ctx.stroke();
         }
+
+      } else if (roofStyle === 1) {
+        // Hip roof — all four edges slope inward to a smaller rectangle at the top
+        const inset = Math.min(h.w, h.h) * 0.3;
+
+        // Four triangular/trapezoidal faces
+        // Bottom face (lighter)
+        ctx.fillStyle = roofLight;
+        ctx.beginPath();
+        ctx.moveTo(h.x, h.y + h.h);
+        ctx.lineTo(h.x + h.w, h.y + h.h);
+        ctx.lineTo(h.x + h.w - inset, h.y + h.h - inset);
+        ctx.lineTo(h.x + inset, h.y + h.h - inset);
+        ctx.closePath();
+        ctx.fill();
+
+        // Top face (darker)
+        ctx.fillStyle = roofDark;
+        ctx.beginPath();
+        ctx.moveTo(h.x, h.y);
+        ctx.lineTo(h.x + h.w, h.y);
+        ctx.lineTo(h.x + h.w - inset, h.y + inset);
+        ctx.lineTo(h.x + inset, h.y + inset);
+        ctx.closePath();
+        ctx.fill();
+
+        // Left face
+        ctx.fillStyle = roofBase;
+        ctx.beginPath();
+        ctx.moveTo(h.x, h.y);
+        ctx.lineTo(h.x, h.y + h.h);
+        ctx.lineTo(h.x + inset, h.y + h.h - inset);
+        ctx.lineTo(h.x + inset, h.y + inset);
+        ctx.closePath();
+        ctx.fill();
+
+        // Right face (slightly lighter)
+        ctx.fillStyle = roofLight;
+        ctx.globalAlpha = 0.9;
+        ctx.beginPath();
+        ctx.moveTo(h.x + h.w, h.y);
+        ctx.lineTo(h.x + h.w, h.y + h.h);
+        ctx.lineTo(h.x + h.w - inset, h.y + h.h - inset);
+        ctx.lineTo(h.x + h.w - inset, h.y + inset);
+        ctx.closePath();
+        ctx.fill();
+        ctx.globalAlpha = 1;
+
+        // Ridge lines (the four edges from corner to inner rect)
+        ctx.strokeStyle = `rgba(0,0,0,${0.2 + nightAlpha * 0.1})`;
+        ctx.lineWidth = 0.8;
+        ctx.beginPath();
+        ctx.moveTo(h.x, h.y); ctx.lineTo(h.x + inset, h.y + inset);
+        ctx.moveTo(h.x + h.w, h.y); ctx.lineTo(h.x + h.w - inset, h.y + inset);
+        ctx.moveTo(h.x, h.y + h.h); ctx.lineTo(h.x + inset, h.y + h.h - inset);
+        ctx.moveTo(h.x + h.w, h.y + h.h); ctx.lineTo(h.x + h.w - inset, h.y + h.h - inset);
+        ctx.stroke();
+
+        // Inner rectangle outline (the flat top)
+        ctx.strokeStyle = `rgba(0,0,0,${0.15})`;
+        ctx.lineWidth = 0.6;
+        ctx.strokeRect(h.x + inset, h.y + inset, h.w - inset * 2, h.h - inset * 2);
+
       } else {
-        // Daytime window outlines
-        ctx.fillStyle = `rgba(180, 210, 230, 0.5)`;
-        const winSize = 3;
+        // Gabled rotated — ridge runs top↔bottom, slopes face left and right
+
+        // Right-facing slope (lighter)
+        ctx.fillStyle = roofLight;
+        ctx.beginPath();
+        ctx.moveTo(h.x + h.w, h.y);          // top-right
+        ctx.lineTo(h.x + h.w, h.y + h.h);    // bottom-right
+        ctx.lineTo(cx, h.y + h.h);            // ridge-bottom
+        ctx.lineTo(cx, h.y);                  // ridge-top
+        ctx.closePath();
+        ctx.fill();
+
+        // Left-facing slope (darker)
+        ctx.fillStyle = roofDark;
+        ctx.beginPath();
+        ctx.moveTo(h.x, h.y);                // top-left
+        ctx.lineTo(h.x, h.y + h.h);          // bottom-left
+        ctx.lineTo(cx, h.y + h.h);           // ridge-bottom
+        ctx.lineTo(cx, h.y);                 // ridge-top
+        ctx.closePath();
+        ctx.fill();
+
+        // Ridge line (vertical)
+        ctx.strokeStyle = `rgba(0,0,0,${0.25 + nightAlpha * 0.1})`;
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(cx, h.y);
+        ctx.lineTo(cx, h.y + h.h);
+        ctx.stroke();
+
+        // Tile lines (vertical rows)
+        ctx.strokeStyle = `rgba(0,0,0,${0.06})`;
+        ctx.lineWidth = 0.4;
+        const tileSpacing = 4;
+        for (let tx = h.x + tileSpacing; tx < h.x + h.w; tx += tileSpacing) {
+          if (Math.abs(tx - cx) < 1) continue;
+          ctx.beginPath();
+          ctx.moveTo(tx, h.y + 1);
+          ctx.lineTo(tx, h.y + h.h - 1);
+          ctx.stroke();
+        }
+      }
+
+      // Outline
+      ctx.strokeStyle = `rgba(0,0,0,${0.15 + nightAlpha * 0.08})`;
+      ctx.lineWidth = 0.8;
+      ctx.strokeRect(h.x, h.y, h.w, h.h);
+
+      // Chimney (small rectangle on one side of ridge)
+      if (seededRandom(h.seed + 2000) > 0.35) {
+        const chimW = 3;
+        const chimH = 4;
+        const chimX = h.x + h.w * (0.7 + seededRandom(h.seed + 2010) * 0.2);
+        const chimY = h.y + h.h * 0.15;
+        ctx.fillStyle = `rgba(${Math.floor(120 * darkFactor)}, ${Math.floor(100 * darkFactor)}, ${Math.floor(90 * darkFactor)}, 0.9)`;
+        ctx.fillRect(chimX, chimY, chimW, chimH);
+        ctx.strokeStyle = `rgba(0,0,0,0.2)`;
+        ctx.lineWidth = 0.5;
+        ctx.strokeRect(chimX, chimY, chimW, chimH);
+      }
+
+      // Lit windows at night (visible through roof — skylight effect)
+      if (nightAlpha > 0.1) {
+        const winAlpha = nightAlpha * 0.8;
+        const winSize = 2.5;
+        // Two skylights
         const windowPositions = [
-          { x: h.x + h.w * 0.25, y: h.y + roofH + 4 },
-          { x: h.x + h.w * 0.65, y: h.y + roofH + 4 },
+          { x: h.x + h.w * 0.3, y: h.y + h.h * 0.35 },
+          { x: h.x + h.w * 0.6, y: h.y + h.h * 0.65 },
         ];
         for (const wp of windowPositions) {
-          if (wp.x + winSize < h.x + h.w && wp.y + winSize < h.y + h.h) {
-            ctx.fillRect(wp.x, wp.y, winSize, winSize);
+          const isLit = seededRandom(h.seed + wp.x * 7 + wp.y * 13) > 0.35;
+          if (isLit) {
+            // Warm glow
+            ctx.fillStyle = `rgba(255, 220, 120, ${winAlpha * 0.7})`;
+            ctx.fillRect(wp.x - winSize / 2, wp.y - winSize / 2, winSize, winSize);
+            // Tiny glow around it
+            const gr = ctx.createRadialGradient(wp.x, wp.y, 0, wp.x, wp.y, 5);
+            gr.addColorStop(0, `rgba(255, 210, 100, ${nightAlpha * 0.15})`);
+            gr.addColorStop(1, 'rgba(255, 210, 100, 0)');
+            ctx.fillStyle = gr;
+            ctx.fillRect(wp.x - 5, wp.y - 5, 10, 10);
           }
         }
       }
+
+      // Front door step (small rectangle at building edge)
+      const doorStepAlpha = 0.4 - nightAlpha * 0.15;
+      ctx.fillStyle = `rgba(160, 140, 120, ${doorStepAlpha})`;
+      ctx.fillRect(h.x + h.w / 2 - 2.5, h.y + h.h - 0.5, 5, 2);
     }
   }
 
