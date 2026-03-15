@@ -760,12 +760,22 @@ export class CityLayout {
         }
       }
 
-      // Venue name label
+      // Venue name label — rotate for left/right facing venues so text fits
       ctx.fillStyle = `rgba(255,255,255,${0.8 - nightAlpha * 0.3})`;
       ctx.font = 'bold 8px sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(v.name, v.x + v.w / 2, v.y + v.h / 2);
+      const labelX = v.x + v.w / 2;
+      const labelY = v.y + v.h / 2;
+      if (v.facingPlaza === 'left' || v.facingPlaza === 'right') {
+        ctx.save();
+        ctx.translate(labelX, labelY);
+        ctx.rotate(-Math.PI / 2);
+        ctx.fillText(v.name, 0, 0);
+        ctx.restore();
+      } else {
+        ctx.fillText(v.name, labelX, labelY);
+      }
 
       // Door light at night
       if (nightAlpha > 0.1) {

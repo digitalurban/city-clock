@@ -121,15 +121,15 @@ export class Weather {
     this.worldH = worldH;
     this.initialised = true;
 
-    // Create parallax cloud layers:
-    // Layer 0 (far): large, slow, faint — always visible for depth
-    // Layer 1 (mid): medium speed/size — visible in all weather
-    // Layer 2 (near): faster, smaller, more opaque — more visible when cloudy/rain
+    // Create parallax cloud layers — Nintendo-style fluffy clouds
+    // Layer 0 (far): large, slow — always visible for ambient depth
+    // Layer 1 (mid): medium — visible in all weather
+    // Layer 2 (near): smaller, faster — more prominent when cloudy/rain
     this.clouds = [];
     const layerConfigs = [
-      { count: 8, wMin: 150, wMax: 350, hMin: 45, hMax: 80, speedMin: 0.06, speedMax: 0.12, opMin: 0.25, opMax: 0.45 },
-      { count: 6, wMin: 100, wMax: 200, hMin: 30, hMax: 55, speedMin: 0.15, speedMax: 0.28, opMin: 0.20, opMax: 0.35 },
-      { count: 5, wMin: 60, wMax: 140, hMin: 22, hMax: 40, speedMin: 0.25, speedMax: 0.45, opMin: 0.18, opMax: 0.30 },
+      { count: 10, wMin: 180, wMax: 400, hMin: 55, hMax: 100, speedMin: 0.05, speedMax: 0.10, opMin: 0.35, opMax: 0.55 },
+      { count: 8,  wMin: 120, wMax: 250, hMin: 40, hMax: 70,  speedMin: 0.12, speedMax: 0.22, opMin: 0.30, opMax: 0.50 },
+      { count: 6,  wMin: 80,  wMax: 160, hMin: 28, hMax: 50,  speedMin: 0.20, speedMax: 0.38, opMin: 0.25, opMax: 0.45 },
     ];
 
     for (let layer = 0; layer < layerConfigs.length; layer++) {
@@ -137,7 +137,7 @@ export class Weather {
       for (let i = 0; i < cfg.count; i++) {
         this.clouds.push({
           x: Math.random() * worldW,
-          y: Math.random() * worldH * 0.6,
+          y: Math.random() * worldH * 0.85,
           w: cfg.wMin + Math.random() * (cfg.wMax - cfg.wMin),
           h: cfg.hMin + Math.random() * (cfg.hMax - cfg.hMin),
           speed: cfg.speedMin + Math.random() * (cfg.speedMax - cfg.speedMin),
@@ -212,7 +212,7 @@ export class Weather {
       cloud.x += cloud.speed;
       if (cloud.x > this.worldW + cloud.w) {
         cloud.x = -cloud.w;
-        cloud.y = Math.random() * this.worldH * 0.6;
+        cloud.y = Math.random() * this.worldH * 0.85;
       }
     }
   }
@@ -260,14 +260,14 @@ export class Weather {
     for (const cloud of this.clouds) {
       let layerAlpha: number;
       if (cloud.layer === 0) {
-        // Far layer: always clearly visible for ambient sky depth
-        layerAlpha = cloud.opacity * (0.7 + this.alpha * 0.3);
+        // Far layer: always clearly visible — big fluffy background clouds
+        layerAlpha = cloud.opacity * (0.8 + this.alpha * 0.2);
       } else if (cloud.layer === 1) {
         // Mid layer: visible in clear, fuller in cloudy
-        layerAlpha = cloud.opacity * (0.45 + this.alpha * 0.55);
+        layerAlpha = cloud.opacity * (0.6 + this.alpha * 0.4);
       } else {
-        // Near layer: faint in clear, prominent in cloudy/rain
-        layerAlpha = cloud.opacity * (0.15 + this.alpha * 0.85);
+        // Near layer: visible in clear, prominent in cloudy/rain
+        layerAlpha = cloud.opacity * (0.35 + this.alpha * 0.65);
       }
 
       // Reduce at night
@@ -289,96 +289,113 @@ export class Weather {
         return rngState / 233280;
       };
 
-      // Determine cloud type from seed: < 0.35 = flat/stratus, else = puffy/cumulus
-      const typeRoll = (cloud.seed % 100) / 100;
-      const isStratus = typeRoll < 0.35;
+      // --- Nintendo-style fluffy cloud ---
+      // Build a cloud from round puffs on top + flat bottom, like Mario/Kirby clouds.
+      // Each cloud has 3-5 circular puffs arranged along the top with varying radii,
+      // then the bottom is filled flat to create the classic silhouette.
 
-      // Generate 6-10 overlapping lobes for the main cloud body
-      const lobeCount = 6 + Math.floor(seededRandom() * 5); // 6-10
-
-      interface Lobe {
-        ox: number; oy: number; rx: number; ry: number;
+      const puffCount = 3 + Math.floor(seededRandom() * 3); // 3-5 puffs
+      interface Puff {
+        px: number; py: number; r: number;
       }
-      const lobes: Lobe[] = [];
+      const puffs: Puff[] = [];
 
-      for (let i = 0; i < lobeCount; i++) {
-        const t = i / (lobeCount - 1); // 0..1 across cloud width
-        const xSpread = (t - 0.5) * 2; // -1..1
+      // The base/bottom Y of the cloud (flat edge)
+      const baseY = cy + hh * 0.25;
 
-        let ox: number, oy: number, rx: number, ry: number;
+      // Generate puffs arranged along the top arc
+      for (let i = 0; i < puffCount; i++) {
+        const t = puffCount <= 1 ? 0.5 : i / (puffCount - 1); // 0..1
+        const xPos = cx + (t - 0.5) * hw * 1.6;
 
-        if (isStratus) {
-          // Stratus: wide, flat — lobes spread horizontally with small vertical extent
-          ox = xSpread * hw * 0.9;
-          oy = (seededRandom() - 0.5) * hh * 0.3;
-          rx = hw * (0.3 + seededRandom() * 0.25);
-          ry = hh * (0.35 + seededRandom() * 0.2);
-        } else {
-          // Cumulus: taller center, rounded puffs — lobes arc upward in the middle
-          const archRise = (1 - xSpread * xSpread); // parabolic, peaks at center
-          ox = xSpread * hw * 0.85;
-          oy = -archRise * hh * (0.5 + seededRandom() * 0.4) + (seededRandom() - 0.4) * hh * 0.2;
-          rx = hw * (0.25 + seededRandom() * 0.25);
-          ry = hh * (0.45 + seededRandom() * 0.35);
+        // Middle puffs are bigger, edge puffs are smaller — creates classic rounded top
+        const centeredness = 1 - Math.abs(t - 0.5) * 2; // 0 at edges, 1 at center
+        const baseRadius = hh * (0.55 + centeredness * 0.45);
+        const r = baseRadius * (0.8 + seededRandom() * 0.4);
+
+        // Puffs rise above the base line, center ones rise higher
+        const rise = centeredness * hh * 0.5 + seededRandom() * hh * 0.15;
+        const yPos = baseY - r * 0.7 - rise;
+
+        puffs.push({ px: xPos, py: yPos, r });
+      }
+
+      // --- Build the cloud silhouette path ---
+      // This creates a single filled shape: arcs for each puff on top,
+      // then a flat line along the bottom.
+      const drawCloudPath = () => {
+        ctx.beginPath();
+
+        // Find leftmost and rightmost extents
+        let leftX = Infinity, rightX = -Infinity;
+        for (const p of puffs) {
+          leftX = Math.min(leftX, p.px - p.r);
+          rightX = Math.max(rightX, p.px + p.r);
         }
 
-        lobes.push({ ox, oy, rx, ry });
-      }
+        // Start at bottom-left
+        ctx.moveTo(leftX, baseY);
 
-      // --- Shadow layer (bottom/darker) ---
-      for (const lobe of lobes) {
-        const shadowGrey = Math.max(0, grey - 35);
-        ctx.fillStyle = `rgba(${shadowGrey}, ${shadowGrey + 3}, ${shadowGrey + 8}, ${layerAlpha * 0.55})`;
-        ctx.beginPath();
-        ctx.ellipse(
-          cx + lobe.ox,
-          cy + lobe.oy + hh * 0.18,
-          lobe.rx * 0.95,
-          lobe.ry * 0.6,
-          0, 0, Math.PI * 2
+        // Draw puff arcs from left to right (top of cloud)
+        // Sort puffs by x position
+        const sorted = [...puffs].sort((a, b) => a.px - b.px);
+        for (const p of sorted) {
+          ctx.arc(p.px, p.py, p.r, Math.PI, 0, false);
+        }
+
+        // Close with flat bottom
+        ctx.lineTo(rightX, baseY);
+        ctx.closePath();
+      };
+
+      // --- Drop shadow (offset down and right) ---
+      ctx.save();
+      ctx.fillStyle = `rgba(0, 0, 0, ${layerAlpha * 0.12})`;
+      ctx.translate(hw * 0.03, hh * 0.12);
+      drawCloudPath();
+      ctx.fill();
+      ctx.restore();
+
+      // --- Main cloud body ---
+      ctx.fillStyle = `rgba(${grey + 10}, ${grey + 12}, ${grey + 15}, ${layerAlpha})`;
+      drawCloudPath();
+      ctx.fill();
+
+      // --- Bottom shading (subtle darker band along the flat base) ---
+      ctx.save();
+      const bottomGrad = ctx.createLinearGradient(cx, baseY - hh * 0.35, cx, baseY);
+      const darkGrey = Math.max(0, grey - 25);
+      bottomGrad.addColorStop(0, `rgba(${grey + 10}, ${grey + 12}, ${grey + 15}, 0)`);
+      bottomGrad.addColorStop(0.6, `rgba(${darkGrey}, ${darkGrey + 5}, ${darkGrey + 10}, ${layerAlpha * 0.3})`);
+      bottomGrad.addColorStop(1, `rgba(${darkGrey}, ${darkGrey + 5}, ${darkGrey + 10}, ${layerAlpha * 0.5})`);
+      ctx.fillStyle = bottomGrad;
+      drawCloudPath();
+      ctx.fill();
+      ctx.restore();
+
+      // --- Top highlight on each puff (bright white caps) ---
+      for (const p of puffs) {
+        const hiGrey = Math.min(255, grey + 40);
+        const grad = ctx.createRadialGradient(
+          p.px - p.r * 0.15, p.py - p.r * 0.25, p.r * 0.1,
+          p.px, p.py, p.r
         );
-        ctx.fill();
-      }
-
-      // --- Main body (mid-tone) ---
-      for (const lobe of lobes) {
-        ctx.fillStyle = `rgba(${grey}, ${grey + 5}, ${grey + 10}, ${layerAlpha})`;
+        grad.addColorStop(0, `rgba(${hiGrey}, ${hiGrey + 2}, ${hiGrey + 5}, ${layerAlpha * 0.6})`);
+        grad.addColorStop(0.5, `rgba(${hiGrey}, ${hiGrey + 2}, ${hiGrey + 5}, ${layerAlpha * 0.15})`);
+        grad.addColorStop(1, `rgba(${hiGrey}, ${hiGrey + 2}, ${hiGrey + 5}, 0)`);
+        ctx.fillStyle = grad;
         ctx.beginPath();
-        ctx.ellipse(cx + lobe.ox, cy + lobe.oy, lobe.rx, lobe.ry, 0, 0, Math.PI * 2);
+        ctx.arc(p.px, p.py, p.r * 0.85, 0, Math.PI * 2);
         ctx.fill();
       }
 
-      // --- Highlight layer (top/lighter) ---
-      for (const lobe of lobes) {
-        const hiGrey = Math.min(255, grey + 30);
-        ctx.fillStyle = `rgba(${hiGrey}, ${hiGrey + 3}, ${hiGrey + 5}, ${layerAlpha * 0.45})`;
-        ctx.beginPath();
-        ctx.ellipse(
-          cx + lobe.ox - lobe.rx * 0.05,
-          cy + lobe.oy - lobe.ry * 0.35,
-          lobe.rx * 0.75,
-          lobe.ry * 0.45,
-          0, 0, Math.PI * 2
-        );
-        ctx.fill();
-      }
+      // --- Outline to define the shape crisply (very subtle) ---
+      ctx.strokeStyle = `rgba(${Math.max(0, grey - 30)}, ${Math.max(0, grey - 25)}, ${Math.max(0, grey - 20)}, ${layerAlpha * 0.15})`;
+      ctx.lineWidth = 1;
+      drawCloudPath();
+      ctx.stroke();
 
-      // --- Wispy edges: smaller semi-transparent ellipses around the perimeter ---
-      const wispCount = 4 + Math.floor(seededRandom() * 4); // 4-7 wisps
-      for (let i = 0; i < wispCount; i++) {
-        const angle = seededRandom() * Math.PI * 2;
-        const dist = 0.7 + seededRandom() * 0.45;
-        const wx = cx + Math.cos(angle) * hw * dist;
-        const wy = cy + Math.sin(angle) * hh * dist * 0.6;
-        const wr = hw * (0.1 + seededRandom() * 0.15);
-        const wry = hh * (0.15 + seededRandom() * 0.12);
-        ctx.fillStyle = `rgba(${grey + 10}, ${grey + 15}, ${grey + 18}, ${layerAlpha * (0.15 + seededRandom() * 0.2)})`;
-        ctx.beginPath();
-        ctx.ellipse(wx, wy, wr, wry, seededRandom() * Math.PI, 0, Math.PI * 2);
-        ctx.fill();
-      }
-
-      // --- Cloud shadow on ground with soft gradient ---
+      // --- Cloud shadow on ground ---
       if (cloud.layer <= 1 && layerAlpha > 0.03) {
         const shadowOffsetY = (cloud.layer === 0 ? 80 : 40);
         const shadowScale = cloud.layer === 0 ? 1.2 : 1.0;
@@ -386,7 +403,7 @@ export class Weather {
         const sx = cx + shadowOffsetY * 0.3;
         const sy = cy + shadowOffsetY;
         const srx = hw * shadowScale;
-        const sry = hh * shadowScale * 0.5;
+        const sry = hh * shadowScale * 0.35;
 
         const grad = ctx.createRadialGradient(sx, sy, 0, sx, sy, Math.max(srx, sry));
         grad.addColorStop(0, `rgba(0, 0, 0, ${shadowAlpha})`);

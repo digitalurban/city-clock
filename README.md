@@ -4,6 +4,12 @@ A procedurally generated top-down city where pedestrians form a digital clock in
 
 **[Live Demo](https://digitalurban.github.io/city-clock/)**
 
+![Pedestrians forming the current time in the plaza](screenshots/clock-mode.jpg)
+*Pedestrians assemble into a 4-digit time display each minute. Zoom in/out with scroll wheel or pinch.*
+
+![City life around the plaza](screenshots/city-life.jpg)
+*Between clock formations, pedestrians wander the city — visiting venues, riding bicycles, and heading home.*
+
 ## Features
 
 - **Live clock** - 112 pedestrians form seven-segment digits showing the current time (HH:MM) for 15 seconds each minute
