@@ -25,11 +25,20 @@ export class ClockManager {
   private dismissCache: Map<number, { x: number; y: number }> = new Map();
   private lastMinute: number = -1;
 
+  // Force-show: triggered by double-tap, holds clock active for CLOCK_ACTIVE_SECONDS
+  private forceShowUntil: number = 0;
+
+  /** Force the clock to show immediately for CLOCK_ACTIVE_SECONDS */
+  triggerForceShow() {
+    this.forceShowUntil = Date.now() + CLOCK_ACTIVE_SECONDS * 1000;
+    this.dismissCache.clear();
+  }
+
   update(pedestrians: Pedestrian[], plazaCenterX: number, plazaCenterY: number, plazaBounds: { x: number; y: number; w: number; h: number }) {
     const d = new Date();
     const seconds = d.getSeconds();
     const currentMinute = d.getMinutes();
-    const isClockTime = seconds < CLOCK_ACTIVE_SECONDS;
+    const isClockTime = seconds < CLOCK_ACTIVE_SECONDS || Date.now() < this.forceShowUntil;
 
     const eligible = pedestrians.filter(p => p.isClockEligible);
     const pedsPerSeg = PEDS_PER_SEGMENT;

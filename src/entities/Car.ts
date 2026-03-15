@@ -578,6 +578,9 @@ export class Car {
     }
   }
 
+  // Track how long car has been stopped (for gridlock resolution)
+  private stoppedFrames: number = 0;
+
   private updateNormal(layout: CityLayout, pedestrians: Pedestrian[], cars: Car[], trafficPhase: number) {
     let targetSpeed = this.baseSpeed;
     const frontX = this.x + this.dirX * this.length * 0.5;
@@ -585,24 +588,32 @@ export class Car {
 
     // Traffic light check (emergency vehicles ignore)
     const isEmergency = this.carType === 'police' || this.carType === 'ambulance' || this.carType === 'firetruck';
+    let stoppedAtRedLight = false;
     if (!isEmergency) {
       const signal = this.getTrafficSignal(layout, trafficPhase);
       if (signal === 'red') {
-        targetSpeed = 0;
+        // Only stop if we're NOT already inside the intersection
+        const inIntersection = this.isInsideIntersection(layout);
+        if (!inIntersection) {
+          targetSpeed = 0;
+          stoppedAtRedLight = true;
+        }
+        // If already inside intersection, keep going to clear it
       } else if (signal === 'yellow') {
-        // Check distance to intersection — stop if far, continue if close
         for (const inter of layout.intersections) {
           const dist = Math.hypot(inter.x - this.x, inter.y - this.y);
           if (dist > 50) continue;
           const dotAlong = (inter.x - this.x) * this.dirX + (inter.y - this.y) * this.dirY;
           if (dotAlong > 20) {
-            targetSpeed = 0; // far enough to stop
+            targetSpeed = 0;
+            stoppedAtRedLight = true;
           }
           break;
         }
       }
     }
 
+    // Pedestrian avoidance
     for (const p of pedestrians) {
       const dx = p.x - frontX;
       const dy = p.y - frontY;
@@ -613,6 +624,8 @@ export class Car {
       }
     }
 
+    // Car-to-car avoidance — only brake for cars going in a compatible direction
+    // to prevent cross-traffic deadlocks at intersections
     for (const other of cars) {
       if (other === this) continue;
       const dx = other.x - frontX;
@@ -620,14 +633,38 @@ export class Car {
       const along = dx * this.dirX + dy * this.dirY;
       const perp = Math.abs(dx * this.dirY - dy * this.dirX);
       if (along > 0 && along < 35 && perp < 10) {
-        targetSpeed = Math.min(targetSpeed, this.baseSpeed * (along / 35) * 0.4);
+        // Check if the other car is moving roughly in our direction or is stopped
+        // Ignore cross-traffic (perpendicular cars) to prevent intersection deadlocks
+        const dotDir = this.dirX * other.dirX + this.dirY * other.dirY;
+        if (dotDir > -0.3) {
+          // Same direction or stopped — brake normally
+          targetSpeed = Math.min(targetSpeed, this.baseSpeed * (along / 35) * 0.4);
+        }
+        // For oncoming/cross traffic, don't brake — they should yield on their phase
       }
     }
 
+    // Track stopped duration
+    if (this.currentSpeed < 0.1) {
+      this.stoppedFrames++;
+    } else {
+      this.stoppedFrames = 0;
+    }
+
     this.currentSpeed += (targetSpeed - this.currentSpeed) * 0.12;
-    // Prevent full gridlock: always creep forward slightly if stopped too long
-    if (this.currentSpeed < 0.05 && targetSpeed <= 0) {
-      this.currentSpeed = 0.03; // creep to resolve jams
+
+    // Gridlock resolution: if stopped too long (>3 seconds = ~180 frames), teleport to a new road
+    if (this.stoppedFrames > 180 && !stoppedAtRedLight) {
+      this.road = this.pickRandomRoad(layout);
+      this.placeOnRoad(this.road);
+      this.stoppedFrames = 0;
+      this.currentSpeed = this.baseSpeed;
+      return;
+    }
+
+    // Creep forward slightly to prevent permanent jams, but only when not at a red light
+    if (this.currentSpeed < 0.05 && targetSpeed <= 0 && !stoppedAtRedLight) {
+      this.currentSpeed = 0.05;
     } else if (this.currentSpeed < 0.02) {
       this.currentSpeed = 0;
     }
@@ -646,6 +683,17 @@ export class Car {
         this.placeOnRoad(this.road);
       }
     }
+  }
+
+  /** Check if the car is currently inside an intersection box */
+  private isInsideIntersection(layout: CityLayout): boolean {
+    const hw = ROAD_WIDTH * 0.7;
+    for (const inter of layout.intersections) {
+      if (Math.abs(this.x - inter.x) < hw && Math.abs(this.y - inter.y) < hw) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**
@@ -737,7 +785,10 @@ export class Car {
           const along = dx * this.dirX + dy * this.dirY;
           const perp = Math.abs(dx * this.dirY - dy * this.dirX);
           if (along > 0 && along < 30 && perp < 10) {
-            targetSpeed = Math.min(targetSpeed, this.baseSpeed * (along / 30) * 0.3);
+            const dotDir = this.dirX * other.dirX + this.dirY * other.dirY;
+            if (dotDir > -0.3) {
+              targetSpeed = Math.min(targetSpeed, this.baseSpeed * (along / 30) * 0.3);
+            }
           }
         }
         this.currentSpeed += (targetSpeed - this.currentSpeed) * 0.1;

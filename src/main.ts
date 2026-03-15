@@ -101,6 +101,32 @@ window.addEventListener('mouseup', () => {
 
 canvas.style.cursor = 'grab';
 
+// ==================== Double-tap / double-click to force clock ====================
+let lastTapTime = 0;
+let lastTapX = 0;
+let lastTapY = 0;
+canvas.addEventListener('dblclick', () => {
+  clockManager.triggerForceShow();
+});
+// Separate touchstart to record tap position for distance check
+canvas.addEventListener('touchstart', (e) => {
+  if (e.touches.length === 1) {
+    const t = e.touches[0];
+    const now = Date.now();
+    const dx = t.clientX - lastTapX;
+    const dy = t.clientY - lastTapY;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (now - lastTapTime < 300 && dist < 40) {
+      clockManager.triggerForceShow();
+      lastTapTime = 0;
+    } else {
+      lastTapTime = now;
+      lastTapX = t.clientX;
+      lastTapY = t.clientY;
+    }
+  }
+}, { passive: true });
+
 // ==================== Touch pinch zoom + drag to pan ====================
 const activeTouches: Map<number, { x: number; y: number }> = new Map();
 let lastPinchDist = -1;
@@ -210,9 +236,8 @@ function createOptionsUI() {
     font-size: 13px;
   `;
 
-  // Max cars: cap at a safe level to prevent gridlock
-  const maxCars = 500;
-  const maxPeds = 1000;
+  const maxCars = 300;
+  const maxPeds = 500;
 
   panel.innerHTML = `
     <div style="font-size: 14px; font-weight: 600; margin-bottom: 12px; color: #aab;">City Options</div>
@@ -228,7 +253,7 @@ function createOptionsUI() {
         <span>People</span>
         <span id="ped-count-label">${currentPedCount}</span>
       </label>
-      <input type="range" id="ped-slider" min="20" max="${maxPeds}" value="${currentPedCount}" style="width: 100%; accent-color: #4a9eff;">
+      <input type="range" id="ped-slider" min="${CLOCK_ELIGIBLE_COUNT}" max="${maxPeds}" value="${currentPedCount}" style="width: 100%; accent-color: #4a9eff;">
     </div>
   `;
 
@@ -299,6 +324,7 @@ function adjustCarCount(target: number) {
 }
 
 function adjustPedCount(target: number) {
+  target = Math.max(target, CLOCK_ELIGIBLE_COUNT);
   currentPedCount = target;
   setTotalPedestrians(target);
 
