@@ -2,7 +2,7 @@
   "name": "City Clock",
   "short_name": "City Clock",
   "description": "A procedurally generated city where pedestrians form a digital clock",
-  "start_url": "./",
+  "start_url": ".",
   "display": "standalone",
   "orientation": "any",
   "background_color": "#1a1a2e",

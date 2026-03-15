@@ -4,7 +4,7 @@
  * Renders parallax clouds at multiple depth layers, rain particles, and puddle shimmers.
  */
 
-type WeatherType = 'clear' | 'cloudy' | 'rain';
+type WeatherType = 'clear' | 'cloudy' | 'rain' | 'snow' | 'fog';
 
 interface RainDrop {
   x: number;
@@ -12,6 +12,7 @@ interface RainDrop {
   speed: number;
   length: number;
   opacity: number;
+  isSnow: boolean;
 }
 
 interface Cloud {
@@ -35,16 +36,18 @@ interface Puddle {
 // WMO Weather interpretation codes → WeatherType
 function wmoToWeather(code: number): WeatherType {
   // 0-1: clear, 2-3: cloudy, 45-48: fog (cloudy),
-  // 51-67: drizzle/rain, 71-77: snow (rain), 80-82: showers, 85-86: snow showers, 95-99: thunderstorm
+  // 51-67: drizzle/rain, 71-77: snow, 80-82: showers, 85-86: snow showers, 95-99: thunderstorm
   if (code <= 1) return 'clear';
   if (code <= 3) return 'cloudy';
-  if (code <= 48) return 'cloudy';
+  if (code <= 48) return 'fog';
+  if (code >= 71 && code <= 77) return 'snow';
+  if (code >= 85 && code <= 86) return 'snow';
   return 'rain';
 }
 
 export class Weather {
   private current: WeatherType = 'clear';
-  private targetAlpha: number = 0;      // 0 = clear, 0.5 = cloudy, 1 = rain
+  private targetAlpha: number = 0;      // 0 = clear, 0.5 = cloudy, 1 = rain/snow/fog intensity
   private alpha: number = 0;            // smoothed blend
   private transitionTimer: number = 0;  // frames until next weather change
   private rainDrops: RainDrop[] = [];
@@ -55,7 +58,7 @@ export class Weather {
   private initialised: boolean = false;
 
   // Real weather from Open-Meteo
-  private useRealWeather: boolean = false;
+  public useRealWeather: boolean = false;
   private realWeatherFetched: boolean = false;
   private fetchTimer: number = 0;
   private userLat: number = 0;
@@ -64,28 +67,37 @@ export class Weather {
 
   constructor() {
     this.transitionTimer = 600 + Math.random() * 1200;
-    this.requestGeolocation();
   }
 
-  /** Request user location for real weather */
-  private requestGeolocation() {
-    if (!navigator.geolocation) return;
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        this.userLat = pos.coords.latitude;
-        this.userLon = pos.coords.longitude;
+  /** Set location via city name using Open-Meteo Geocoding */
+  public async setLocation(city: string) {
+    if (!city || city.trim() === '') {
+      this.useRealWeather = false;
+      return;
+    }
+
+    try {
+      const geoUrl = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=en&format=json`;
+      const geoResp = await fetch(geoUrl);
+      const geoData = await geoResp.json();
+
+      if (geoData.results && geoData.results.length > 0) {
+        this.userLat = geoData.results[0].latitude;
+        this.userLon = geoData.results[0].longitude;
         this.useRealWeather = true;
         this.fetchWeather();
-      },
-      () => {
-        // Geolocation denied — fall back to random weather cycling
-      },
-      { timeout: 5000 }
-    );
+        console.log(`Weather location set to: ${geoData.results[0].name}, ${geoData.results[0].country}`);
+      } else {
+        console.warn(`City not found: ${city}`);
+      }
+    } catch (e) {
+      console.error('Error fetching geocoding:', e);
+    }
   }
 
   /** Fetch current weather from Open-Meteo */
   private async fetchWeather() {
+    if (!this.useRealWeather) return;
     try {
       const url = `https://api.open-meteo.com/v1/forecast?latitude=${this.userLat}&longitude=${this.userLon}&current=weather_code,cloud_cover`;
       const resp = await fetch(url);
@@ -99,7 +111,7 @@ export class Weather {
 
       if (weatherType === 'clear') {
         this.targetAlpha = 0;
-      } else if (weatherType === 'cloudy') {
+      } else if (weatherType === 'cloudy' || weatherType === 'fog') {
         // Scale alpha by cloud cover percentage
         this.targetAlpha = 0.2 + (cover / 100) * 0.3;
       } else {
@@ -128,8 +140,8 @@ export class Weather {
     this.clouds = [];
     const layerConfigs = [
       { count: 10, wMin: 180, wMax: 400, hMin: 55, hMax: 100, speedMin: 0.05, speedMax: 0.10, opMin: 0.35, opMax: 0.55 },
-      { count: 8,  wMin: 120, wMax: 250, hMin: 40, hMax: 70,  speedMin: 0.12, speedMax: 0.22, opMin: 0.30, opMax: 0.50 },
-      { count: 6,  wMin: 80,  wMax: 160, hMin: 28, hMax: 50,  speedMin: 0.20, speedMax: 0.38, opMin: 0.25, opMax: 0.45 },
+      { count: 8, wMin: 120, wMax: 250, hMin: 40, hMax: 70, speedMin: 0.12, speedMax: 0.22, opMin: 0.30, opMax: 0.50 },
+      { count: 6, wMin: 80, wMax: 160, hMin: 28, hMax: 50, speedMin: 0.20, speedMax: 0.38, opMin: 0.25, opMax: 0.45 },
     ];
 
     for (let layer = 0; layer < layerConfigs.length; layer++) {
@@ -167,12 +179,14 @@ export class Weather {
   }
 
   private newDrop(): RainDrop {
+    const isSnow = this.current === 'snow';
     return {
       x: Math.random() * this.worldW,
       y: Math.random() * this.worldH,
-      speed: 4 + Math.random() * 3,
-      length: 6 + Math.random() * 8,
-      opacity: 0.15 + Math.random() * 0.25,
+      speed: isSnow ? 1 + Math.random() * 2 : 4 + Math.random() * 3,
+      length: isSnow ? 2 + Math.random() * 2 : 6 + Math.random() * 8,
+      opacity: isSnow ? 0.3 + Math.random() * 0.5 : 0.15 + Math.random() * 0.25,
+      isSnow: isSnow
     };
   }
 
@@ -198,9 +212,14 @@ export class Weather {
     }
 
     // Animate rain drops
+    const isSnowing = this.current === 'snow';
     for (const drop of this.rainDrops) {
+      if (drop.isSnow !== isSnowing) {
+        // Re-roll drop to match current weather type if it changed
+        Object.assign(drop, this.newDrop());
+      }
       drop.y += drop.speed;
-      drop.x += 0.5; // slight wind
+      drop.x += isSnowing ? Math.sin(Date.now() / 1000 + drop.y * 0.05) * 1.5 + 0.5 : 0.5; // snow drifts
       if (drop.y > this.worldH) {
         drop.y = -drop.length;
         drop.x = Math.random() * this.worldW;
@@ -289,152 +308,94 @@ export class Weather {
         return rngState / 233280;
       };
 
-      // --- Nintendo-style fluffy cloud ---
-      // Build a cloud from round puffs on top + flat bottom, like Mario/Kirby clouds.
-      // Each cloud has 3-5 circular puffs arranged along the top with varying radii,
-      // then the bottom is filled flat to create the classic silhouette.
-
-      const puffCount = 3 + Math.floor(seededRandom() * 3); // 3-5 puffs
+      // --- Top-down fluffy cloud ---
+      // Build an organic blob of overlapping circles around the center
+      const puffCount = 5 + Math.floor(seededRandom() * 5); // 5-9 puffs
       interface Puff {
         px: number; py: number; r: number;
       }
       const puffs: Puff[] = [];
 
-      // The base/bottom Y of the cloud (flat edge)
-      const baseY = cy + hh * 0.25;
-
-      // Generate puffs arranged along the top arc
       for (let i = 0; i < puffCount; i++) {
-        const t = puffCount <= 1 ? 0.5 : i / (puffCount - 1); // 0..1
-        const xPos = cx + (t - 0.5) * hw * 1.6;
-
-        // Middle puffs are bigger, edge puffs are smaller — creates classic rounded top
-        const centeredness = 1 - Math.abs(t - 0.5) * 2; // 0 at edges, 1 at center
-        const baseRadius = hh * (0.55 + centeredness * 0.45);
-        const r = baseRadius * (0.8 + seededRandom() * 0.4);
-
-        // Puffs rise above the base line, center ones rise higher
-        const rise = centeredness * hh * 0.5 + seededRandom() * hh * 0.15;
-        const yPos = baseY - r * 0.7 - rise;
-
-        puffs.push({ px: xPos, py: yPos, r });
+        const angle = seededRandom() * Math.PI * 2;
+        const dist = seededRandom() * (hw * 0.5);
+        const px = cx + Math.cos(angle) * dist;
+        const py = cy + Math.sin(angle) * dist * (hh / hw); // squash to fit aspect ratio
+        const r = (hh * 0.4) + seededRandom() * (hh * 0.6);
+        puffs.push({ px, py, r });
       }
 
       // --- Build the cloud silhouette path ---
-      // This creates a single filled shape: arcs for each puff on top,
-      // then a flat line along the bottom.
       const drawCloudPath = () => {
         ctx.beginPath();
-
-        // Find leftmost and rightmost extents
-        let leftX = Infinity, rightX = -Infinity;
         for (const p of puffs) {
-          leftX = Math.min(leftX, p.px - p.r);
-          rightX = Math.max(rightX, p.px + p.r);
+          ctx.moveTo(p.px + p.r, p.py);
+          ctx.arc(p.px, p.py, p.r, 0, Math.PI * 2);
         }
-
-        // Start at bottom-left
-        ctx.moveTo(leftX, baseY);
-
-        // Draw puff arcs from left to right (top of cloud)
-        // Sort puffs by x position
-        const sorted = [...puffs].sort((a, b) => a.px - b.px);
-        for (const p of sorted) {
-          ctx.arc(p.px, p.py, p.r, Math.PI, 0, false);
-        }
-
-        // Close with flat bottom
-        ctx.lineTo(rightX, baseY);
-        ctx.closePath();
       };
 
-      // --- Drop shadow (offset down and right) ---
-      ctx.save();
-      ctx.fillStyle = `rgba(0, 0, 0, ${layerAlpha * 0.12})`;
-      ctx.translate(hw * 0.03, hh * 0.12);
-      drawCloudPath();
-      ctx.fill();
-      ctx.restore();
+      // --- Cloud shadow on ground ---
+      if (cloud.layer <= 1 && layerAlpha > 0.03) {
+        ctx.save();
+        const shadowOffsetY = (cloud.layer === 0 ? 80 : 40);
+        const shadowAlpha = layerAlpha * (cloud.layer === 0 ? 0.06 : 0.08);
+        ctx.fillStyle = `rgba(0, 0, 0, ${shadowAlpha})`;
+        // Translate shadow cast diagonally down/right
+        ctx.translate(hw * 0.1, shadowOffsetY);
+        drawCloudPath();
+        ctx.fill();
+        ctx.restore();
+      }
 
       // --- Main cloud body ---
       ctx.fillStyle = `rgba(${grey + 10}, ${grey + 12}, ${grey + 15}, ${layerAlpha})`;
       drawCloudPath();
       ctx.fill();
 
-      // --- Bottom shading (subtle darker band along the flat base) ---
-      ctx.save();
-      const bottomGrad = ctx.createLinearGradient(cx, baseY - hh * 0.35, cx, baseY);
-      const darkGrey = Math.max(0, grey - 25);
-      bottomGrad.addColorStop(0, `rgba(${grey + 10}, ${grey + 12}, ${grey + 15}, 0)`);
-      bottomGrad.addColorStop(0.6, `rgba(${darkGrey}, ${darkGrey + 5}, ${darkGrey + 10}, ${layerAlpha * 0.3})`);
-      bottomGrad.addColorStop(1, `rgba(${darkGrey}, ${darkGrey + 5}, ${darkGrey + 10}, ${layerAlpha * 0.5})`);
-      ctx.fillStyle = bottomGrad;
-      drawCloudPath();
-      ctx.fill();
-      ctx.restore();
-
-      // --- Top highlight on each puff (bright white caps) ---
+      // --- Cloud shading (top-down volume) ---
       for (const p of puffs) {
         const hiGrey = Math.min(255, grey + 40);
         const grad = ctx.createRadialGradient(
-          p.px - p.r * 0.15, p.py - p.r * 0.25, p.r * 0.1,
-          p.px, p.py, p.r
+          p.px - p.r * 0.2, p.py - p.r * 0.2, p.r * 0.1,
+          p.px, p.py, p.r * 1.2
         );
-        grad.addColorStop(0, `rgba(${hiGrey}, ${hiGrey + 2}, ${hiGrey + 5}, ${layerAlpha * 0.6})`);
-        grad.addColorStop(0.5, `rgba(${hiGrey}, ${hiGrey + 2}, ${hiGrey + 5}, ${layerAlpha * 0.15})`);
-        grad.addColorStop(1, `rgba(${hiGrey}, ${hiGrey + 2}, ${hiGrey + 5}, 0)`);
+        grad.addColorStop(0, `rgba(${hiGrey}, ${hiGrey + 2}, ${hiGrey + 5}, ${layerAlpha * 0.7})`);
+        grad.addColorStop(0.5, `rgba(${hiGrey}, ${hiGrey + 2}, ${hiGrey + 5}, ${layerAlpha * 0.2})`);
+        grad.addColorStop(1, `rgba(${grey}, ${grey}, ${grey}, 0)`);
         ctx.fillStyle = grad;
         ctx.beginPath();
-        ctx.arc(p.px, p.py, p.r * 0.85, 0, Math.PI * 2);
+        ctx.arc(p.px, p.py, p.r * 0.95, 0, Math.PI * 2);
         ctx.fill();
       }
 
-      // --- Outline to define the shape crisply (very subtle) ---
-      ctx.strokeStyle = `rgba(${Math.max(0, grey - 30)}, ${Math.max(0, grey - 25)}, ${Math.max(0, grey - 20)}, ${layerAlpha * 0.15})`;
+      // --- Outline to define the shape crisply ---
+      ctx.strokeStyle = `rgba(${Math.max(0, grey - 30)}, ${Math.max(0, grey - 25)}, ${Math.max(0, grey - 20)}, ${layerAlpha * 0.2})`;
       ctx.lineWidth = 1;
       drawCloudPath();
       ctx.stroke();
-
-      // --- Cloud shadow on ground ---
-      if (cloud.layer <= 1 && layerAlpha > 0.03) {
-        const shadowOffsetY = (cloud.layer === 0 ? 80 : 40);
-        const shadowScale = cloud.layer === 0 ? 1.2 : 1.0;
-        const shadowAlpha = layerAlpha * (cloud.layer === 0 ? 0.04 : 0.06);
-        const sx = cx + shadowOffsetY * 0.3;
-        const sy = cy + shadowOffsetY;
-        const srx = hw * shadowScale;
-        const sry = hh * shadowScale * 0.35;
-
-        const grad = ctx.createRadialGradient(sx, sy, 0, sx, sy, Math.max(srx, sry));
-        grad.addColorStop(0, `rgba(0, 0, 0, ${shadowAlpha})`);
-        grad.addColorStop(0.6, `rgba(0, 0, 0, ${shadowAlpha * 0.5})`);
-        grad.addColorStop(1, `rgba(0, 0, 0, 0)`);
-        ctx.fillStyle = grad;
-        ctx.beginPath();
-        ctx.ellipse(sx, sy, srx, sry, 0, 0, Math.PI * 2);
-        ctx.fill();
-      }
     }
 
-    // --- Rain drops ---
-    const rainIntensity = Math.max(0, (this.alpha - 0.4) * 1.67); // 0-1
-    if (rainIntensity > 0.01) {
-      const dropsToDraw = Math.floor(this.rainDrops.length * rainIntensity);
-      ctx.strokeStyle = `rgba(160, 180, 220, ${0.3 * rainIntensity})`;
-      ctx.lineWidth = 1;
+    // --- Rain / Snow drops ---
+    const intensityRaw = Math.max(0, (this.alpha - 0.4) * 1.67); // 0-1
+    if (intensityRaw > 0.01 && (this.current === 'rain' || this.current === 'snow')) {
+      const dropsToDraw = Math.floor(this.rainDrops.length * intensityRaw);
+
+      const isSnow = this.current === 'snow';
+      ctx.strokeStyle = isSnow ? `rgba(255, 255, 255, ${0.8 * intensityRaw})` : `rgba(160, 180, 220, ${0.3 * intensityRaw})`;
+      ctx.lineWidth = isSnow ? 2 : 1;
       ctx.beginPath();
       for (let i = 0; i < dropsToDraw; i++) {
         const d = this.rainDrops[i];
         ctx.moveTo(d.x, d.y);
-        ctx.lineTo(d.x + 0.5, d.y + d.length);
+        ctx.lineTo(d.x + (isSnow ? Math.sin(time + d.y) * 2 : 0.5), d.y + d.length);
       }
       ctx.stroke();
 
       // --- Puddle ripples (during rain) ---
-      if (rainIntensity > 0.2) {
+      if (intensityRaw > 0.2 && !isSnow) {
         for (const puddle of this.puddles) {
           const ripple = Math.sin(time * 3 + puddle.phase) * 0.5 + 0.5;
-          const pa = rainIntensity * 0.12 * ripple;
+          const pa = intensityRaw * 0.12 * ripple;
           ctx.strokeStyle = `rgba(140, 160, 200, ${pa})`;
           ctx.lineWidth = 0.5;
           ctx.beginPath();
@@ -444,6 +405,16 @@ export class Weather {
           ctx.beginPath();
           ctx.arc(puddle.x, puddle.y, puddle.radius * 0.3 * (1 + ripple * 0.5), 0, Math.PI * 2);
           ctx.stroke();
+
+          // Occasional splash dots
+          if (Math.random() < intensityRaw * 0.1) {
+            ctx.fillStyle = `rgba(200, 220, 255, ${0.5 * intensityRaw})`;
+            ctx.beginPath();
+            const sx = puddle.x + (Math.random() - 0.5) * puddle.radius;
+            const sy = puddle.y + (Math.random() - 0.5) * puddle.radius;
+            ctx.arc(sx, sy, 0.5 + Math.random(), 0, Math.PI * 2);
+            ctx.fill();
+          }
         }
       }
     }
@@ -456,7 +427,13 @@ export class Weather {
   drawScreenOverlay(ctx: CanvasRenderingContext2D, screenW: number, screenH: number) {
     if (this.alpha < 0.05) return;
     const tint = Math.min(0.08, this.alpha * 0.08);
-    ctx.fillStyle = `rgba(100, 110, 130, ${tint})`;
-    ctx.fillRect(0, 0, screenW, screenH);
+
+    if (this.current === 'fog') {
+      ctx.fillStyle = `rgba(200, 210, 220, ${this.alpha * 0.4})`;
+      ctx.fillRect(0, 0, screenW, screenH);
+    } else {
+      ctx.fillStyle = `rgba(100, 110, 130, ${tint})`;
+      ctx.fillRect(0, 0, screenW, screenH);
+    }
   }
 }

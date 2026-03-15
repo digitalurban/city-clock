@@ -25,6 +25,13 @@ const BAG_COLORS = [
   '#fffacd', '#e8d8f0', '#ffd0a0',
 ];
 
+// Umbrella colours
+const UMBRELLA_COLORS = [
+  '#e53935', '#1e88e5', '#43a047', '#fdd835',
+  '#8e24aa', '#d81b60', '#3949ab', '#00acc1',
+  '#1a1a1a', '#e64a19', '#00897b', '#ffb300'
+];
+
 type HairStyle = 'bald' | 'short' | 'long' | 'hat';
 
 // Shared state across all pedestrians — cleared on resize via clearPedestrianState()
@@ -60,6 +67,8 @@ export class Pedestrian {
   hatColor: string;
   hasBag: boolean;
   bagColor: string;
+  hasUmbrella: boolean;
+  umbrellaColor: string;
 
   waypointX: number = 0;
   waypointY: number = 0;
@@ -146,11 +155,14 @@ export class Pedestrian {
     else if (hairRoll < 0.72) this.hairStyle = 'long';
     else this.hairStyle = 'hat';
     this.hairColor = HAIR_COLORS[Math.floor(Math.random() * HAIR_COLORS.length)];
-    this.hatColor  = HAT_COLORS[Math.floor(Math.random() * HAT_COLORS.length)];
+    this.hatColor = HAT_COLORS[Math.floor(Math.random() * HAT_COLORS.length)];
 
     // ~28% of non-clock pedestrians carry a shopping bag
-    this.hasBag   = !this.isClockEligible && Math.random() < 0.28;
+    this.hasBag = !this.isClockEligible && Math.random() < 0.28;
     this.bagColor = BAG_COLORS[Math.floor(Math.random() * BAG_COLORS.length)];
+
+    this.hasUmbrella = Math.random() < 0.6; // 60% of people have umbrellas
+    this.umbrellaColor = UMBRELLA_COLORS[Math.floor(Math.random() * UMBRELLA_COLORS.length)];
 
     // ~15% of non-clock pedestrians have a bicycle
     this.hasBicycle = !this.isClockEligible && Math.random() < 0.15;
@@ -185,7 +197,7 @@ export class Pedestrian {
 
   private setWaypointWithCrosswalkRouting(layout: CityLayout, wx: number, wy: number) {
     if (!layout.isInPlaza(this.x, this.y) && !layout.isInPlaza(wx, wy) &&
-        layout.requiresCrossing(this.x, this.y, wx, wy)) {
+      layout.requiresCrossing(this.x, this.y, wx, wy)) {
       const cw = layout.getNearestCrosswalk(this.x, this.y);
       this.intermediateWaypoint = { x: wx, y: wy };
       this.waypointX = cw.x;
@@ -198,7 +210,7 @@ export class Pedestrian {
     this.waypointTimer = 0;
   }
 
-  update(pedestrians: Pedestrian[], layout: CityLayout) {
+  update(pedestrians: Pedestrian[], layout: CityLayout, isDancing: boolean = false, weatherIntensity: number = 0) {
     let ax = 0;
     let ay = 0;
     const time = Date.now() / 1000;
@@ -496,188 +508,188 @@ export class Pedestrian {
             this.intermediateWaypoint = null;
             this.waypointTimer = 0;
           } else {
-          // Dissolve group followers at waypoint
-          if (this.groupFollowers.length > 0) {
-            for (const f of this.groupFollowers) f.groupLeader = null;
-            this.groupFollowers = [];
-          }
+            // Dissolve group followers at waypoint
+            if (this.groupFollowers.length > 0) {
+              for (const f of this.groupFollowers) f.groupLeader = null;
+              this.groupFollowers = [];
+            }
 
-          const roll = Math.random();
+            const roll = Math.random();
 
-          // Venue sitting — prefer cafes/restaurants
-          if (!this.isClockEligible && roll < 0.12) {
-            const cafeVenues = layout.venues.filter(v => v.type === 'cafe' || v.type === 'restaurant');
-            const pool = cafeVenues.length > 0 ? cafeVenues : layout.venues;
-            const venue = pool[Math.floor(Math.random() * pool.length)];
-            if (venue.seatingPositions.length > 0) {
-              const seat = venue.seatingPositions[Math.floor(Math.random() * venue.seatingPositions.length)];
-              this.isSitting = true;
-              this.sitX = seat.x;
-              this.sitY = seat.y;
-              this.sitTimer = 0;
-              this.sitDuration = 300 + Math.random() * 300;
-              this.waypointX = seat.x;
-              this.waypointY = seat.y;
-              this.waypointTimer = 0;
-              // Face toward plaza center
-              const pb = layout.plazaBounds;
-              this.angle = Math.atan2(
-                (pb.y + pb.h / 2) - seat.y,
-                (pb.x + pb.w / 2) - seat.x
+            // Venue sitting — prefer cafes/restaurants
+            if (!this.isClockEligible && roll < 0.12) {
+              const cafeVenues = layout.venues.filter(v => v.type === 'cafe' || v.type === 'restaurant');
+              const pool = cafeVenues.length > 0 ? cafeVenues : layout.venues;
+              const venue = pool[Math.floor(Math.random() * pool.length)];
+              if (venue.seatingPositions.length > 0) {
+                const seat = venue.seatingPositions[Math.floor(Math.random() * venue.seatingPositions.length)];
+                this.isSitting = true;
+                this.sitX = seat.x;
+                this.sitY = seat.y;
+                this.sitTimer = 0;
+                this.sitDuration = 300 + Math.random() * 300;
+                this.waypointX = seat.x;
+                this.waypointY = seat.y;
+                this.waypointTimer = 0;
+                // Face toward plaza center
+                const pb = layout.plazaBounds;
+                this.angle = Math.atan2(
+                  (pb.y + pb.h / 2) - seat.y,
+                  (pb.x + pb.w / 2) - seat.x
+                );
+              }
+            }
+
+            // Bench sitting
+            if (!this.isSitting && !this.isGoingHome && !this.isAtHome && !this.isClockEligible && roll >= 0.12 && roll < 0.20) {
+              let nearestBench: PlazaBenchDef | null = null;
+              let nearestDist = Infinity;
+              for (const bench of layout.plazaBenches) {
+                if (occupiedBenches.has(bench)) continue;
+                const d = Math.hypot(bench.x - this.x, bench.y - this.y);
+                if (d < 200 && d < nearestDist) {
+                  nearestDist = d;
+                  nearestBench = bench;
+                }
+              }
+              if (nearestBench) {
+                occupiedBenches.add(nearestBench);
+                this.isBenchSitting = true;
+                this.benchRef = nearestBench;
+                this.sitX = nearestBench.x;
+                this.sitY = nearestBench.y;
+                this.sitTimer = 0;
+                this.sitDuration = 300 + Math.random() * 300;
+                this.waypointX = nearestBench.x;
+                this.waypointY = nearestBench.y;
+                this.waypointTimer = 0;
+                // Face perpendicular to bench
+                this.angle = nearestBench.angle + Math.PI / 2;
+              }
+            }
+
+            // Shop queuing
+            if (!this.isSitting && !this.isBenchSitting && !this.isGoingHome && !this.isAtHome && !this.isClockEligible && roll >= 0.20 && roll < 0.30) {
+              const shops = layout.venues.filter(v =>
+                (v.type === 'shop' || v.type === 'bookshop') && v.queuePositions.length > 0
               );
-            }
-          }
-
-          // Bench sitting
-          if (!this.isSitting && !this.isGoingHome && !this.isAtHome && !this.isClockEligible && roll >= 0.12 && roll < 0.20) {
-            let nearestBench: PlazaBenchDef | null = null;
-            let nearestDist = Infinity;
-            for (const bench of layout.plazaBenches) {
-              if (occupiedBenches.has(bench)) continue;
-              const d = Math.hypot(bench.x - this.x, bench.y - this.y);
-              if (d < 200 && d < nearestDist) {
-                nearestDist = d;
-                nearestBench = bench;
+              if (shops.length > 0) {
+                const shop = shops[Math.floor(Math.random() * shops.length)];
+                const queue = venueQueues.get(shop) || [];
+                if (queue.length < 4) {
+                  queue.push(this);
+                  venueQueues.set(shop, queue);
+                  this.isQueuing = true;
+                  this.queueVenue = shop;
+                  this.queueTimer = 0;
+                }
               }
             }
-            if (nearestBench) {
-              occupiedBenches.add(nearestBench);
-              this.isBenchSitting = true;
-              this.benchRef = nearestBench;
-              this.sitX = nearestBench.x;
-              this.sitY = nearestBench.y;
-              this.sitTimer = 0;
-              this.sitDuration = 300 + Math.random() * 300;
-              this.waypointX = nearestBench.x;
-              this.waypointY = nearestBench.y;
-              this.waypointTimer = 0;
-              // Face perpendicular to bench
-              this.angle = nearestBench.angle + Math.PI / 2;
-            }
-          }
 
-          // Shop queuing
-          if (!this.isSitting && !this.isBenchSitting && !this.isGoingHome && !this.isAtHome && !this.isClockEligible && roll >= 0.20 && roll < 0.30) {
-            const shops = layout.venues.filter(v =>
-              (v.type === 'shop' || v.type === 'bookshop') && v.queuePositions.length > 0
-            );
-            if (shops.length > 0) {
-              const shop = shops[Math.floor(Math.random() * shops.length)];
-              const queue = venueQueues.get(shop) || [];
-              if (queue.length < 4) {
-                queue.push(this);
-                venueQueues.set(shop, queue);
-                this.isQueuing = true;
-                this.queueVenue = shop;
-                this.queueTimer = 0;
-              }
-            }
-          }
-
-          // Window shopping
-          if (!this.isSitting && !this.isBenchSitting && !this.isQueuing && !this.isGoingHome && !this.isAtHome && !this.isClockEligible && roll >= 0.30 && roll < 0.42) {
-            const shops = layout.venues.filter(v => v.type === 'shop' || v.type === 'bookshop');
-            if (shops.length > 0) {
-              const shop = shops[Math.floor(Math.random() * shops.length)];
-              let wx = shop.x + shop.w / 2;
-              let wy = shop.y + shop.h / 2;
-              if (shop.facingPlaza === 'bottom') wy = shop.y + shop.h + 12;
-              else if (shop.facingPlaza === 'top') wy = shop.y - 12;
-              else if (shop.facingPlaza === 'right') wx = shop.x + shop.w + 12;
-              else wx = shop.x - 12;
-              this.isWindowShopping = true;
-              this.windowShopTimer = 60 + Math.floor(Math.random() * 120);
-              this.waypointX = wx;
-              this.waypointY = wy;
-              this.waypointTimer = 0;
-            }
-          }
-
-          // Social chat
-          if (!this.isSitting && !this.isBenchSitting && !this.isQueuing && !this.isWindowShopping && !this.isGoingHome && !this.isAtHome && !this.isClockEligible && roll >= 0.42 && roll < 0.56) {
-            this.socialMode = true;
-            this.socialTimer = 100 + Math.floor(Math.random() * 220);
-          }
-
-          // Group walking
-          if (!this.isSitting && !this.isBenchSitting && !this.isQueuing && !this.isWindowShopping && !this.socialMode && !this.isGoingHome && !this.isAtHome && !this.isClockEligible && roll >= 0.56 && roll < 0.62) {
-            const nearbyFree: Pedestrian[] = [];
-            for (const other of pedestrians) {
-              if (other === this || other.isClockEligible || other.groupLeader || other.groupFollowers.length > 0) continue;
-              if (other.isSitting || other.isBenchSitting || other.isQueuing || other.isWindowShopping || other.socialMode) continue;
-              const d = Math.hypot(other.x - this.x, other.y - this.y);
-              if (d < 60) nearbyFree.push(other);
-              if (nearbyFree.length >= 2) break;
-            }
-            if (nearbyFree.length > 0) {
-              this.groupFollowers = nearbyFree;
-              for (const f of nearbyFree) f.groupLeader = this;
-            }
-          }
-
-          // Phone checking — stand still and browse
-          if (!this.isSitting && !this.isBenchSitting && !this.isQueuing && !this.isWindowShopping && !this.socialMode && !this.isGoingHome && !this.isAtHome && !this.isClockEligible && roll >= 0.62 && roll < 0.72) {
-            this.isCheckingPhone = true;
-            this.phoneTimer = 80 + Math.floor(Math.random() * 150);
-          }
-
-          // Photo taking near venues
-          if (!this.isSitting && !this.isBenchSitting && !this.isQueuing && !this.isWindowShopping && !this.socialMode && !this.isCheckingPhone && !this.isGoingHome && !this.isAtHome && !this.isClockEligible && roll >= 0.72 && roll < 0.78) {
-            let nearVenue: VenueDef | null = null;
-            let nearDist = Infinity;
-            for (const v of layout.venues) {
-              const vcx = v.x + v.w / 2;
-              const vcy = v.y + v.h / 2;
-              const d = Math.hypot(vcx - this.x, vcy - this.y);
-              if (d < 100 && d < nearDist) {
-                nearDist = d;
-                nearVenue = v;
-              }
-            }
-            if (nearVenue) {
-              this.isTakingPhoto = true;
-              this.photoTimer = 60 + Math.floor(Math.random() * 100);
-              this.angle = Math.atan2(
-                (nearVenue.y + nearVenue.h / 2) - this.y,
-                (nearVenue.x + nearVenue.w / 2) - this.x
-              );
-            }
-          }
-
-          // Go home
-          if (!this.isSitting && !this.isBenchSitting && !this.isQueuing && !this.isWindowShopping && !this.socialMode && !this.isCheckingPhone && !this.isTakingPhoto && !this.isGoingHome && !this.isAtHome && !this.isClockEligible && roll >= 0.78 && roll < 0.88) {
-            if (this.assignedHome >= 0 && this.assignedHome < layout.houses.length) {
-              const home = layout.houses[this.assignedHome];
-              this.isGoingHome = true;
-              this.homeTimer = 0;
-              this.homeDuration = 400 + Math.floor(Math.random() * 400); // stay home 400-800 frames
-
-              // Walk to garden path end first, then to front door
-              const pathEnd = home.gardenPathEnd;
-              if (pathEnd) {
-                this.setWaypointWithCrosswalkRouting(layout, pathEnd.x, pathEnd.y);
-              } else {
-                this.waypointX = home.x + home.w / 2;
-                this.waypointY = home.y + home.h;
+            // Window shopping
+            if (!this.isSitting && !this.isBenchSitting && !this.isQueuing && !this.isGoingHome && !this.isAtHome && !this.isClockEligible && roll >= 0.30 && roll < 0.42) {
+              const shops = layout.venues.filter(v => v.type === 'shop' || v.type === 'bookshop');
+              if (shops.length > 0) {
+                const shop = shops[Math.floor(Math.random() * shops.length)];
+                let wx = shop.x + shop.w / 2;
+                let wy = shop.y + shop.h / 2;
+                if (shop.facingPlaza === 'bottom') wy = shop.y + shop.h + 12;
+                else if (shop.facingPlaza === 'top') wy = shop.y - 12;
+                else if (shop.facingPlaza === 'right') wx = shop.x + shop.w + 12;
+                else wx = shop.x - 12;
+                this.isWindowShopping = true;
+                this.windowShopTimer = 60 + Math.floor(Math.random() * 120);
+                this.waypointX = wx;
+                this.waypointY = wy;
                 this.waypointTimer = 0;
               }
-
-              // If has bicycle, ride it
-              if (this.hasBicycle) {
-                this.isRidingBicycle = true;
-              }
-
-              this.thoughtBubble = 'home';
-              this.thoughtTimer = 50;
             }
-          }
 
-          // Otherwise pick a new waypoint
-          if (!this.isSitting && !this.isBenchSitting && !this.isQueuing && !this.isWindowShopping && !this.socialMode && !this.isCheckingPhone && !this.isTakingPhoto && !this.isGoingHome && !this.isAtHome) {
-            if (Math.random() < 0.3) this.hasFood = false; // might finish food
-            const wp = layout.getRandomSidewalkWaypoint();
-            this.setWaypointWithCrosswalkRouting(layout, wp.x, wp.y);
-          }
+            // Social chat
+            if (!this.isSitting && !this.isBenchSitting && !this.isQueuing && !this.isWindowShopping && !this.isGoingHome && !this.isAtHome && !this.isClockEligible && roll >= 0.42 && roll < 0.56) {
+              this.socialMode = true;
+              this.socialTimer = 100 + Math.floor(Math.random() * 220);
+            }
+
+            // Group walking
+            if (!this.isSitting && !this.isBenchSitting && !this.isQueuing && !this.isWindowShopping && !this.socialMode && !this.isGoingHome && !this.isAtHome && !this.isClockEligible && roll >= 0.56 && roll < 0.62) {
+              const nearbyFree: Pedestrian[] = [];
+              for (const other of pedestrians) {
+                if (other === this || other.isClockEligible || other.groupLeader || other.groupFollowers.length > 0) continue;
+                if (other.isSitting || other.isBenchSitting || other.isQueuing || other.isWindowShopping || other.socialMode) continue;
+                const d = Math.hypot(other.x - this.x, other.y - this.y);
+                if (d < 60) nearbyFree.push(other);
+                if (nearbyFree.length >= 2) break;
+              }
+              if (nearbyFree.length > 0) {
+                this.groupFollowers = nearbyFree;
+                for (const f of nearbyFree) f.groupLeader = this;
+              }
+            }
+
+            // Phone checking — stand still and browse
+            if (!this.isSitting && !this.isBenchSitting && !this.isQueuing && !this.isWindowShopping && !this.socialMode && !this.isGoingHome && !this.isAtHome && !this.isClockEligible && roll >= 0.62 && roll < 0.72) {
+              this.isCheckingPhone = true;
+              this.phoneTimer = 80 + Math.floor(Math.random() * 150);
+            }
+
+            // Photo taking near venues
+            if (!this.isSitting && !this.isBenchSitting && !this.isQueuing && !this.isWindowShopping && !this.socialMode && !this.isCheckingPhone && !this.isGoingHome && !this.isAtHome && !this.isClockEligible && roll >= 0.72 && roll < 0.78) {
+              let nearVenue: VenueDef | null = null;
+              let nearDist = Infinity;
+              for (const v of layout.venues) {
+                const vcx = v.x + v.w / 2;
+                const vcy = v.y + v.h / 2;
+                const d = Math.hypot(vcx - this.x, vcy - this.y);
+                if (d < 100 && d < nearDist) {
+                  nearDist = d;
+                  nearVenue = v;
+                }
+              }
+              if (nearVenue) {
+                this.isTakingPhoto = true;
+                this.photoTimer = 60 + Math.floor(Math.random() * 100);
+                this.angle = Math.atan2(
+                  (nearVenue.y + nearVenue.h / 2) - this.y,
+                  (nearVenue.x + nearVenue.w / 2) - this.x
+                );
+              }
+            }
+
+            // Go home
+            if (!this.isSitting && !this.isBenchSitting && !this.isQueuing && !this.isWindowShopping && !this.socialMode && !this.isCheckingPhone && !this.isTakingPhoto && !this.isGoingHome && !this.isAtHome && !this.isClockEligible && roll >= 0.78 && roll < 0.88) {
+              if (this.assignedHome >= 0 && this.assignedHome < layout.houses.length) {
+                const home = layout.houses[this.assignedHome];
+                this.isGoingHome = true;
+                this.homeTimer = 0;
+                this.homeDuration = 400 + Math.floor(Math.random() * 400); // stay home 400-800 frames
+
+                // Walk to garden path end first, then to front door
+                const pathEnd = home.gardenPathEnd;
+                if (pathEnd) {
+                  this.setWaypointWithCrosswalkRouting(layout, pathEnd.x, pathEnd.y);
+                } else {
+                  this.waypointX = home.x + home.w / 2;
+                  this.waypointY = home.y + home.h;
+                  this.waypointTimer = 0;
+                }
+
+                // If has bicycle, ride it
+                if (this.hasBicycle) {
+                  this.isRidingBicycle = true;
+                }
+
+                this.thoughtBubble = 'home';
+                this.thoughtTimer = 50;
+              }
+            }
+
+            // Otherwise pick a new waypoint
+            if (!this.isSitting && !this.isBenchSitting && !this.isQueuing && !this.isWindowShopping && !this.socialMode && !this.isCheckingPhone && !this.isTakingPhoto && !this.isGoingHome && !this.isAtHome) {
+              if (Math.random() < 0.3) this.hasFood = false; // might finish food
+              const wp = layout.getRandomSidewalkWaypoint();
+              this.setWaypointWithCrosswalkRouting(layout, wp.x, wp.y);
+            }
           } // close else for intermediate waypoint check
         }
 
@@ -720,11 +732,27 @@ export class Pedestrian {
         ay += Math.sin(time * 0.9 + this.idOffset * 1.3) * this.maxForce * 0.5;
       }
 
+      // Dancing logic
+      if (isDancing) {
+        if (!this.clockTarget) { // Non-clock pedestrians head to plaza
+          const pC = layout.plazaBounds;
+          const pCX = pC.x + pC.w / 2;
+          const pCY = pC.y + pC.h / 2;
+          const pdx = pCX - this.x;
+          const pdy = pCY - this.y;
+          const pDist = Math.sqrt(pdx * pdx + pdy * pdy);
+          if (pDist > 100) {
+            ax += (pdx / pDist) * this.maxForce * 5.0;
+            ay += (pdy / pDist) * this.maxForce * 5.0;
+          }
+        }
+      }
+
       // 4. Boundary repulsion
       const margin = 30;
       const turnForce = this.maxForce * 5;
       if (this.x < margin) ax += turnForce * (margin - this.x) / margin;
-      if (this.x > layout.width  - margin) ax -= turnForce * (this.x - (layout.width  - margin)) / margin;
+      if (this.x > layout.width - margin) ax -= turnForce * (this.x - (layout.width - margin)) / margin;
       if (this.y < margin) ay += turnForce * (margin - this.y) / margin;
       if (this.y > layout.height - margin) ay -= turnForce * (this.y - (layout.height - margin)) / margin;
 
@@ -735,7 +763,7 @@ export class Pedestrian {
       let repelled = false;
       for (const b of layout.buildings) {
         if (nextX >= b.x - m && nextX <= b.x + b.w + m &&
-            nextY >= b.y - m && nextY <= b.y + b.h + m) {
+          nextY >= b.y - m && nextY <= b.y + b.h + m) {
           const rdx = this.x - (b.x + b.w / 2);
           const rdy = this.y - (b.y + b.h / 2);
           const rd = Math.sqrt(rdx * rdx + rdy * rdy) || 1;
@@ -748,7 +776,7 @@ export class Pedestrian {
       if (!repelled) {
         for (const v of layout.venues) {
           if (nextX >= v.x - m && nextX <= v.x + v.w + m &&
-              nextY >= v.y - m && nextY <= v.y + v.h + m) {
+            nextY >= v.y - m && nextY <= v.y + v.h + m) {
             const rdx = this.x - (v.x + v.w / 2);
             const rdy = this.y - (v.y + v.h / 2);
             const rd = Math.sqrt(rdx * rdx + rdy * rdy) || 1;
@@ -765,7 +793,7 @@ export class Pedestrian {
           // Skip own home when going home
           if (this.isGoingHome && layout.houses.indexOf(h) === this.assignedHome) continue;
           if (nextX >= h.x - m && nextX <= h.x + h.w + m &&
-              nextY >= h.y - m && nextY <= h.y + h.h + m) {
+            nextY >= h.y - m && nextY <= h.y + h.h + m) {
             const rdx = this.x - (h.x + h.w / 2);
             const rdy = this.y - (h.y + h.h / 2);
             const rd = Math.sqrt(rdx * rdx + rdy * rdy) || 1;
@@ -778,11 +806,11 @@ export class Pedestrian {
 
       // 6. Road repulsion — keep pedestrians on sidewalks (skip plaza, crosswalks, clock mode)
       if (!this.clockTarget && !this.clockDismissTarget &&
-          !layout.isInPlaza(nextX, nextY) && !layout.isOnCrosswalk(nextX, nextY)) {
+        !layout.isInPlaza(nextX, nextY) && !layout.isOnCrosswalk(nextX, nextY)) {
         for (const road of layout.roads) {
           const rm = 4;
           if (nextX >= road.x - rm && nextX <= road.x + road.w + rm &&
-              nextY >= road.y - rm && nextY <= road.y + road.h + rm) {
+            nextY >= road.y - rm && nextY <= road.y + road.h + rm) {
             const rdx = this.x - (road.x + road.w / 2);
             const rdy = this.y - (road.y + road.h / 2);
             const rd = Math.sqrt(rdx * rdx + rdy * rdy) || 1;
@@ -806,7 +834,12 @@ export class Pedestrian {
         this.vy = (this.vy / speed) * this.maxSpeed * 12;
       }
     } else {
-      const speedMultiplier = this.isRidingBicycle ? 2.5 : 1;
+      let speedMultiplier = this.isRidingBicycle ? 2.5 : 1;
+      // Hurry up if it's raining and no umbrella
+      if (weatherIntensity > 0.2 && !this.hasUmbrella) {
+        speedMultiplier *= Math.min(1.8, 1 + weatherIntensity);
+      }
+
       if (speed > this.maxSpeed * speedMultiplier) {
         this.vx = (this.vx / speed) * this.maxSpeed * speedMultiplier;
         this.vy = (this.vy / speed) * this.maxSpeed * speedMultiplier;
@@ -831,9 +864,16 @@ export class Pedestrian {
     }
 
     this.walkPhase += currentSpeed * 0.5;
+
+    if (isDancing) {
+      this.walkPhase += 0.8; // dance faster
+      if (currentSpeed < 0.5) { // if standing still, spin or bounce
+        this.angle += Math.sin(time * 10 + this.idOffset) * 0.2;
+      }
+    }
   }
 
-  draw(ctx: CanvasRenderingContext2D, nightAlpha: number) {
+  draw(ctx: CanvasRenderingContext2D, nightAlpha: number, weatherIntensity: number = 0, isDancing: boolean = false) {
     ctx.save();
     ctx.translate(this.x, this.y);
     ctx.rotate(this.angle);
@@ -844,9 +884,13 @@ export class Pedestrian {
 
     const s = this.size * 5.5;
     const speed = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
-    const legSwing = (this.isSitting || this.socialMode)
+    let legSwing = (this.isSitting || this.socialMode)
       ? 0
       : Math.sin(this.walkPhase) * Math.min(speed * 1.5, 2);
+
+    if (isDancing) {
+      legSwing = Math.sin(this.walkPhase * 1.5) * 2;
+    }
 
     // Shadow
     ctx.fillStyle = `rgba(0, 0, 0, ${0.15 + nightAlpha * 0.05})`;
@@ -898,7 +942,7 @@ export class Pedestrian {
     // Legs
     ctx.fillStyle = darkenColor(this.color, 0.3 + nightAlpha * 0.2);
     ctx.beginPath();
-    ctx.arc(-s * 0.3,  legSwing * 0.8, s * 0.25, 0, Math.PI * 2);
+    ctx.arc(-s * 0.3, legSwing * 0.8, s * 0.25, 0, Math.PI * 2);
     ctx.fill();
     ctx.beginPath();
     ctx.arc(-s * 0.3, -legSwing * 0.8, s * 0.25, 0, Math.PI * 2);
@@ -995,10 +1039,39 @@ export class Pedestrian {
           ctx.beginPath();
           ctx.arc(s * 0.5, 0, s * 0.38, Math.PI * 0.55, Math.PI * 2.45);
           ctx.fill();
-          ctx.fillRect(s * 0.13, 0, s * 0.1,  s * 0.36);
-          ctx.fillRect(s * 0.77, 0, s * 0.1,  s * 0.36);
+          ctx.fillRect(s * 0.13, 0, s * 0.1, s * 0.36);
+          ctx.fillRect(s * 0.77, 0, s * 0.1, s * 0.36);
         }
       }
+    }
+
+    // Umbrella when raining/snowing (if they have one)
+    if (weatherIntensity > 0.3 && !this.isAtHome && !this.isSitting && this.hasUmbrella) {
+      const wobble = Math.sin(this.walkPhase * 2) * 0.1 * s;
+      const ur = s * 1.5;
+
+      // Umbrella canopy
+      ctx.fillStyle = adjustForNight(this.umbrellaColor, nightAlpha);
+      ctx.beginPath();
+      ctx.arc(wobble, 0, ur, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Umbrella spokes (subtle lines)
+      ctx.strokeStyle = darkenColor(this.umbrellaColor, 0.2);
+      ctx.lineWidth = 0.5;
+      ctx.beginPath();
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2;
+        ctx.moveTo(wobble, 0);
+        ctx.lineTo(wobble + Math.cos(a) * ur, Math.sin(a) * ur);
+      }
+      ctx.stroke();
+
+      // Umbrella tip
+      ctx.fillStyle = adjustForNight('#222222', nightAlpha);
+      ctx.beginPath();
+      ctx.arc(wobble, 0, ur * 0.1, 0, Math.PI * 2);
+      ctx.fill();
     }
 
     // Thought bubble (Sims-style) — drawn in fixed pixel sizes so visible at any zoom

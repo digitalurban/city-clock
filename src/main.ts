@@ -37,6 +37,13 @@ const MAX_ZOOM = 5.0;
 let currentCarCount = TOTAL_CARS;
 let currentPedCount = TOTAL_PEDESTRIANS;
 
+// Alarm state
+let alarmTime: string | null = null;
+let isAlarmActive = false;
+let isDancing = false;
+const alarmAudio = new Audio('./MiniCityAlarm.mp3');
+alarmAudio.loop = true;
+
 function clampPan(w: number, h: number) {
   const worldW = w * WORLD_SCALE;
   const worldH = h * WORLD_SCALE;
@@ -243,19 +250,35 @@ function createOptionsUI() {
     <div style="font-size: 14px; font-weight: 600; margin-bottom: 12px; color: #aab;">City Options</div>
     <div style="margin-bottom: 10px;">
       <label style="display: flex; justify-content: space-between; margin-bottom: 4px;">
-        <span>Traffic</span>
-        <span id="car-count-label">${currentCarCount}</span>
-      </label>
-      <input type="range" id="car-slider" min="10" max="${maxCars}" value="${currentCarCount}" style="width: 100%; accent-color: #4a9eff;">
-    </div>
-    <div style="margin-bottom: 6px;">
-      <label style="display: flex; justify-content: space-between; margin-bottom: 4px;">
-        <span>People</span>
-        <span id="ped-count-label">${currentPedCount}</span>
-      </label>
-      <input type="range" id="ped-slider" min="${CLOCK_ELIGIBLE_COUNT}" max="${maxPeds}" value="${currentPedCount}" style="width: 100%; accent-color: #4a9eff;">
-    </div>
-  `;
+        <span>Traffic </span>
+            </div>
+            < div style = "margin-bottom: 10px;" >
+              <label style="display: flex; justify-content: space-between; margin-bottom: 4px;" >
+                <span>People </span>
+                < span id = "ped-count-label" > ${currentPedCount} </span>
+                  </label>
+                  < input type = "range" id = "ped-slider" min = "${CLOCK_ELIGIBLE_COUNT}" max = "${maxPeds}" value = "${currentPedCount}" style = "width: 100%; accent-color: #4a9eff;" >
+                    </div>
+                    < div style = "margin-bottom: 6px;" >
+                      <label style="display: flex; justify-content: space-between; margin-bottom: 4px;" >
+                        <span>Location(Open - Meteo) </span>
+                        </label>
+                        < div style = "display: flex; gap: 8px;" >
+                          <input type="text" id = "weather-location" placeholder = "e.g. London" style = "flex: 1; background: #223; color: white; border: 1px solid #445; border-radius: 4px; padding: 2px 4px; color-scheme: dark;" >
+                            <button id="location-btn" style = "background: #4a9eff; color: white; border: none; border-radius: 4px; padding: 4px 8px; cursor: pointer; font-weight: bold;" > Set </button>
+                              </div>
+                              </div>
+                              < div style = "margin-bottom: 6px;" >
+                                <label style="display: flex; justify-content: space-between; margin-bottom: 4px;" >
+                                  <span>Alarm </span>
+                                  < span id = "alarm-status-label" > Off </span>
+                                    </label>
+                                    < div style = "display: flex; gap: 8px;" >
+                                      <input type="time" id = "alarm-time" style = "flex: 1; background: #223; color: white; border: 1px solid #445; border-radius: 4px; padding: 2px 4px; color-scheme: dark;" >
+                                        <button id="alarm-btn" style = "background: #4a9eff; color: white; border: none; border-radius: 4px; padding: 4px 8px; cursor: pointer; font-weight: bold;" > Set </button>
+                                          </div>
+                                          </div>
+                                            `;
 
   container.appendChild(panel);
   container.appendChild(toggleBtn);
@@ -294,6 +317,52 @@ function createOptionsUI() {
     const val = parseInt(pedSlider.value);
     pedLabel.textContent = String(val);
     adjustPedCount(val);
+  });
+
+  // Location / Weather handlers
+  const locationInput = panel.querySelector('#weather-location') as HTMLInputElement;
+  const locationBtn = panel.querySelector('#location-btn') as HTMLButtonElement;
+
+  locationBtn.addEventListener('click', () => {
+    const loc = locationInput.value.trim();
+    if (loc) {
+      weather.setLocation(loc);
+      locationBtn.textContent = 'Set ✓';
+      locationBtn.style.background = '#4caf50';
+      setTimeout(() => {
+        locationBtn.textContent = 'Set';
+        locationBtn.style.background = '#4a9eff';
+      }, 2000);
+    } else {
+      weather.useRealWeather = false; // Disable if empty
+    }
+  });
+
+  // Alarm handlers
+  const alarmTimeInput = panel.querySelector('#alarm-time') as HTMLInputElement;
+  const alarmBtn = panel.querySelector('#alarm-btn') as HTMLButtonElement;
+  const alarmStatusLabel = panel.querySelector('#alarm-status-label') as HTMLSpanElement;
+
+  alarmBtn.addEventListener('click', () => {
+    if (alarmTime) {
+      // Clear alarm
+      alarmTime = null;
+      alarmBtn.textContent = 'Set';
+      alarmStatusLabel.textContent = 'Off';
+      isAlarmActive = false;
+      isDancing = false;
+      alarmAudio.pause();
+      const snoozeBtn = document.getElementById('snooze-btn');
+      if (snoozeBtn) snoozeBtn.style.display = 'none';
+      alarmBtn.style.background = '#4a9eff';
+    } else {
+      if (alarmTimeInput.value) {
+        alarmTime = alarmTimeInput.value;
+        alarmBtn.textContent = 'Clear';
+        alarmBtn.style.background = '#ff4a4a';
+        alarmStatusLabel.textContent = alarmTime;
+      }
+    }
   });
 
   // Prevent canvas interactions when interacting with sliders
@@ -346,8 +415,8 @@ function resize() {
 
   canvas.width = width * dpr;
   canvas.height = height * dpr;
-  canvas.style.width = `${width}px`;
-  canvas.style.height = `${height}px`;
+  canvas.style.width = `${width} px`;
+  canvas.style.height = `${height} px`;
 
   layout = new CityLayout(worldW, worldH);
 
@@ -481,10 +550,54 @@ function loop() {
   Car.updateDroppedPackages();
   Car.drawDroppedPackages(ctx, nightAlpha);
 
+  // Alarm check
+  if (alarmTime && !isAlarmActive) {
+    const now = new Date();
+    const currentH = now.getHours().toString().padStart(2, '0');
+    const currentM = now.getMinutes().toString().padStart(2, '0');
+    if (`${currentH}:${currentM}` === alarmTime) {
+      isAlarmActive = true;
+      isDancing = true;
+      alarmAudio.play().catch(e => console.error("Audio play failed:", e));
+
+      // Show snooze button
+      let snoozeBtn = document.getElementById('snooze-btn');
+      if (!snoozeBtn) {
+        snoozeBtn = document.createElement('button');
+        snoozeBtn.id = 'snooze-btn';
+        snoozeBtn.textContent = 'Snooze (9 min)';
+        snoozeBtn.style.cssText = `
+          position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%); z-index: 200;
+          background: #ffaa00; color: #fff; border: none; border-radius: 20px;
+          padding: 12px 24px; font-size: 18px; font-weight: bold; cursor: pointer;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.5); border: 2px solid #fff;
+        `;
+        document.body.appendChild(snoozeBtn);
+        snoozeBtn.addEventListener('click', () => {
+          isAlarmActive = false;
+          isDancing = false;
+          alarmAudio.pause();
+          snoozeBtn!.style.display = 'none';
+
+          // Add 9 minutes
+          const [h, m] = alarmTime!.split(':').map(Number);
+          const date = new Date();
+          date.setHours(h, m + 9);
+          alarmTime = `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+
+          const status = document.getElementById('alarm-status-label');
+          if (status) status.textContent = alarmTime;
+        });
+      }
+      snoozeBtn.style.display = 'block';
+    }
+  }
+
   // Update and draw pedestrians
   for (const p of pedestrians) {
-    p.update(pedestrians, layout);
-    p.draw(ctx, nightAlpha);
+    p.update(pedestrians, layout, isDancing, weather.intensity);
+    // @ts-ignore - we'll update the signature in Pedestrian.ts next
+    p.draw(ctx, nightAlpha, weather.intensity, isDancing);
   }
 
   // Trees on top (canopies)
