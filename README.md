@@ -17,12 +17,13 @@ A procedurally generated top-down city where pedestrians form a digital clock in
 - **Double-tap to show time** - Double-tap or double-click anywhere to force the clock formation immediately
 - **Procedural city** - grid of city blocks, roads, crosswalks, trees, parks and coloured buildings generated to fill the world
 - **Central plaza** - ringed by named venues (cafes, bars, bookshops, flower shops) with outdoor seating, benches, and lamp posts
-- **Pedestrian life** - pedestrians wander sidewalks, visit venues, queue and sit outside, go home to their assigned houses via garden paths, and ride bicycles (~15%)
-- **Delivery trucks** - orange delivery vans enter the plaza, park outside a venue to drop off packages, then return to the road
-- **Emergency vehicles** - police cars, ambulances and fire trucks with flashing sirens
-- **Traffic system** - cars navigate the road network with traffic lights, braking for pedestrians and each other, smooth turning at junctions, and anti-gridlock logic
-- **Day/night cycle** - real-time lighting based on system clock; street lights, lamp posts, building windows and headlights glow at night
-- **Weather** - procedural clouds with realistic multi-lobe shapes, 3D shading, and ground shadows drifting across the city
+- **Pedestrian life** - pedestrians wander sidewalks, visit venues, queue and sit outside, go home to their assigned houses via garden paths, and ride bicycles (~15%). They now also have simulated Needs (Energy, Hunger, Social) with thought bubbles guiding their routines.
+- **Dynamic City Events** - street musicians and protests occasionally spawn in the plaza, drawing nearby crowds of pedestrians to watch and interact.
+- **Service & Delivery Vehicles** - orange delivery vans enter the plaza, park outside a venue to drop off packages. City buses (red/blue) and garbage trucks (green) navigate the road network with unique behaviours.
+- **Emergency vehicles** - police cars, ambulances and fire trucks with flashing sirens.
+- **Traffic system** - cars navigate the road network with traffic lights, braking for pedestrians and each other, smooth turning at junctions, and anti-gridlock logic.
+- **Day/night cycle** - real-time lighting based on system clock; street lights, lamp posts, building windows outlaid by granular business/residential schedules, and headlights glow at night.
+- **Weather** - procedural clouds with realistic multi-lobe shapes, 3D shading, and ground shadows drifting across the city.
 - **Zoom and pan** - scroll-wheel zoom, click-drag pan, touch pinch and drag on mobile
 - **Adjustable population** - settings panel to control traffic (10-300) and people (112-500) counts live
 - **iOS PWA** - add to home screen on Safari for fullscreen standalone experience
@@ -67,6 +68,7 @@ Configurable from 10 to 300 vehicles including delivery vans and emergency servi
 
 - **Normal cars** - scan ahead for pedestrians and other cars, brake proportionally; smooth arc turns at junctions; headlight beams at night
 - **Delivery vans** - navigate to the plaza via road network, enter through plaza entrances, deliver packages to venue fronts, then exit and rejoin traffic
+- **Specialized Service Vehicles** - city buses that pause at intersections to simulate pickups, and garbage trucks that slowly traverse the city.
 - **Emergency vehicles** - police, ambulance and fire trucks with flashing light bars and sirens
 - **Traffic lights** - alternating red/green phases at intersections; cars clear intersections before stopping
 - **Anti-gridlock** - cross-traffic detection prevents deadlocks; stuck vehicles teleport to clear roads after timeout
@@ -79,7 +81,7 @@ Real-time based on system clock:
 - **9pm-5am**: Night (60% darkness)
 - **5am-8am**: Dawn
 
-At night: buildings show lit windows, street lights and plaza lamp posts emit radial glows, car headlights illuminate the road, venue doorways glow warmly, all colours darken.
+At night: buildings show lit windows based on realistic opening/closing times (e.g. offices closing late, bars staying open, residential lights turning off overnight), street lights and plaza lamp posts emit radial glows, car headlights illuminate the road, venue doorways glow warmly, all colours darken.
 
 ### Weather
 

@@ -445,14 +445,17 @@ function resize() {
   cars = [];
   Car.droppedPackages = [];
   clearPedestrianState();
-  const deliveryCount = Math.floor(currentCarCount * 0.15);
-  const emergencyCount = Math.max(2, Math.floor(currentCarCount * 0.04));
   const emergencyTypes: Array<'police' | 'ambulance' | 'firetruck'> = ['police', 'ambulance', 'firetruck'];
   for (let i = 0; i < currentCarCount; i++) {
-    if (i < deliveryCount) {
+    const rn = Math.random();
+    if (rn < 0.15) {
       cars.push(new Car(layout, 'delivery'));
-    } else if (i < deliveryCount + emergencyCount) {
+    } else if (rn < 0.20) {
       cars.push(new Car(layout, emergencyTypes[i % emergencyTypes.length]));
+    } else if (rn < 0.30) {
+      cars.push(new Car(layout, 'bus'));
+    } else if (rn < 0.35) {
+      cars.push(new Car(layout, 'garbage'));
     } else {
       cars.push(new Car(layout, 'normal'));
     }
@@ -648,6 +651,13 @@ function loop() {
   // Street light glows + plaza lamp glows
   layout.drawStreetLights(ctx, nightAlpha);
   layout.drawPlazaLampGlows(ctx, nightAlpha);
+
+  // Update and draw dynamic events (in world space, underneath weather/UI)
+  if (nightAlpha < 0.3 && !layout.activeEvent && Math.random() < 0.0005) {
+    layout.startEvent(Math.random() < 0.5 ? 'musician' : 'protest');
+  }
+  layout.updateEvent();
+  layout.drawEvent(ctx, nightAlpha);
 
   // Traffic lights
   layout.drawTrafficLights(ctx, nightAlpha, trafficPhase);

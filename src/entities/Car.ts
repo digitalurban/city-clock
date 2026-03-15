@@ -20,7 +20,7 @@ export interface DroppedPackage {
 
 const PKG_COLORS = ['#b08050', '#a07040', '#c09060', '#907050'];
 
-type CarType = 'normal' | 'delivery' | 'police' | 'ambulance' | 'firetruck';
+type CarType = 'normal' | 'delivery' | 'police' | 'ambulance' | 'firetruck' | 'bus' | 'garbage';
 
 /**
  * Delivery state machine:
@@ -103,6 +103,12 @@ export class Car {
       case 'firetruck':
         this.baseSpeed = CAR_SPEED * (0.6 + Math.random() * 0.4);
         break;
+      case 'bus':
+        this.baseSpeed = CAR_SPEED * (0.35 + Math.random() * 0.1);
+        break;
+      case 'garbage':
+        this.baseSpeed = CAR_SPEED * (0.3 + Math.random() * 0.1);
+        break;
       default:
         this.baseSpeed = CAR_SPEED * (0.3 + Math.random() * 0.4);
     }
@@ -129,6 +135,16 @@ export class Car {
         this.color = '#b71c1c';
         this.length = 22;
         this.width = 10;
+        break;
+      case 'bus':
+        this.color = Math.random() > 0.5 ? '#c0392b' : '#2980b9'; // Red or blue
+        this.length = 32;
+        this.width = 11;
+        break;
+      case 'garbage':
+        this.color = '#27ae60'; // Green
+        this.length = 26;
+        this.width = 11;
         break;
       default:
         this.color = CAR_COLORS[Math.floor(Math.random() * CAR_COLORS.length)];
@@ -194,7 +210,7 @@ export class Car {
     for (const road of layout.roads) {
       if (road === this.road) continue;
       if (this.x >= road.x - snap && this.x <= road.x + road.w + snap &&
-          this.y >= road.y - snap && this.y <= road.y + road.h + snap) {
+        this.y >= road.y - snap && this.y <= road.y + road.h + snap) {
         if (road.horizontal !== this.road.horizontal) {
           best = road;
           break;
@@ -334,7 +350,7 @@ export class Car {
         // Don't collide with target venue (truck delivering to it)
         if (this.targetVenue && b === this.targetVenue) continue;
         if (nextX >= b.x - m && nextX <= b.x + b.w + m &&
-            nextY >= b.y - m && nextY <= b.y + b.h + m) {
+          nextY >= b.y - m && nextY <= b.y + b.h + m) {
           // Steer perpendicular to avoid the building
           const bCx = b.x + b.w / 2;
           const bCy = b.y + b.h / 2;
@@ -351,7 +367,7 @@ export class Car {
       // Also avoid houses
       for (const h of layout.houses) {
         if (nextX >= h.x - m && nextX <= h.x + h.w + m &&
-            nextY >= h.y - m && nextY <= h.y + h.h + m) {
+          nextY >= h.y - m && nextY <= h.y + h.h + m) {
           const bCx = h.x + h.w / 2;
           const bCy = h.y + h.h / 2;
           const avoidDx = nextX - bCx;
@@ -475,7 +491,7 @@ export class Car {
     for (const road of layout.roads) {
       if (road === this.road) continue;
       if (this.x >= road.x - snap && this.x <= road.x + road.w + snap &&
-          this.y >= road.y - snap && this.y <= road.y + road.h + snap) {
+        this.y >= road.y - snap && this.y <= road.y + road.h + snap) {
         // Score by how close road midpoint is to the target
         const cx = road.x + road.w / 2;
         const cy = road.y + road.h / 2;
@@ -1173,6 +1189,25 @@ export class Car {
           ctx.fillStyle = grad;
           ctx.fillRect(hw * 0.3 - 30, -30, 60, 60);
         }
+        break;
+      }
+
+      case 'bus': {
+        // Windows along the side
+        ctx.fillStyle = `rgba(150, 200, 230, ${0.6 - nightAlpha * 0.3})`;
+        for (let wx = -hw + 8; wx < hw - 6; wx += 6) {
+          ctx.fillRect(wx, -hh + 1, 4, this.width - 2);
+        }
+        break;
+      }
+
+      case 'garbage': {
+        // Garbage hopper on the back
+        ctx.fillStyle = `rgba(80, 80, 80, ${darkFactor})`;
+        ctx.fillRect(-hw + 1, -hh + 1.5, this.length * 0.6, this.width - 3);
+        // White cab
+        ctx.fillStyle = `rgba(240, 240, 240, ${darkFactor})`;
+        ctx.fillRect(hw - 8, -hh + 1.5, 6, this.width - 3);
         break;
       }
     }

@@ -115,6 +115,14 @@ export interface VenueDef {
   queuePositions: { x: number; y: number }[];
 }
 
+export interface CityEvent {
+  type: 'musician' | 'protest';
+  x: number;
+  y: number;
+  radius: number;
+  timer: number;
+}
+
 // Block type determines what fills a city block
 type BlockType = 'commercial' | 'residential' | 'park' | 'utility';
 
@@ -137,6 +145,8 @@ export class CityLayout {
   plazaLamps: PlazaLampDef[] = [];
   plazaBenches: PlazaBenchDef[] = [];
   plazaBounds: { x: number; y: number; w: number; h: number };
+
+  activeEvent: CityEvent | null = null;
 
   // Which grid cells are plaza (col, row)
   plazaCells: Set<string> = new Set();
@@ -944,12 +954,17 @@ export class CityLayout {
 
       // Windows at night
       if (nightAlpha > 0.1) {
+        const hour = new Date().getHours() + new Date().getMinutes() / 60;
+        let litChance = 0.4;
+        if (hour >= 20 || hour < 6) litChance = 0.05; // Late night
+        else if (hour >= 18 && hour < 20) litChance = 0.2; // Evening
+
         const winSize = 4;
         const winGap = 8;
         const winAlpha = nightAlpha * 1.2;
         for (let wx = b.x + 6; wx < b.x + b.w - 6; wx += winGap) {
           for (let wy = b.y + 6; wy < b.y + b.h - 6; wy += winGap) {
-            const isLit = seededRandom(b.windowSeed + wx * 7 + wy * 13) > 0.4;
+            const isLit = seededRandom(b.windowSeed + wx * 7 + wy * 13) < litChance;
             if (isLit) {
               const warmth = seededRandom(b.windowSeed + wx * 3 + wy * 11);
               if (warmth > 0.5) {
@@ -1200,6 +1215,10 @@ export class CityLayout {
 
       // Lit windows at night (visible through roof — skylight effect)
       if (nightAlpha > 0.1) {
+        const hour = new Date().getHours() + new Date().getMinutes() / 60;
+        let litChance = 0.35;
+        if (hour >= 23 || hour < 6) litChance = 0.05; // Mostly asleep
+
         const winAlpha = nightAlpha * 0.8;
         const winSize = 2.5;
         // Two skylights
@@ -1208,7 +1227,7 @@ export class CityLayout {
           { x: h.x + h.w * 0.6, y: h.y + h.h * 0.65 },
         ];
         for (const wp of windowPositions) {
-          const isLit = seededRandom(h.seed + wp.x * 7 + wp.y * 13) > 0.35;
+          const isLit = seededRandom(h.seed + wp.x * 7 + wp.y * 13) < litChance;
           if (isLit) {
             // Warm glow
             ctx.fillStyle = `rgba(255, 220, 120, ${winAlpha * 0.7})`;
@@ -1473,6 +1492,75 @@ export class CityLayout {
     }
   }
 
+  startEvent(type: 'musician' | 'protest') {
+    if (this.activeEvent) return;
+    const p = this.plazaBounds;
+    // Pick a random spot in the plaza that isn't too close to the edges
+    const ex = p.x + 40 + Math.random() * (p.w - 80);
+    const ey = p.y + 40 + Math.random() * (p.h - 80);
+    this.activeEvent = {
+      type,
+      x: ex,
+      y: ey,
+      radius: type === 'musician' ? 80 : 120,
+      timer: 3000 + Math.random() * 3000, // 50 to 100 seconds at 60fps
+    };
+  }
+
+  updateEvent() {
+    if (this.activeEvent) {
+      this.activeEvent.timer--;
+      if (this.activeEvent.timer <= 0) {
+        this.activeEvent = null;
+      }
+    }
+  }
+
+  drawEvent(ctx: CanvasRenderingContext2D, nightAlpha: number) {
+    if (!this.activeEvent) return;
+
+    // Draw the event focal point
+    ctx.save();
+    ctx.translate(this.activeEvent.x, this.activeEvent.y);
+
+    // A small gathering radius debug/visual indicator (subtle)
+    ctx.fillStyle = `rgba(200, 200, 200, ${0.1 - nightAlpha * 0.05})`;
+    ctx.beginPath();
+    ctx.arc(0, 0, this.activeEvent.radius, 0, Math.PI * 2);
+    ctx.fill();
+
+    const t = Date.now() / 1000;
+    const bounce = Math.abs(Math.sin(t * 4)) * 3;
+
+    if (this.activeEvent.type === 'musician') {
+      // Draw a tiny guitar player
+      ctx.fillStyle = `rgba(150, 100, 50, ${1 - nightAlpha * 0.3})`;
+      ctx.fillRect(-4, -6 - bounce, 8, 12); // body
+      ctx.fillStyle = `rgba(220, 180, 140, ${1 - nightAlpha * 0.3})`;
+      ctx.beginPath(); ctx.arc(0, -9 - bounce, 4, 0, Math.PI * 2); ctx.fill(); // head
+      ctx.fillStyle = `rgba(180, 120, 60, ${1 - nightAlpha * 0.3})`;
+      ctx.fillRect(-6, -4 - bounce, 14, 4); // guitar
+    } else if (this.activeEvent.type === 'protest') {
+      // Draw a person holding a sign
+      ctx.fillStyle = `rgba(100, 150, 200, ${1 - nightAlpha * 0.3})`;
+      ctx.fillRect(-4, -6, 8, 12); // body
+      ctx.fillStyle = `rgba(220, 180, 140, ${1 - nightAlpha * 0.3})`;
+      ctx.beginPath(); ctx.arc(0, -9, 4, 0, Math.PI * 2); ctx.fill(); // head
+
+      // The sign bouncing
+      ctx.strokeStyle = `rgba(80, 60, 40, ${1 - nightAlpha * 0.3})`;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(4, -2); ctx.lineTo(6, -15 - bounce); ctx.stroke(); // pole
+      ctx.fillStyle = `rgba(255, 255, 255, ${1 - nightAlpha * 0.3})`;
+      ctx.fillRect(0, -22 - bounce, 12, 8); // sign board
+      ctx.fillStyle = `rgba(0, 0, 0, ${1 - nightAlpha * 0.3})`;
+      ctx.fillRect(2, -20 - bounce, 8, 2); // sign text line 1
+      ctx.fillRect(2, -17 - bounce, 6, 2); // sign text line 2
+    }
+
+    ctx.restore();
+  }
+
   getRandomWalkablePosition(seed: number): { x: number; y: number } {
     const sidewalksAndPlaza = this.walkableRects.filter(w => w.type === 'sidewalk' || w.type === 'plaza');
     const idx = Math.floor(seededRandom(seed) * sidewalksAndPlaza.length);
@@ -1518,8 +1606,8 @@ export class CityLayout {
   isOnCrosswalk(x: number, y: number): boolean {
     for (const wr of this.walkableRects) {
       if (wr.type === 'crosswalk' &&
-          x >= wr.x && x <= wr.x + wr.w &&
-          y >= wr.y && y <= wr.y + wr.h) {
+        x >= wr.x && x <= wr.x + wr.w &&
+        y >= wr.y && y <= wr.y + wr.h) {
         return true;
       }
     }
@@ -1559,15 +1647,15 @@ export class CityLayout {
   isInBuilding(x: number, y: number, margin = 4): boolean {
     for (const b of this.buildings) {
       if (x >= b.x - margin && x <= b.x + b.w + margin &&
-          y >= b.y - margin && y <= b.y + b.h + margin) return true;
+        y >= b.y - margin && y <= b.y + b.h + margin) return true;
     }
     for (const v of this.venues) {
       if (x >= v.x - margin && x <= v.x + v.w + margin &&
-          y >= v.y - margin && y <= v.y + v.h + margin) return true;
+        y >= v.y - margin && y <= v.y + v.h + margin) return true;
     }
     for (const h of this.houses) {
       if (x >= h.x - margin && x <= h.x + h.w + margin &&
-          y >= h.y - margin && y <= h.y + h.h + margin) return true;
+        y >= h.y - margin && y <= h.y + h.h + margin) return true;
     }
     return false;
   }

@@ -131,6 +131,11 @@ export class Pedestrian {
   homeTimer: number = 0;
   homeDuration: number = 0;
 
+  // Needs
+  energy: number = 100;
+  hunger: number = 100;
+  social: number = 100;
+
   // Bicycle
   hasBicycle: boolean = false;
   isRidingBicycle: boolean = false;
@@ -183,6 +188,11 @@ export class Pedestrian {
       this.x = pos.x;
       this.y = pos.y;
     }
+
+    // Varied starting needs so they don't all act at once
+    this.energy = 30 + Math.random() * 70;
+    this.hunger = 30 + Math.random() * 70;
+    this.social = 30 + Math.random() * 70;
 
     this.angle = Math.random() * Math.PI * 2;
     this.vx = Math.cos(this.angle) * this.baseSpeed * 0.5;
@@ -266,6 +276,11 @@ export class Pedestrian {
         this.thoughtTimer--;
         if (this.thoughtTimer <= 0) this.thoughtBubble = null;
       }
+
+      // Decrease needs gradually over time
+      this.energy = Math.max(0, this.energy - 0.005);
+      this.hunger = Math.max(0, this.hunger - 0.01);
+      this.social = Math.max(0, this.social - 0.015);
 
       const isBusy = this.isSitting || this.isBenchSitting || this.socialMode
         || this.isQueuing || this.isWindowShopping || this.isCheckingPhone || this.isTakingPhoto
@@ -521,7 +536,21 @@ export class Pedestrian {
               this.groupFollowers = [];
             }
 
-            const roll = Math.random();
+            let roll = Math.random();
+
+            // Override roll based on needs if not clock eligible
+            if (!this.isClockEligible) {
+              if (this.energy < 20 && this.assignedHome >= 0) {
+                roll = 0.82; // Force -> Go home
+                this.energy = 100; // Reset need
+              } else if (this.hunger < 25) {
+                roll = 0.05; // Force -> Venue sitting (Cafe/Restaurant)
+                this.hunger = 100; // Reset need
+              } else if (this.social < 20) {
+                roll = 0.50; // Force -> Social chat
+                this.social = 100; // Reset need
+              }
+            }
 
             // Venue sitting — prefer cafes/restaurants
             if (!this.isClockEligible && roll < 0.12) {
@@ -544,6 +573,8 @@ export class Pedestrian {
                   (pb.y + pb.h / 2) - seat.y,
                   (pb.x + pb.w / 2) - seat.x
                 );
+                this.thoughtBubble = 'food';
+                this.thoughtTimer = 50;
               }
             }
 
@@ -616,6 +647,10 @@ export class Pedestrian {
             if (!this.isSitting && !this.isBenchSitting && !this.isQueuing && !this.isWindowShopping && !this.isGoingHome && !this.isAtHome && !this.isClockEligible && roll >= 0.42 && roll < 0.56) {
               this.socialMode = true;
               this.socialTimer = 100 + Math.floor(Math.random() * 220);
+              if (this.social < 50) {
+                this.thoughtBubble = 'chat';
+                this.thoughtTimer = 50;
+              }
             }
 
             // Group walking
@@ -693,9 +728,33 @@ export class Pedestrian {
 
             // Otherwise pick a new waypoint
             if (!this.isSitting && !this.isBenchSitting && !this.isQueuing && !this.isWindowShopping && !this.socialMode && !this.isCheckingPhone && !this.isTakingPhoto && !this.isGoingHome && !this.isAtHome) {
-              if (Math.random() < 0.3) this.hasFood = false; // might finish food
-              const wp = layout.getRandomSidewalkWaypoint();
-              this.setWaypointWithCrosswalkRouting(layout, wp.x, wp.y);
+
+              if (layout.activeEvent && !this.isClockEligible && roll < 0.3) {
+                // Route to event
+                const ev = layout.activeEvent;
+                const d = Math.hypot(ev.x - this.x, ev.y - this.y);
+                if (d < 600) { // If within reasonable distance
+                  this.waypointX = ev.x + (Math.random() - 0.5) * ev.radius;
+                  this.waypointY = ev.y + (Math.random() - 0.5) * ev.radius;
+                  this.waypointTimer = 0;
+
+                  // Watch the event when they arrive
+                  this.socialMode = true;
+                  this.socialTimer = 200 + Math.random() * 400; // Watch for a while
+
+                  // Face the event
+                  this.angle = Math.atan2(ev.y - this.waypointY, ev.x - this.waypointX);
+
+                  this.thoughtBubble = ev.type === 'musician' ? 'music' : 'idea';
+                  this.thoughtTimer = 60;
+                }
+              }
+
+              if (!this.socialMode) {
+                if (Math.random() < 0.3) this.hasFood = false; // might finish food
+                const wp = layout.getRandomSidewalkWaypoint();
+                this.setWaypointWithCrosswalkRouting(layout, wp.x, wp.y);
+              }
             }
           } // close else for intermediate waypoint check
         }
@@ -1153,6 +1212,14 @@ export class Pedestrian {
         case 'home':
           ctx.fillStyle = 'rgba(139, 69, 19, 0.9)';
           ctx.fillText('\u2302', bx, by); // house symbol
+          break;
+        case 'food':
+          ctx.fillStyle = 'rgba(255, 140, 0, 0.9)';
+          ctx.fillText('\u2615', bx, by); // cafe/coffee symbol
+          break;
+        case 'chat':
+          ctx.fillStyle = 'rgba(80, 150, 220, 0.9)';
+          ctx.fillText('\u2026', bx, by); // ellipsis
           break;
       }
       ctx.globalAlpha = prevAlpha;
