@@ -4,7 +4,7 @@
  * Renders parallax clouds at multiple depth layers, rain particles, and puddle shimmers.
  */
 
-type WeatherType = 'clear' | 'cloudy' | 'rain' | 'snow' | 'fog';
+type WeatherType = 'clear' | 'cloudy' | 'drizzle' | 'rain' | 'heavy_rain' | 'snow' | 'heavy_snow' | 'fog' | 'thunderstorm' | 'hail';
 
 interface RainDrop {
   x: number;
@@ -13,6 +13,15 @@ interface RainDrop {
   length: number;
   opacity: number;
   isSnow: boolean;
+  isHail: boolean;
+}
+
+interface HailParticle {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  life: number;
 }
 
 interface Cloud {
@@ -44,12 +53,26 @@ interface SnowPatch {
 // WMO Weather interpretation codes → WeatherType
 function wmoToWeather(code: number): WeatherType {
   // 0-1: clear, 2-3: cloudy, 45-48: fog (cloudy),
-  // 51-67: drizzle/rain, 71-77: snow, 80-82: showers, 85-86: snow showers, 95-99: thunderstorm
+  // 51-55: drizzle, 56-57: freezing drizzle (treat as drizzle)
+  // 61: rain slight, 63: rain moderate, 65: rain heavy
+  // 66-67: freezing rain
+  // 71: snow slight, 73: snow moderate, 75: snow heavy
+  // 77: snow grains
+  // 80-82: rain showers (slight, mod, violent)
+  // 85-86: snow showers
+  // 95: thunderstorm, 96-99: thunderstorm with hail
   if (code <= 1) return 'clear';
   if (code <= 3) return 'cloudy';
   if (code <= 48) return 'fog';
-  if (code >= 71 && code <= 77) return 'snow';
-  if (code >= 85 && code <= 86) return 'snow';
+  if (code >= 51 && code <= 57) return 'drizzle';
+  if (code === 61 || code === 63 || code === 66 || code === 80 || code === 81) return 'rain';
+  if (code === 65 || code === 67 || code === 82) return 'heavy_rain';
+  if (code === 71 || code === 73 || code === 77 || code === 85) return 'snow';
+  if (code === 75 || code === 86) return 'heavy_snow';
+  if (code === 95) return 'thunderstorm';
+  if (code >= 96 && code <= 99) return 'hail';
+
+  // default fallback
   return 'rain';
 }
 
@@ -59,6 +82,7 @@ export class Weather {
   private alpha: number = 0;            // smoothed blend
   private transitionTimer: number = 0;  // frames until next weather change
   private rainDrops: RainDrop[] = [];
+  private hailParticles: HailParticle[] = [];
   private clouds: Cloud[] = [];
   private puddles: Puddle[] = [];
   private snowPatches: SnowPatch[] = [];
@@ -69,6 +93,7 @@ export class Weather {
   // Dynamic levels (0 to 1)
   private puddleLevel: number = 0;
   private snowLevel: number = 0;
+  private lightningPhase: number = 0;
 
   // Real weather from Open-Meteo
   public useRealWeather: boolean = false;
@@ -133,8 +158,9 @@ export class Weather {
 
       if (instant) {
         this.alpha = this.targetAlpha;
-        this.puddleLevel = weatherType === 'rain' ? 1.0 : 0.0;
-        this.snowLevel = weatherType === 'snow' ? 1.0 : 0.0;
+        this.puddleLevel = ['rain', 'heavy_rain', 'thunderstorm', 'hail'].includes(weatherType) ? 1.0 : (weatherType === 'drizzle' ? 0.4 : 0.0);
+        this.snowLevel = ['snow', 'heavy_snow'].includes(weatherType) ? 1.0 : 0.0;
+        this.lightningPhase = 0;
       }
 
       this.realWeatherFetched = true;
