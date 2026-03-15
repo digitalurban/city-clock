@@ -20,6 +20,7 @@ export interface HouseDef {
   hasGarden: boolean;
   gardenSide: 'top' | 'bottom' | 'left' | 'right';
   gardenColor: string;
+  gardenPathEnd?: { x: number; y: number };
 }
 
 export interface ParkDef {
@@ -475,6 +476,20 @@ export class CityLayout {
       const hy = gardenSide === 'top' ? by + margin + gardenH : by + margin;
       const hh = blockH - margin * 2 - gardenH;
 
+      // Compute garden path end (sidewalk edge point)
+      const frontDoorX = hx + houseW / 2;
+      let gardenPathEnd: { x: number; y: number };
+      if (hasGarden) {
+        if (gardenSide === 'bottom') {
+          gardenPathEnd = { x: frontDoorX, y: hy + hh + gardenH + 2 };
+        } else {
+          gardenPathEnd = { x: frontDoorX, y: hy - gardenH - 2 };
+        }
+      } else {
+        // No garden: offset 15px toward sidewalk (assume bottom)
+        gardenPathEnd = { x: frontDoorX, y: hy + hh + 15 };
+      }
+
       this.houses.push({
         x: hx, y: hy, w: houseW, h: hh,
         color: HOUSE_COLORS[Math.floor(seededRandom(seed + 400) * HOUSE_COLORS.length)],
@@ -483,6 +498,7 @@ export class CityLayout {
         hasGarden,
         gardenSide,
         gardenColor: GARDEN_COLORS[Math.floor(seededRandom(seed + 600) * GARDEN_COLORS.length)],
+        gardenPathEnd,
       });
 
       // Garden trees
@@ -1467,11 +1483,12 @@ export class CityLayout {
   }
 
   /** Get a random house position for pedestrian "going home" behavior */
-  getRandomHousePosition(): { x: number; y: number } | null {
+  getRandomHousePosition(): { x: number; y: number; houseIndex: number } | null {
     if (this.houses.length === 0) return null;
-    const h = this.houses[Math.floor(Math.random() * this.houses.length)];
-    // Return the front door position
-    return { x: h.x + h.w / 2, y: h.y + h.h };
+    const houseIndex = Math.floor(Math.random() * this.houses.length);
+    const h = this.houses[houseIndex];
+    // Return the front door position and house index
+    return { x: h.x + h.w / 2, y: h.y + h.h, houseIndex };
   }
 
   isOnRoad(x: number, y: number): boolean {

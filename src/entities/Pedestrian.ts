@@ -115,6 +115,18 @@ export class Pedestrian {
   // Crosswalk routing intermediate waypoint
   intermediateWaypoint: { x: number; y: number } | null = null;
 
+  // Home assignment
+  assignedHome: number = -1; // index into layout.houses
+  isGoingHome: boolean = false;
+  isAtHome: boolean = false;
+  homeTimer: number = 0;
+  homeDuration: number = 0;
+
+  // Bicycle
+  hasBicycle: boolean = false;
+  isRidingBicycle: boolean = false;
+  bicycleSpeed: number = 0;
+
   constructor(layout: CityLayout, index: number, clockEligibleCount: number) {
     this.isClockEligible = index < clockEligibleCount;
     this.idOffset = Math.random() * 1000;
@@ -139,6 +151,15 @@ export class Pedestrian {
     // ~28% of non-clock pedestrians carry a shopping bag
     this.hasBag   = !this.isClockEligible && Math.random() < 0.28;
     this.bagColor = BAG_COLORS[Math.floor(Math.random() * BAG_COLORS.length)];
+
+    // ~15% of non-clock pedestrians have a bicycle
+    this.hasBicycle = !this.isClockEligible && Math.random() < 0.15;
+    this.bicycleSpeed = PEDESTRIAN_BASE_SPEED * 3;
+
+    // Assign each non-clock pedestrian a home
+    if (!this.isClockEligible) {
+      this.assignedHome = Math.floor(Math.random() * Math.max(1, layout.houses.length));
+    }
 
     // Spawn position
     if (this.isClockEligible) {
@@ -228,7 +249,8 @@ export class Pedestrian {
       }
 
       const isBusy = this.isSitting || this.isBenchSitting || this.socialMode
-        || this.isQueuing || this.isWindowShopping || this.isCheckingPhone || this.isTakingPhoto;
+        || this.isQueuing || this.isWindowShopping || this.isCheckingPhone || this.isTakingPhoto
+        || this.isGoingHome || this.isAtHome;
 
       // --- Social chat mode ---
       if (this.socialMode) {
@@ -392,6 +414,58 @@ export class Pedestrian {
         }
       }
 
+      // --- Going home ---
+      if (this.isGoingHome && !this.isAtHome) {
+        const home = layout.houses[this.assignedHome];
+        if (home) {
+          const frontDoorX = home.x + home.w / 2;
+          const frontDoorY = home.gardenSide === 'bottom' ? home.y + home.h : home.y;
+          const distToDoor = Math.hypot(frontDoorX - this.x, frontDoorY - this.y);
+
+          if (distToDoor < 15) {
+            // Arrived at house - go inside
+            this.isAtHome = true;
+            this.isRidingBicycle = false;
+            this.homeTimer = 0;
+            this.vx = 0;
+            this.vy = 0;
+          }
+        }
+      }
+
+      // --- At home ---
+      if (this.isAtHome) {
+        this.homeTimer++;
+        // Hide inside house (freeze position)
+        this.vx *= 0.1;
+        this.vy *= 0.1;
+
+        if (this.homeTimer >= this.homeDuration) {
+          // Leave home
+          this.isAtHome = false;
+          this.isGoingHome = false;
+          this.thoughtBubble = 'happy';
+          this.thoughtTimer = 50;
+
+          // Walk back out to sidewalk via garden path
+          const home = layout.houses[this.assignedHome];
+          if (home && home.gardenPathEnd) {
+            this.waypointX = home.gardenPathEnd.x;
+            this.waypointY = home.gardenPathEnd.y;
+          } else {
+            const wp = layout.getRandomSidewalkWaypoint();
+            this.waypointX = wp.x;
+            this.waypointY = wp.y;
+          }
+          this.waypointTimer = 0;
+
+          // Some ride bicycle back
+          if (this.hasBicycle && Math.random() < 0.6) {
+            this.isRidingBicycle = true;
+          }
+        }
+      }
+
       // --- Group following ---
       if (this.groupLeader && !isBusy) {
         const leader = this.groupLeader;
@@ -455,7 +529,7 @@ export class Pedestrian {
           }
 
           // Bench sitting
-          if (!this.isSitting && !this.isClockEligible && roll >= 0.12 && roll < 0.20) {
+          if (!this.isSitting && !this.isGoingHome && !this.isAtHome && !this.isClockEligible && roll >= 0.12 && roll < 0.20) {
             let nearestBench: PlazaBenchDef | null = null;
             let nearestDist = Infinity;
             for (const bench of layout.plazaBenches) {
@@ -483,7 +557,7 @@ export class Pedestrian {
           }
 
           // Shop queuing
-          if (!this.isSitting && !this.isBenchSitting && !this.isClockEligible && roll >= 0.20 && roll < 0.30) {
+          if (!this.isSitting && !this.isBenchSitting && !this.isGoingHome && !this.isAtHome && !this.isClockEligible && roll >= 0.20 && roll < 0.30) {
             const shops = layout.venues.filter(v =>
               (v.type === 'shop' || v.type === 'bookshop') && v.queuePositions.length > 0
             );
@@ -501,7 +575,7 @@ export class Pedestrian {
           }
 
           // Window shopping
-          if (!this.isSitting && !this.isBenchSitting && !this.isQueuing && !this.isClockEligible && roll >= 0.30 && roll < 0.42) {
+          if (!this.isSitting && !this.isBenchSitting && !this.isQueuing && !this.isGoingHome && !this.isAtHome && !this.isClockEligible && roll >= 0.30 && roll < 0.42) {
             const shops = layout.venues.filter(v => v.type === 'shop' || v.type === 'bookshop');
             if (shops.length > 0) {
               const shop = shops[Math.floor(Math.random() * shops.length)];
@@ -520,13 +594,13 @@ export class Pedestrian {
           }
 
           // Social chat
-          if (!this.isSitting && !this.isBenchSitting && !this.isQueuing && !this.isWindowShopping && !this.isClockEligible && roll >= 0.42 && roll < 0.56) {
+          if (!this.isSitting && !this.isBenchSitting && !this.isQueuing && !this.isWindowShopping && !this.isGoingHome && !this.isAtHome && !this.isClockEligible && roll >= 0.42 && roll < 0.56) {
             this.socialMode = true;
             this.socialTimer = 100 + Math.floor(Math.random() * 220);
           }
 
           // Group walking
-          if (!this.isSitting && !this.isBenchSitting && !this.isQueuing && !this.isWindowShopping && !this.socialMode && !this.isClockEligible && roll >= 0.56 && roll < 0.62) {
+          if (!this.isSitting && !this.isBenchSitting && !this.isQueuing && !this.isWindowShopping && !this.socialMode && !this.isGoingHome && !this.isAtHome && !this.isClockEligible && roll >= 0.56 && roll < 0.62) {
             const nearbyFree: Pedestrian[] = [];
             for (const other of pedestrians) {
               if (other === this || other.isClockEligible || other.groupLeader || other.groupFollowers.length > 0) continue;
@@ -542,13 +616,13 @@ export class Pedestrian {
           }
 
           // Phone checking — stand still and browse
-          if (!this.isSitting && !this.isBenchSitting && !this.isQueuing && !this.isWindowShopping && !this.socialMode && !this.isClockEligible && roll >= 0.62 && roll < 0.72) {
+          if (!this.isSitting && !this.isBenchSitting && !this.isQueuing && !this.isWindowShopping && !this.socialMode && !this.isGoingHome && !this.isAtHome && !this.isClockEligible && roll >= 0.62 && roll < 0.72) {
             this.isCheckingPhone = true;
             this.phoneTimer = 80 + Math.floor(Math.random() * 150);
           }
 
           // Photo taking near venues
-          if (!this.isSitting && !this.isBenchSitting && !this.isQueuing && !this.isWindowShopping && !this.socialMode && !this.isCheckingPhone && !this.isClockEligible && roll >= 0.72 && roll < 0.78) {
+          if (!this.isSitting && !this.isBenchSitting && !this.isQueuing && !this.isWindowShopping && !this.socialMode && !this.isCheckingPhone && !this.isGoingHome && !this.isAtHome && !this.isClockEligible && roll >= 0.72 && roll < 0.78) {
             let nearVenue: VenueDef | null = null;
             let nearDist = Infinity;
             for (const v of layout.venues) {
@@ -570,8 +644,36 @@ export class Pedestrian {
             }
           }
 
+          // Go home
+          if (!this.isSitting && !this.isBenchSitting && !this.isQueuing && !this.isWindowShopping && !this.socialMode && !this.isCheckingPhone && !this.isTakingPhoto && !this.isGoingHome && !this.isAtHome && !this.isClockEligible && roll >= 0.78 && roll < 0.88) {
+            if (this.assignedHome >= 0 && this.assignedHome < layout.houses.length) {
+              const home = layout.houses[this.assignedHome];
+              this.isGoingHome = true;
+              this.homeTimer = 0;
+              this.homeDuration = 400 + Math.floor(Math.random() * 400); // stay home 400-800 frames
+
+              // Walk to garden path end first, then to front door
+              const pathEnd = home.gardenPathEnd;
+              if (pathEnd) {
+                this.setWaypointWithCrosswalkRouting(layout, pathEnd.x, pathEnd.y);
+              } else {
+                this.waypointX = home.x + home.w / 2;
+                this.waypointY = home.y + home.h;
+                this.waypointTimer = 0;
+              }
+
+              // If has bicycle, ride it
+              if (this.hasBicycle) {
+                this.isRidingBicycle = true;
+              }
+
+              this.thoughtBubble = 'home';
+              this.thoughtTimer = 50;
+            }
+          }
+
           // Otherwise pick a new waypoint
-          if (!this.isSitting && !this.isBenchSitting && !this.isQueuing && !this.isWindowShopping && !this.socialMode && !this.isCheckingPhone && !this.isTakingPhoto) {
+          if (!this.isSitting && !this.isBenchSitting && !this.isQueuing && !this.isWindowShopping && !this.socialMode && !this.isCheckingPhone && !this.isTakingPhoto && !this.isGoingHome && !this.isAtHome) {
             if (Math.random() < 0.3) this.hasFood = false; // might finish food
             const wp = layout.getRandomSidewalkWaypoint();
             this.setWaypointWithCrosswalkRouting(layout, wp.x, wp.y);
@@ -660,6 +762,8 @@ export class Pedestrian {
       // House repulsion
       if (!repelled) {
         for (const h of layout.houses) {
+          // Skip own home when going home
+          if (this.isGoingHome && layout.houses.indexOf(h) === this.assignedHome) continue;
           if (nextX >= h.x - m && nextX <= h.x + h.w + m &&
               nextY >= h.y - m && nextY <= h.y + h.h + m) {
             const rdx = this.x - (h.x + h.w / 2);
@@ -702,9 +806,10 @@ export class Pedestrian {
         this.vy = (this.vy / speed) * this.maxSpeed * 12;
       }
     } else {
-      if (speed > this.maxSpeed) {
-        this.vx = (this.vx / speed) * this.maxSpeed;
-        this.vy = (this.vy / speed) * this.maxSpeed;
+      const speedMultiplier = this.isRidingBicycle ? 2.5 : 1;
+      if (speed > this.maxSpeed * speedMultiplier) {
+        this.vx = (this.vx / speed) * this.maxSpeed * speedMultiplier;
+        this.vy = (this.vy / speed) * this.maxSpeed * speedMultiplier;
       } else if (speed < this.maxSpeed * 0.15 && speed > 0 && !this.isSitting && !this.socialMode) {
         this.vx = (this.vx / speed) * this.maxSpeed * 0.15;
         this.vy = (this.vy / speed) * this.maxSpeed * 0.15;
@@ -733,6 +838,10 @@ export class Pedestrian {
     ctx.translate(this.x, this.y);
     ctx.rotate(this.angle);
 
+    if (this.isAtHome) {
+      ctx.globalAlpha = 0.15;
+    }
+
     const s = this.size * 5.5;
     const speed = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
     const legSwing = (this.isSitting || this.socialMode)
@@ -744,6 +853,32 @@ export class Pedestrian {
     ctx.beginPath();
     ctx.ellipse(1, 1, s * 1.1, s * 0.7, 0, 0, Math.PI * 2);
     ctx.fill();
+
+    // Bicycle
+    if (this.isRidingBicycle) {
+      const wheelR = s * 0.32;
+      ctx.strokeStyle = adjustForNight('#555555', nightAlpha);
+      ctx.lineWidth = 1.2;
+      // Rear wheel
+      ctx.beginPath();
+      ctx.arc(-s * 0.5, s * 0.1, wheelR, 0, Math.PI * 2);
+      ctx.stroke();
+      // Front wheel
+      ctx.beginPath();
+      ctx.arc(s * 0.5, s * 0.1, wheelR, 0, Math.PI * 2);
+      ctx.stroke();
+      // Frame
+      ctx.beginPath();
+      ctx.moveTo(-s * 0.5, s * 0.1);
+      ctx.lineTo(0, -s * 0.2);
+      ctx.lineTo(s * 0.5, s * 0.1);
+      ctx.stroke();
+      // Handlebar
+      ctx.beginPath();
+      ctx.moveTo(s * 0.35, -s * 0.1);
+      ctx.lineTo(s * 0.65, -s * 0.1);
+      ctx.stroke();
+    }
 
     // Shopping bag (right side of body)
     if (this.hasBag) {
@@ -913,6 +1048,10 @@ export class Pedestrian {
         case 'idea':
           ctx.fillStyle = 'rgba(220, 180, 30, 0.9)';
           ctx.fillText('!', bx, by);
+          break;
+        case 'home':
+          ctx.fillStyle = 'rgba(139, 69, 19, 0.9)';
+          ctx.fillText('\u2302', bx, by); // house symbol
           break;
       }
       ctx.globalAlpha = prevAlpha;

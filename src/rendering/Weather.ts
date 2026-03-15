@@ -276,38 +276,125 @@ export class Weather {
 
       // Cloud color shifts slightly by layer for depth
       const grey = cloud.layer === 0 ? 200 : cloud.layer === 1 ? 185 : 170;
-      ctx.fillStyle = `rgba(${grey}, ${grey + 5}, ${grey + 10}, ${layerAlpha})`;
 
       const cx = cloud.x;
       const cy = cloud.y;
       const hw = cloud.w / 2;
       const hh = cloud.h / 2;
 
-      ctx.beginPath();
-      ctx.ellipse(cx, cy, hw, hh, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.ellipse(cx - hw * 0.4, cy + hh * 0.2, hw * 0.6, hh * 0.7, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.ellipse(cx + hw * 0.35, cy + hh * 0.15, hw * 0.55, hh * 0.65, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.ellipse(cx + hw * 0.1, cy - hh * 0.3, hw * 0.5, hh * 0.5, 0, 0, Math.PI * 2);
-      ctx.fill();
+      // --- Seeded PRNG for deterministic cloud shapes ---
+      let rngState = cloud.seed * 9301 + 49297;
+      const seededRandom = (): number => {
+        rngState = (rngState * 9301 + 49297) % 233280;
+        return rngState / 233280;
+      };
 
-      // Cloud shadow on ground (parallax — further layers cast wider, fainter shadows)
+      // Determine cloud type from seed: < 0.35 = flat/stratus, else = puffy/cumulus
+      const typeRoll = (cloud.seed % 100) / 100;
+      const isStratus = typeRoll < 0.35;
+
+      // Generate 6-10 overlapping lobes for the main cloud body
+      const lobeCount = 6 + Math.floor(seededRandom() * 5); // 6-10
+
+      interface Lobe {
+        ox: number; oy: number; rx: number; ry: number;
+      }
+      const lobes: Lobe[] = [];
+
+      for (let i = 0; i < lobeCount; i++) {
+        const t = i / (lobeCount - 1); // 0..1 across cloud width
+        const xSpread = (t - 0.5) * 2; // -1..1
+
+        let ox: number, oy: number, rx: number, ry: number;
+
+        if (isStratus) {
+          // Stratus: wide, flat — lobes spread horizontally with small vertical extent
+          ox = xSpread * hw * 0.9;
+          oy = (seededRandom() - 0.5) * hh * 0.3;
+          rx = hw * (0.3 + seededRandom() * 0.25);
+          ry = hh * (0.35 + seededRandom() * 0.2);
+        } else {
+          // Cumulus: taller center, rounded puffs — lobes arc upward in the middle
+          const archRise = (1 - xSpread * xSpread); // parabolic, peaks at center
+          ox = xSpread * hw * 0.85;
+          oy = -archRise * hh * (0.5 + seededRandom() * 0.4) + (seededRandom() - 0.4) * hh * 0.2;
+          rx = hw * (0.25 + seededRandom() * 0.25);
+          ry = hh * (0.45 + seededRandom() * 0.35);
+        }
+
+        lobes.push({ ox, oy, rx, ry });
+      }
+
+      // --- Shadow layer (bottom/darker) ---
+      for (const lobe of lobes) {
+        const shadowGrey = Math.max(0, grey - 35);
+        ctx.fillStyle = `rgba(${shadowGrey}, ${shadowGrey + 3}, ${shadowGrey + 8}, ${layerAlpha * 0.55})`;
+        ctx.beginPath();
+        ctx.ellipse(
+          cx + lobe.ox,
+          cy + lobe.oy + hh * 0.18,
+          lobe.rx * 0.95,
+          lobe.ry * 0.6,
+          0, 0, Math.PI * 2
+        );
+        ctx.fill();
+      }
+
+      // --- Main body (mid-tone) ---
+      for (const lobe of lobes) {
+        ctx.fillStyle = `rgba(${grey}, ${grey + 5}, ${grey + 10}, ${layerAlpha})`;
+        ctx.beginPath();
+        ctx.ellipse(cx + lobe.ox, cy + lobe.oy, lobe.rx, lobe.ry, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // --- Highlight layer (top/lighter) ---
+      for (const lobe of lobes) {
+        const hiGrey = Math.min(255, grey + 30);
+        ctx.fillStyle = `rgba(${hiGrey}, ${hiGrey + 3}, ${hiGrey + 5}, ${layerAlpha * 0.45})`;
+        ctx.beginPath();
+        ctx.ellipse(
+          cx + lobe.ox - lobe.rx * 0.05,
+          cy + lobe.oy - lobe.ry * 0.35,
+          lobe.rx * 0.75,
+          lobe.ry * 0.45,
+          0, 0, Math.PI * 2
+        );
+        ctx.fill();
+      }
+
+      // --- Wispy edges: smaller semi-transparent ellipses around the perimeter ---
+      const wispCount = 4 + Math.floor(seededRandom() * 4); // 4-7 wisps
+      for (let i = 0; i < wispCount; i++) {
+        const angle = seededRandom() * Math.PI * 2;
+        const dist = 0.7 + seededRandom() * 0.45;
+        const wx = cx + Math.cos(angle) * hw * dist;
+        const wy = cy + Math.sin(angle) * hh * dist * 0.6;
+        const wr = hw * (0.1 + seededRandom() * 0.15);
+        const wry = hh * (0.15 + seededRandom() * 0.12);
+        ctx.fillStyle = `rgba(${grey + 10}, ${grey + 15}, ${grey + 18}, ${layerAlpha * (0.15 + seededRandom() * 0.2)})`;
+        ctx.beginPath();
+        ctx.ellipse(wx, wy, wr, wry, seededRandom() * Math.PI, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // --- Cloud shadow on ground with soft gradient ---
       if (cloud.layer <= 1 && layerAlpha > 0.03) {
         const shadowOffsetY = (cloud.layer === 0 ? 80 : 40);
         const shadowScale = cloud.layer === 0 ? 1.2 : 1.0;
         const shadowAlpha = layerAlpha * (cloud.layer === 0 ? 0.04 : 0.06);
-        ctx.fillStyle = `rgba(0, 0, 0, ${shadowAlpha})`;
+        const sx = cx + shadowOffsetY * 0.3;
+        const sy = cy + shadowOffsetY;
+        const srx = hw * shadowScale;
+        const sry = hh * shadowScale * 0.5;
+
+        const grad = ctx.createRadialGradient(sx, sy, 0, sx, sy, Math.max(srx, sry));
+        grad.addColorStop(0, `rgba(0, 0, 0, ${shadowAlpha})`);
+        grad.addColorStop(0.6, `rgba(0, 0, 0, ${shadowAlpha * 0.5})`);
+        grad.addColorStop(1, `rgba(0, 0, 0, 0)`);
+        ctx.fillStyle = grad;
         ctx.beginPath();
-        ctx.ellipse(
-          cx + shadowOffsetY * 0.3, cy + shadowOffsetY,
-          hw * shadowScale, hh * shadowScale * 0.5,
-          0, 0, Math.PI * 2
-        );
+        ctx.ellipse(sx, sy, srx, sry, 0, 0, Math.PI * 2);
         ctx.fill();
       }
     }
