@@ -1,5 +1,5 @@
 import { CityLayout } from './city/CityLayout';
-import { Pedestrian } from './entities/Pedestrian';
+import { Pedestrian, clearPedestrianState } from './entities/Pedestrian';
 import { Car } from './entities/Car';
 import { ClockManager } from './clock/ClockManager';
 import { DayNightCycle } from './rendering/DayNightCycle';
@@ -21,14 +21,14 @@ let staticCanvas: HTMLCanvasElement | null = null;
 let lastStaticNightAlpha = -1;
 
 // The city world is WORLD_SCALE times the viewport in each dimension.
-// At MIN_ZOOM the full world fits in the viewport; zooming in shows detail.
+// At minZoom the full world fits in the viewport; zooming in shows detail.
 const WORLD_SCALE = 2.0;
 
 // Zoom / pan state
 let zoom = 1.0;
 let panX = 0;
 let panY = 0;
-const MIN_ZOOM = 0.5;
+let minZoom = 0.5;  // updated dynamically in resize()
 const MAX_ZOOM = 5.0;
 
 function clampPan(w: number, h: number) {
@@ -45,7 +45,7 @@ function clampPan(w: number, h: number) {
 }
 
 function applyZoom(factor: number, pivotX: number, pivotY: number, w: number, h: number) {
-  const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, zoom * factor));
+  const newZoom = Math.max(minZoom, Math.min(MAX_ZOOM, zoom * factor));
   const zoomRatio = newZoom / zoom;
   panX = pivotX - (pivotX - panX) * zoomRatio;
   panY = pivotY - (pivotY - panY) * zoomRatio;
@@ -187,11 +187,17 @@ function resize() {
 
   layout = new CityLayout(worldW, worldH);
 
-  // Start at MIN_ZOOM so the full city (including delivery lanes) fills the viewport,
-  // centred on the plaza. The user can then zoom in for detail.
-  zoom = MIN_ZOOM;
+  // Zoom so the plaza fills ~80% of the viewport, centered on screen.
+  // This works regardless of device/viewport size.
   const plazaCX = layout.plazaBounds.x + layout.plazaBounds.w / 2;
   const plazaCY = layout.plazaBounds.y + layout.plazaBounds.h / 2;
+  const plazaFillFraction = 0.8;
+  const zoomToFitW = (width * plazaFillFraction) / layout.plazaBounds.w;
+  const zoomToFitH = (height * plazaFillFraction) / layout.plazaBounds.h;
+  const initialZoom = Math.min(zoomToFitW, zoomToFitH);
+  // Allow zooming out to 1.5× of the initial view (no further)
+  minZoom = initialZoom / 1.5;
+  zoom = Math.max(minZoom, Math.min(MAX_ZOOM, initialZoom));
   panX = width / 2 - plazaCX * zoom;
   panY = height / 2 - plazaCY * zoom;
   clampPan(width, height);
@@ -204,9 +210,19 @@ function resize() {
 
   cars = [];
   Car.droppedPackages = []; // clear packages on resize
-  const deliveryCount = Math.floor(TOTAL_CARS * 0.2);
+  clearPedestrianState(); // clear shared queues/benches state
+  // Allocate car types: ~15% delivery, ~4% emergency, rest normal
+  const deliveryCount = Math.floor(TOTAL_CARS * 0.15);
+  const emergencyCount = Math.max(2, Math.floor(TOTAL_CARS * 0.04));
+  const emergencyTypes: Array<'police' | 'ambulance' | 'firetruck'> = ['police', 'ambulance', 'firetruck'];
   for (let i = 0; i < TOTAL_CARS; i++) {
-    cars.push(new Car(layout, i < deliveryCount));
+    if (i < deliveryCount) {
+      cars.push(new Car(layout, 'delivery'));
+    } else if (i < deliveryCount + emergencyCount) {
+      cars.push(new Car(layout, emergencyTypes[i % emergencyTypes.length]));
+    } else {
+      cars.push(new Car(layout, 'normal'));
+    }
   }
 
   // Init weather with world dimensions

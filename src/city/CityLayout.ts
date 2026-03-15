@@ -81,6 +81,8 @@ export interface VenueDef {
   facingPlaza: 'top' | 'bottom' | 'left' | 'right';
   // Outdoor seating positions (in world coords)
   seatingPositions: { x: number; y: number }[];
+  // Queue positions for shops (in world coords, front→back order)
+  queuePositions: { x: number; y: number }[];
 }
 
 export class CityLayout {
@@ -475,10 +477,12 @@ export class CityLayout {
       for (let si = 0; si < 3; si++) {
         seats.push({ x: bx + 10 + si * 16, y: by + venueH + seatingGap + 14 });
       }
+      const queue = buildQueuePositions(v.type, bx, by, venueW, venueH, 'bottom');
       this.venues.push({
         x: bx, y: by, w: venueW, h: venueH,
         type: v.type, name: v.name, color: v.color, awningColor: v.awning,
         seed: vi * 31 + 7, facingPlaza: 'bottom', seatingPositions: seats,
+        queuePositions: queue,
       });
       vi++;
     }
@@ -494,10 +498,12 @@ export class CityLayout {
       for (let si = 0; si < 3; si++) {
         seats.push({ x: bx + 10 + si * 16, y: by - seatingGap - 14 });
       }
+      const queue = buildQueuePositions(v.type, bx, by, venueW, venueH, 'top');
       this.venues.push({
         x: bx, y: by, w: venueW, h: venueH,
         type: v.type, name: v.name, color: v.color, awningColor: v.awning,
         seed: vi * 31 + 7, facingPlaza: 'top', seatingPositions: seats,
+        queuePositions: queue,
       });
       vi++;
     }
@@ -511,10 +517,12 @@ export class CityLayout {
       for (let si = 0; si < 2; si++) {
         seats.push({ x: bx + venueH + seatingGap + 14, y: by + 10 + si * 20 });
       }
+      const queue = buildQueuePositions(v.type, bx, by, venueH, venueW, 'right');
       this.venues.push({
         x: bx, y: by, w: venueH, h: venueW,
         type: v.type, name: v.name, color: v.color, awningColor: v.awning,
         seed: vi * 31 + 7, facingPlaza: 'right', seatingPositions: seats,
+        queuePositions: queue,
       });
       vi++;
     }
@@ -528,10 +536,12 @@ export class CityLayout {
       for (let si = 0; si < 2; si++) {
         seats.push({ x: bx - seatingGap - 14, y: by + 10 + si * 20 });
       }
+      const queue = buildQueuePositions(v.type, bx, by, venueH, venueW, 'left');
       this.venues.push({
         x: bx, y: by, w: venueH, h: venueW,
         type: v.type, name: v.name, color: v.color, awningColor: v.awning,
         seed: vi * 31 + 7, facingPlaza: 'left', seatingPositions: seats,
+        queuePositions: queue,
       });
       vi++;
     }
@@ -968,6 +978,38 @@ export class CityLayout {
     const p = this.plazaBounds;
     return x >= p.x && x <= p.x + p.w && y >= p.y && y <= p.y + p.h;
   }
+
+  isInBuilding(x: number, y: number, margin = 4): boolean {
+    for (const b of this.buildings) {
+      if (x >= b.x - margin && x <= b.x + b.w + margin &&
+          y >= b.y - margin && y <= b.y + b.h + margin) return true;
+    }
+    for (const v of this.venues) {
+      if (x >= v.x - margin && x <= v.x + v.w + margin &&
+          y >= v.y - margin && y <= v.y + v.h + margin) return true;
+    }
+    return false;
+  }
+}
+
+function buildQueuePositions(
+  type: VenueType, vx: number, vy: number, vw: number, vh: number,
+  facing: 'top' | 'bottom' | 'left' | 'right',
+): { x: number; y: number }[] {
+  if (type !== 'shop' && type !== 'bookshop') return [];
+  const positions: { x: number; y: number }[] = [];
+  const count = 4;
+  const spacing = 12;
+  const doorX = vx + vw / 2;
+  const doorY = vy + vh / 2;
+  for (let i = 0; i < count; i++) {
+    const offset = 14 + i * spacing;
+    if (facing === 'bottom') positions.push({ x: doorX, y: vy + vh + offset });
+    else if (facing === 'top') positions.push({ x: doorX, y: vy - offset });
+    else if (facing === 'right') positions.push({ x: vx + vw + offset, y: doorY });
+    else positions.push({ x: vx - offset, y: doorY });
+  }
+  return positions;
 }
 
 function seededRandom(seed: number): number {

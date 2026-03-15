@@ -1,5 +1,5 @@
 import { PEDESTRIAN_BASE_SPEED, PEDESTRIAN_MAX_FORCE, SEPARATION_RADIUS, PEDESTRIAN_COLORS } from '../utils/constants';
-import type { CityLayout } from '../city/CityLayout';
+import type { CityLayout, VenueDef, PlazaBenchDef } from '../city/CityLayout';
 
 // Skin tone palette — varied across the full human range
 const SKIN_TONES = [
@@ -26,6 +26,15 @@ const BAG_COLORS = [
 ];
 
 type HairStyle = 'bald' | 'short' | 'long' | 'hat';
+
+// Shared state across all pedestrians — cleared on resize via clearPedestrianState()
+const occupiedBenches = new Set<PlazaBenchDef>();
+const venueQueues = new Map<VenueDef, Pedestrian[]>();
+
+export function clearPedestrianState() {
+  occupiedBenches.clear();
+  venueQueues.clear();
+}
 
 export class Pedestrian {
   x: number;
@@ -67,8 +76,41 @@ export class Pedestrian {
   socialMode: boolean = false;
   socialTimer: number = 0;
 
+  // Bench sitting
+  isBenchSitting: boolean = false;
+  benchRef: PlazaBenchDef | null = null;
+
+  // Shop queuing
+  isQueuing: boolean = false;
+  queueVenue: VenueDef | null = null;
+  queuePosition: number = -1;
+  queueTimer: number = 0;
+
+  // Window shopping
+  isWindowShopping: boolean = false;
+  windowShopTimer: number = 0;
+
+  // Group walking
+  groupLeader: Pedestrian | null = null;
+  groupFollowers: Pedestrian[] = [];
+
   // Walking animation phase
   walkPhase: number = 0;
+
+  // Phone checking
+  isCheckingPhone: boolean = false;
+  phoneTimer: number = 0;
+
+  // Photo taking
+  isTakingPhoto: boolean = false;
+  photoTimer: number = 0;
+
+  // Thought bubble (Sims-style)
+  thoughtBubble: string | null = null;
+  thoughtTimer: number = 0;
+
+  // Carrying food/drink from cafes
+  hasFood: boolean = false;
 
   constructor(layout: CityLayout, index: number, clockEligibleCount: number) {
     this.isClockEligible = index < clockEligibleCount;
@@ -161,13 +203,21 @@ export class Pedestrian {
     } else {
       // === AUTONOMOUS MODE ===
 
+      // Update thought bubble timer
+      if (this.thoughtTimer > 0) {
+        this.thoughtTimer--;
+        if (this.thoughtTimer <= 0) this.thoughtBubble = null;
+      }
+
+      const isBusy = this.isSitting || this.isBenchSitting || this.socialMode
+        || this.isQueuing || this.isWindowShopping || this.isCheckingPhone || this.isTakingPhoto;
+
       // --- Social chat mode ---
       if (this.socialMode) {
         this.socialTimer--;
         if (this.socialTimer <= 0) {
           this.socialMode = false;
         } else {
-          // Gently attract to nearest pedestrian within 60 px (form a pair/group)
           let nearDist = Infinity;
           let nearDx = 0, nearDy = 0;
           for (const other of pedestrians) {
@@ -185,7 +235,6 @@ export class Pedestrian {
             ax += nearDx * this.maxForce * 2.0;
             ay += nearDy * this.maxForce * 2.0;
           }
-          // Strong damping — almost stationary
           this.vx *= 0.78;
           this.vy *= 0.78;
         }
@@ -196,6 +245,9 @@ export class Pedestrian {
         this.sitTimer++;
         if (this.sitTimer >= this.sitDuration) {
           this.isSitting = false;
+          this.hasFood = Math.random() < 0.4;
+          this.thoughtBubble = 'heart';
+          this.thoughtTimer = 60;
           const wp = layout.getRandomSidewalkWaypoint();
           this.waypointX = wp.x;
           this.waypointY = wp.y;
@@ -210,7 +262,134 @@ export class Pedestrian {
         }
       }
 
-      if (!this.isSitting && !this.socialMode) {
+      // --- Bench sitting ---
+      if (this.isBenchSitting) {
+        this.sitTimer++;
+        if (this.sitTimer >= this.sitDuration) {
+          this.isBenchSitting = false;
+          if (this.benchRef) occupiedBenches.delete(this.benchRef);
+          this.benchRef = null;
+          const wp = layout.getRandomSidewalkWaypoint();
+          this.waypointX = wp.x;
+          this.waypointY = wp.y;
+          this.waypointTimer = 0;
+        } else {
+          const sdx = this.sitX - this.x;
+          const sdy = this.sitY - this.y;
+          ax += sdx * 0.1;
+          ay += sdy * 0.1;
+          this.vx *= 0.8;
+          this.vy *= 0.8;
+        }
+      }
+
+      // --- Shop queuing ---
+      if (this.isQueuing && this.queueVenue) {
+        this.queueTimer++;
+        const queue = venueQueues.get(this.queueVenue);
+        if (!queue) {
+          this.isQueuing = false;
+          this.queueVenue = null;
+        } else {
+          const myIdx = queue.indexOf(this);
+          if (myIdx === -1) {
+            this.isQueuing = false;
+            this.queueVenue = null;
+          } else if (myIdx === 0 && this.queueTimer > 150) {
+            // At front of queue, done shopping
+            queue.shift();
+            if (queue.length === 0) venueQueues.delete(this.queueVenue);
+            this.isQueuing = false;
+            this.hasBag = true;
+            this.thoughtBubble = 'happy';
+            this.thoughtTimer = 50;
+            this.queueVenue = null;
+            const wp = layout.getRandomSidewalkWaypoint();
+            this.waypointX = wp.x;
+            this.waypointY = wp.y;
+            this.waypointTimer = 0;
+          } else {
+            // Move toward my queue position
+            const positions = this.queueVenue.queuePositions;
+            const posIdx = Math.min(myIdx, positions.length - 1);
+            const target = positions[posIdx];
+            const qdx = target.x - this.x;
+            const qdy = target.y - this.y;
+            ax += qdx * 0.08;
+            ay += qdy * 0.08;
+            this.vx *= 0.82;
+            this.vy *= 0.82;
+          }
+        }
+      }
+
+      // --- Window shopping ---
+      if (this.isWindowShopping) {
+        this.windowShopTimer--;
+        if (this.windowShopTimer <= 0) {
+          this.isWindowShopping = false;
+          const wp = layout.getRandomSidewalkWaypoint();
+          this.waypointX = wp.x;
+          this.waypointY = wp.y;
+          this.waypointTimer = 0;
+        } else {
+          this.vx *= 0.85;
+          this.vy *= 0.85;
+        }
+      }
+
+      // --- Phone checking ---
+      if (this.isCheckingPhone) {
+        this.phoneTimer--;
+        if (this.phoneTimer <= 0) {
+          this.isCheckingPhone = false;
+          if (Math.random() < 0.3) {
+            this.thoughtBubble = Math.random() < 0.5 ? 'happy' : 'idea';
+            this.thoughtTimer = 60;
+          }
+          const wp = layout.getRandomSidewalkWaypoint();
+          this.waypointX = wp.x;
+          this.waypointY = wp.y;
+          this.waypointTimer = 0;
+        } else {
+          this.vx *= 0.85;
+          this.vy *= 0.85;
+        }
+      }
+
+      // --- Photo taking ---
+      if (this.isTakingPhoto) {
+        this.photoTimer--;
+        if (this.photoTimer <= 0) {
+          this.isTakingPhoto = false;
+          this.thoughtBubble = 'happy';
+          this.thoughtTimer = 50;
+          const wp = layout.getRandomSidewalkWaypoint();
+          this.waypointX = wp.x;
+          this.waypointY = wp.y;
+          this.waypointTimer = 0;
+        } else {
+          this.vx *= 0.82;
+          this.vy *= 0.82;
+        }
+      }
+
+      // --- Group following ---
+      if (this.groupLeader && !isBusy) {
+        const leader = this.groupLeader;
+        const dx = leader.x - this.x;
+        const dy = leader.y - this.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist > 100 || leader.isSitting || leader.isQueuing || leader.isCheckingPhone || leader.isTakingPhoto) {
+          // Dissolve — too far or leader got busy
+          this.groupLeader = null;
+        } else if (dist > 10) {
+          ax += (dx / dist) * this.maxForce * 1.2;
+          ay += (dy / dist) * this.maxForce * 1.2;
+        }
+      }
+
+      if (!isBusy && !this.groupLeader) {
         // 1. Waypoint following
         this.waypointTimer++;
         const wpDx = this.waypointX - this.x;
@@ -218,31 +397,160 @@ export class Pedestrian {
         const wpDist = Math.sqrt(wpDx * wpDx + wpDy * wpDy);
 
         if (wpDist < 15 || this.waypointTimer > 600) {
-          // Maybe sit at a venue
-          if (!this.isClockEligible && layout.venues.length > 0 && Math.random() < 0.15) {
-            const venue = layout.venues[Math.floor(Math.random() * layout.venues.length)];
+          // Dissolve group followers at waypoint
+          if (this.groupFollowers.length > 0) {
+            for (const f of this.groupFollowers) f.groupLeader = null;
+            this.groupFollowers = [];
+          }
+
+          const roll = Math.random();
+
+          // Venue sitting — prefer cafes/restaurants
+          if (!this.isClockEligible && roll < 0.12) {
+            const cafeVenues = layout.venues.filter(v => v.type === 'cafe' || v.type === 'restaurant');
+            const pool = cafeVenues.length > 0 ? cafeVenues : layout.venues;
+            const venue = pool[Math.floor(Math.random() * pool.length)];
             if (venue.seatingPositions.length > 0) {
               const seat = venue.seatingPositions[Math.floor(Math.random() * venue.seatingPositions.length)];
-              this.isSitting   = true;
-              this.sitX        = seat.x;
-              this.sitY        = seat.y;
-              this.sitTimer    = 0;
-              this.sitDuration = 300 + Math.random() * 500;
-              this.waypointX   = seat.x;
-              this.waypointY   = seat.y;
+              this.isSitting = true;
+              this.sitX = seat.x;
+              this.sitY = seat.y;
+              this.sitTimer = 0;
+              this.sitDuration = 300 + Math.random() * 300;
+              this.waypointX = seat.x;
+              this.waypointY = seat.y;
+              this.waypointTimer = 0;
+              // Face toward plaza center
+              const pb = layout.plazaBounds;
+              this.angle = Math.atan2(
+                (pb.y + pb.h / 2) - seat.y,
+                (pb.x + pb.w / 2) - seat.x
+              );
+            }
+          }
+
+          // Bench sitting
+          if (!this.isSitting && !this.isClockEligible && roll >= 0.12 && roll < 0.20) {
+            let nearestBench: PlazaBenchDef | null = null;
+            let nearestDist = Infinity;
+            for (const bench of layout.plazaBenches) {
+              if (occupiedBenches.has(bench)) continue;
+              const d = Math.hypot(bench.x - this.x, bench.y - this.y);
+              if (d < 200 && d < nearestDist) {
+                nearestDist = d;
+                nearestBench = bench;
+              }
+            }
+            if (nearestBench) {
+              occupiedBenches.add(nearestBench);
+              this.isBenchSitting = true;
+              this.benchRef = nearestBench;
+              this.sitX = nearestBench.x;
+              this.sitY = nearestBench.y;
+              this.sitTimer = 0;
+              this.sitDuration = 300 + Math.random() * 300;
+              this.waypointX = nearestBench.x;
+              this.waypointY = nearestBench.y;
+              this.waypointTimer = 0;
+              // Face perpendicular to bench
+              this.angle = nearestBench.angle + Math.PI / 2;
+            }
+          }
+
+          // Shop queuing
+          if (!this.isSitting && !this.isBenchSitting && !this.isClockEligible && roll >= 0.20 && roll < 0.30) {
+            const shops = layout.venues.filter(v =>
+              (v.type === 'shop' || v.type === 'bookshop') && v.queuePositions.length > 0
+            );
+            if (shops.length > 0) {
+              const shop = shops[Math.floor(Math.random() * shops.length)];
+              const queue = venueQueues.get(shop) || [];
+              if (queue.length < 4) {
+                queue.push(this);
+                venueQueues.set(shop, queue);
+                this.isQueuing = true;
+                this.queueVenue = shop;
+                this.queueTimer = 0;
+              }
+            }
+          }
+
+          // Window shopping
+          if (!this.isSitting && !this.isBenchSitting && !this.isQueuing && !this.isClockEligible && roll >= 0.30 && roll < 0.42) {
+            const shops = layout.venues.filter(v => v.type === 'shop' || v.type === 'bookshop');
+            if (shops.length > 0) {
+              const shop = shops[Math.floor(Math.random() * shops.length)];
+              let wx = shop.x + shop.w / 2;
+              let wy = shop.y + shop.h / 2;
+              if (shop.facingPlaza === 'bottom') wy = shop.y + shop.h + 12;
+              else if (shop.facingPlaza === 'top') wy = shop.y - 12;
+              else if (shop.facingPlaza === 'right') wx = shop.x + shop.w + 12;
+              else wx = shop.x - 12;
+              this.isWindowShopping = true;
+              this.windowShopTimer = 60 + Math.floor(Math.random() * 120);
+              this.waypointX = wx;
+              this.waypointY = wy;
               this.waypointTimer = 0;
             }
           }
-          // Maybe enter social / chat mode
-          if (!this.isSitting && !this.isClockEligible && Math.random() < 0.14) {
-            this.socialMode  = true;
+
+          // Social chat
+          if (!this.isSitting && !this.isBenchSitting && !this.isQueuing && !this.isWindowShopping && !this.isClockEligible && roll >= 0.42 && roll < 0.56) {
+            this.socialMode = true;
             this.socialTimer = 100 + Math.floor(Math.random() * 220);
           }
-          // Otherwise pick a new walkway waypoint
-          if (!this.isSitting && !this.socialMode) {
+
+          // Group walking
+          if (!this.isSitting && !this.isBenchSitting && !this.isQueuing && !this.isWindowShopping && !this.socialMode && !this.isClockEligible && roll >= 0.56 && roll < 0.62) {
+            const nearbyFree: Pedestrian[] = [];
+            for (const other of pedestrians) {
+              if (other === this || other.isClockEligible || other.groupLeader || other.groupFollowers.length > 0) continue;
+              if (other.isSitting || other.isBenchSitting || other.isQueuing || other.isWindowShopping || other.socialMode) continue;
+              const d = Math.hypot(other.x - this.x, other.y - this.y);
+              if (d < 60) nearbyFree.push(other);
+              if (nearbyFree.length >= 2) break;
+            }
+            if (nearbyFree.length > 0) {
+              this.groupFollowers = nearbyFree;
+              for (const f of nearbyFree) f.groupLeader = this;
+            }
+          }
+
+          // Phone checking — stand still and browse
+          if (!this.isSitting && !this.isBenchSitting && !this.isQueuing && !this.isWindowShopping && !this.socialMode && !this.isClockEligible && roll >= 0.62 && roll < 0.72) {
+            this.isCheckingPhone = true;
+            this.phoneTimer = 80 + Math.floor(Math.random() * 150);
+          }
+
+          // Photo taking near venues
+          if (!this.isSitting && !this.isBenchSitting && !this.isQueuing && !this.isWindowShopping && !this.socialMode && !this.isCheckingPhone && !this.isClockEligible && roll >= 0.72 && roll < 0.78) {
+            let nearVenue: VenueDef | null = null;
+            let nearDist = Infinity;
+            for (const v of layout.venues) {
+              const vcx = v.x + v.w / 2;
+              const vcy = v.y + v.h / 2;
+              const d = Math.hypot(vcx - this.x, vcy - this.y);
+              if (d < 100 && d < nearDist) {
+                nearDist = d;
+                nearVenue = v;
+              }
+            }
+            if (nearVenue) {
+              this.isTakingPhoto = true;
+              this.photoTimer = 60 + Math.floor(Math.random() * 100);
+              this.angle = Math.atan2(
+                (nearVenue.y + nearVenue.h / 2) - this.y,
+                (nearVenue.x + nearVenue.w / 2) - this.x
+              );
+            }
+          }
+
+          // Otherwise pick a new waypoint
+          if (!this.isSitting && !this.isBenchSitting && !this.isQueuing && !this.isWindowShopping && !this.socialMode && !this.isCheckingPhone && !this.isTakingPhoto) {
+            if (Math.random() < 0.3) this.hasFood = false; // might finish food
             const wp = layout.getRandomSidewalkWaypoint();
-            this.waypointX   = wp.x;
-            this.waypointY   = wp.y;
+            this.waypointX = wp.x;
+            this.waypointY = wp.y;
             this.waypointTimer = 0;
           }
         }
@@ -251,17 +559,26 @@ export class Pedestrian {
           ax += (wpDx / wpDist) * this.maxForce * 1.5;
           ay += (wpDy / wpDist) * this.maxForce * 1.5;
         }
+
+        // Random thought while walking (Sims-style idle thoughts) — ~1 visible every 30s
+        if (!isBusy && !this.groupLeader && !this.thoughtBubble && Math.random() < 0.00008) {
+          const thoughts = ['music', 'happy', 'idea'];
+          this.thoughtBubble = thoughts[Math.floor(Math.random() * thoughts.length)];
+          this.thoughtTimer = 40 + Math.floor(Math.random() * 40);
+        }
       }
 
       if (!this.socialMode) {
-        // 2. Separation
+        // 2. Separation — skip distant pedestrians early using squared distance
         let sepX = 0, sepY = 0, sepCount = 0;
+        const sepRadSq = SEPARATION_RADIUS * SEPARATION_RADIUS;
         for (const other of pedestrians) {
           if (other === this) continue;
           const dx = this.x - other.x;
           const dy = this.y - other.y;
-          const dist = Math.sqrt(dx * dx + dy * dy);
-          if (dist > 0 && dist < SEPARATION_RADIUS) {
+          const distSq = dx * dx + dy * dy;
+          if (distSq > 0 && distSq < sepRadSq) {
+            const dist = Math.sqrt(distSq);
             sepX += dx / dist;
             sepY += dy / dist;
             sepCount++;
@@ -284,6 +601,37 @@ export class Pedestrian {
       if (this.x > layout.width  - margin) ax -= turnForce * (this.x - (layout.width  - margin)) / margin;
       if (this.y < margin) ay += turnForce * (margin - this.y) / margin;
       if (this.y > layout.height - margin) ay -= turnForce * (this.y - (layout.height - margin)) / margin;
+
+      // 5. Building repulsion — single-pass check + repel (avoid double iteration)
+      const nextX = this.x + this.vx + ax;
+      const nextY = this.y + this.vy + ay;
+      const m = 6;
+      let repelled = false;
+      for (const b of layout.buildings) {
+        if (nextX >= b.x - m && nextX <= b.x + b.w + m &&
+            nextY >= b.y - m && nextY <= b.y + b.h + m) {
+          const rdx = this.x - (b.x + b.w / 2);
+          const rdy = this.y - (b.y + b.h / 2);
+          const rd = Math.sqrt(rdx * rdx + rdy * rdy) || 1;
+          ax += (rdx / rd) * this.maxForce * 8;
+          ay += (rdy / rd) * this.maxForce * 8;
+          repelled = true;
+          break;
+        }
+      }
+      if (!repelled) {
+        for (const v of layout.venues) {
+          if (nextX >= v.x - m && nextX <= v.x + v.w + m &&
+              nextY >= v.y - m && nextY <= v.y + v.h + m) {
+            const rdx = this.x - (v.x + v.w / 2);
+            const rdy = this.y - (v.y + v.h / 2);
+            const rd = Math.sqrt(rdx * rdx + rdy * rdy) || 1;
+            ax += (rdx / rd) * this.maxForce * 8;
+            ay += (rdy / rd) * this.maxForce * 8;
+            break;
+          }
+        }
+      }
     }
 
     // Apply acceleration
@@ -382,6 +730,31 @@ export class Pedestrian {
       ctx.fillRect(s * 0.56, s * 0.17, s * 0.42, s * 0.07);
     }
 
+    // Phone in hand when checking phone — fixed pixel sizes
+    if (this.isCheckingPhone) {
+      ctx.fillStyle = `rgba(25, 25, 30, 0.9)`;
+      ctx.fillRect(3, -1.5, 2.5, 3.5);
+      ctx.fillStyle = `rgba(170, 200, 255, 0.6)`;
+      ctx.fillRect(3.3, -1.2, 1.9, 2.9);
+    }
+
+    // Phone held up when taking photo — fixed pixel sizes
+    if (this.isTakingPhoto) {
+      ctx.fillStyle = `rgba(25, 25, 30, 0.9)`;
+      ctx.fillRect(4, -2, 3, 4);
+      ctx.fillStyle = `rgba(170, 200, 255, 0.5)`;
+      ctx.fillRect(4.3, -1.7, 2.4, 3.4);
+    }
+
+    // Takeaway food/drink while walking — fixed pixel sizes
+    if (this.hasFood && !this.isSitting && !this.isBenchSitting) {
+      const cf = 1 - nightAlpha * 0.25;
+      ctx.fillStyle = `rgb(${Math.floor(240 * cf)},${Math.floor(232 * cf)},${Math.floor(210 * cf)})`;
+      ctx.fillRect(3, 1.5, 2.2, 3);
+      ctx.fillStyle = `rgb(${Math.floor(180 * cf)},${Math.floor(80 * cf)},${Math.floor(40 * cf)})`;
+      ctx.fillRect(3.1, 1.8, 2, 0.8);
+    }
+
     // Chat speech bubble (three dots) when socially paused
     if (this.socialMode) {
       const ba = 0.72 - nightAlpha * 0.25;
@@ -435,6 +808,58 @@ export class Pedestrian {
           ctx.fillRect(s * 0.77, 0, s * 0.1,  s * 0.36);
         }
       }
+    }
+
+    // Thought bubble (Sims-style) — drawn in fixed pixel sizes so visible at any zoom
+    if (this.thoughtBubble && this.thoughtTimer > 0) {
+      const alpha = Math.min(1, this.thoughtTimer / 15);
+      const bx = 2;
+      const by = -10;
+      const bubR = 5;
+
+      // Bubble background
+      ctx.fillStyle = `rgba(255, 255, 255, ${0.88 * alpha})`;
+      ctx.beginPath();
+      ctx.arc(bx, by, bubR, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = `rgba(160, 160, 160, ${0.6 * alpha})`;
+      ctx.lineWidth = 0.5;
+      ctx.stroke();
+
+      // Connector dots
+      ctx.fillStyle = `rgba(255, 255, 255, ${0.75 * alpha})`;
+      ctx.beginPath();
+      ctx.arc(bx - 1, by + bubR + 2, 1.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(bx - 0.5, by + bubR + 4.5, 1, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Icon — fixed 7px font
+      ctx.font = 'bold 7px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      const prevAlpha = ctx.globalAlpha;
+      ctx.globalAlpha = alpha;
+      switch (this.thoughtBubble) {
+        case 'heart':
+          ctx.fillStyle = 'rgba(220, 50, 50, 0.9)';
+          ctx.fillText('\u2665', bx, by);
+          break;
+        case 'music':
+          ctx.fillStyle = 'rgba(80, 80, 80, 0.9)';
+          ctx.fillText('\u266A', bx, by);
+          break;
+        case 'happy':
+          ctx.fillStyle = 'rgba(50, 160, 50, 0.9)';
+          ctx.fillText('\u2605', bx, by);
+          break;
+        case 'idea':
+          ctx.fillStyle = 'rgba(220, 180, 30, 0.9)';
+          ctx.fillText('!', bx, by);
+          break;
+      }
+      ctx.globalAlpha = prevAlpha;
     }
 
     ctx.restore();

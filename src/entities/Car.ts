@@ -1,5 +1,5 @@
 import { CAR_SPEED, ROAD_WIDTH } from '../utils/constants';
-import type { CityLayout, RoadSegment, VenueDef } from '../city/CityLayout';
+import type { CityLayout, RoadSegment, VenueDef, PlazaEntrance } from '../city/CityLayout';
 import type { Pedestrian } from './Pedestrian';
 
 const CAR_COLORS = [
@@ -20,6 +20,20 @@ export interface DroppedPackage {
 
 const PKG_COLORS = ['#b08050', '#a07040', '#c09060', '#907050'];
 
+type CarType = 'normal' | 'delivery' | 'police' | 'ambulance' | 'firetruck';
+
+/**
+ * Delivery state machine:
+ * - 'road': driving normally on roads, counting down to next delivery
+ * - 'seeking_plaza': driving on roads, biasing turns toward the target entrance
+ * - 'to_entrance': on a plaza-bordering road — short direct move into the entrance
+ * - 'to_venue': driving across the plaza surface toward the target venue front
+ * - 'delivering': parked at venue, dropping package
+ * - 'to_exit': driving back toward a plaza entrance
+ * - 'rejoin_road': steering from entrance back onto a nearby road
+ */
+type DeliveryState = 'road' | 'seeking_plaza' | 'to_entrance' | 'to_venue' | 'delivering' | 'to_exit' | 'rejoin_road';
+
 export class Car {
   x: number = 0;
   y: number = 0;
@@ -35,30 +49,82 @@ export class Car {
   dirX: number = 0;
   dirY: number = 0;
 
-  // Delivery fields — simple approach: drive on roads, stop near venues
-  isDelivery: boolean;
+  carType: CarType;
+
+  // Delivery fields
+  deliveryState: DeliveryState = 'road';
   deliveryTimer: number = 0;
-  isParkedDelivering: boolean = false;
   deliveryPauseTimer: number = 0;
   targetVenue: VenueDef | null = null;
+  targetEntrance: PlazaEntrance | null = null;
+  exitEntrance: PlazaEntrance | null = null;
   packageDropped: boolean = false;
+  targetX: number = 0;
+  targetY: number = 0;
+
+  // Plaza interior waypoints (to avoid cutting through venue buildings)
+  plazaWaypoints: { x: number; y: number }[] = [];
+  plazaWaypointIdx: number = 0;
+
+  // Emergency fields
+  sirenPhase: number = 0;
 
   static droppedPackages: DroppedPackage[] = [];
 
-  constructor(layout: CityLayout, isDelivery: boolean = false) {
-    this.isDelivery = isDelivery;
-    this.baseSpeed = CAR_SPEED * (0.3 + Math.random() * 0.4);
+  constructor(layout: CityLayout, carType: CarType = 'normal') {
+    this.carType = carType;
+
+    // Speed varies by type
+    switch (carType) {
+      case 'delivery':
+        this.baseSpeed = CAR_SPEED * (0.25 + Math.random() * 0.3);
+        break;
+      case 'police':
+      case 'ambulance':
+      case 'firetruck':
+        this.baseSpeed = CAR_SPEED * (0.6 + Math.random() * 0.4);
+        break;
+      default:
+        this.baseSpeed = CAR_SPEED * (0.3 + Math.random() * 0.4);
+    }
     this.currentSpeed = this.baseSpeed;
-    this.color = isDelivery ? DELIVERY_COLOR : CAR_COLORS[Math.floor(Math.random() * CAR_COLORS.length)];
-    this.length = isDelivery ? 18 : 14 + Math.random() * 6;
-    this.width = isDelivery ? 9 : 7 + Math.random() * 2;
+
+    // Appearance
+    switch (carType) {
+      case 'delivery':
+        this.color = DELIVERY_COLOR;
+        this.length = 18;
+        this.width = 9;
+        break;
+      case 'police':
+        this.color = '#1a237e';
+        this.length = 16;
+        this.width = 8;
+        break;
+      case 'ambulance':
+        this.color = '#ffffff';
+        this.length = 19;
+        this.width = 9;
+        break;
+      case 'firetruck':
+        this.color = '#b71c1c';
+        this.length = 22;
+        this.width = 10;
+        break;
+      default:
+        this.color = CAR_COLORS[Math.floor(Math.random() * CAR_COLORS.length)];
+        this.length = 14 + Math.random() * 6;
+        this.width = 7 + Math.random() * 2;
+    }
 
     this.road = this.pickRandomRoad(layout);
     this.placeOnRoad(this.road);
 
-    if (isDelivery) {
-      this.deliveryTimer = 80 + Math.random() * 160;
+    if (carType === 'delivery') {
+      this.deliveryTimer = 150 + Math.random() * 250;
     }
+
+    this.sirenPhase = Math.random() * Math.PI * 2;
   }
 
   private pickRandomRoad(layout: CityLayout): RoadSegment {
@@ -121,17 +187,31 @@ export class Car {
     return best ?? bestSameDir;
   }
 
-  private transitionToRoad(road: RoadSegment) {
+  private transitionToRoad(road: RoadSegment, toward?: { x: number; y: number }) {
     this.road = road;
     if (road.horizontal) {
-      const dir = this.dirX !== 0 ? Math.sign(this.dirX) : (Math.random() > 0.5 ? 1 : -1);
+      let dir: number;
+      if (this.dirX !== 0) {
+        dir = Math.sign(this.dirX);
+      } else if (toward) {
+        dir = toward.x > this.x ? 1 : -1;
+      } else {
+        dir = Math.random() > 0.5 ? 1 : -1;
+      }
       this.dirX = dir;
       this.dirY = 0;
       this.x = Math.max(road.x + 5, Math.min(road.x + road.w - 5, this.x));
       this.y = road.y + (dir > 0 ? road.h * 0.25 : road.h * 0.75);
       this.angle = dir > 0 ? 0 : Math.PI;
     } else {
-      const dir = this.dirY !== 0 ? Math.sign(this.dirY) : (Math.random() > 0.5 ? 1 : -1);
+      let dir: number;
+      if (this.dirY !== 0) {
+        dir = Math.sign(this.dirY);
+      } else if (toward) {
+        dir = toward.y > this.y ? 1 : -1;
+      } else {
+        dir = Math.random() > 0.5 ? 1 : -1;
+      }
       this.dirX = 0;
       this.dirY = dir;
       this.y = Math.max(road.y + 5, Math.min(road.y + road.h - 5, this.y));
@@ -142,68 +222,148 @@ export class Car {
     this.vy = this.dirY * this.currentSpeed;
   }
 
-  /**
-   * Find a road segment that borders the plaza on the same side as a venue,
-   * and return a position on it close to the venue.
-   */
-  private findPlazaBorderRoad(layout: CityLayout, venue: VenueDef):
-    { road: RoadSegment; x: number; y: number; dirX: number; dirY: number } | null {
+  /** Move directly toward a target point (ignoring road constraints). Returns true when arrived. */
+  private moveToward(tx: number, ty: number, speed: number): boolean {
+    const dx = tx - this.x;
+    const dy = ty - this.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist < speed * 2) {
+      this.x = tx;
+      this.y = ty;
+      return true;
+    }
+    const nx = dx / dist;
+    const ny = dy / dist;
+    this.x += nx * speed;
+    this.y += ny * speed;
+    this.vx = nx * speed;
+    this.vy = ny * speed;
+    // Smoothly rotate toward target
+    const targetAngle = Math.atan2(ny, nx);
+    let angleDiff = targetAngle - this.angle;
+    while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+    while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+    this.angle += angleDiff * 0.15;
+    return false;
+  }
 
+  /** Get the position in front of a venue's entrance (where truck should stop) */
+  private getVenueDeliveryPoint(v: VenueDef): { x: number; y: number } {
+    let px = v.x + v.w / 2;
+    let py = v.y + v.h / 2;
+    const stopDist = 20; // stop this far from venue face
+    if (v.facingPlaza === 'bottom') { py = v.y + v.h + stopDist; }
+    else if (v.facingPlaza === 'top') { py = v.y - stopDist; }
+    else if (v.facingPlaza === 'right') { px = v.x + v.w + stopDist; }
+    else { px = v.x - stopDist; }
+    return { x: px, y: py };
+  }
+
+  /** Build a path through the plaza interior to avoid cutting through venue buildings.
+   *  Routes: entrance → center → safe approach point → delivery point.
+   *  The safe approach point is clamped to the interior zone (well past all venues/awnings)
+   *  so the final segment is a short perpendicular move to the venue face. */
+  private buildPlazaPath(from: { x: number; y: number }, to: { x: number; y: number }, layout: CityLayout): { x: number; y: number }[] {
     const pb = layout.plazaBounds;
-    const margin = ROAD_WIDTH * 0.8;
+    const cx = pb.x + pb.w / 2;
+    const cy = pb.y + pb.h / 2;
+    const safeMargin = 75; // well past venues (30h) + awnings (14) + seating (~14) + gap
 
+    // Safe approach point: same coordinates as target but clamped to interior
+    const approachX = Math.max(pb.x + safeMargin, Math.min(pb.x + pb.w - safeMargin, to.x));
+    const approachY = Math.max(pb.y + safeMargin, Math.min(pb.y + pb.h - safeMargin, to.y));
+
+    const fromEdge = this.getPlazaEdge(from, pb);
+    const toEdge = this.getPlazaEdge(to, pb);
+
+    if (fromEdge === toEdge) {
+      // Same edge: approach from interior then final move to venue
+      return [{ x: approachX, y: approachY }, to];
+    }
+
+    // Different edges: route through center first to stay in open interior
+    return [{ x: cx, y: cy }, { x: approachX, y: approachY }, to];
+  }
+
+  private getPlazaEdge(p: { x: number; y: number }, pb: { x: number; y: number; w: number; h: number }): string {
+    const distTop = Math.abs(p.y - pb.y);
+    const distBot = Math.abs(p.y - (pb.y + pb.h));
+    const distLeft = Math.abs(p.x - pb.x);
+    const distRight = Math.abs(p.x - (pb.x + pb.w));
+    const min = Math.min(distTop, distBot, distLeft, distRight);
+    if (min === distTop) return 'top';
+    if (min === distBot) return 'bottom';
+    if (min === distLeft) return 'left';
+    return 'right';
+  }
+
+  /** Find the nearest entrance to a given point */
+  private findNearestEntrance(layout: CityLayout, px: number, py: number): PlazaEntrance | null {
+    if (layout.entrances.length === 0) return null;
+    let best = layout.entrances[0];
+    let bestDist = Infinity;
+    for (const e of layout.entrances) {
+      const d = Math.hypot(e.x - px, e.y - py);
+      if (d < bestDist) { bestDist = d; best = e; }
+    }
+    return best;
+  }
+
+  /** Find the nearest road to an entrance point so the truck can rejoin traffic */
+  private findNearestRoadToPoint(layout: CityLayout, px: number, py: number): RoadSegment | null {
+    let best: RoadSegment | null = null;
+    let bestDist = Infinity;
     for (const road of layout.roads) {
-      if (venue.facingPlaza === 'bottom') {
-        // Venue on top edge → road runs horizontally just above plaza top
-        if (road.horizontal &&
-            road.y + road.h > pb.y - ROAD_WIDTH - 2 &&
-            road.y < pb.y &&
-            road.x < pb.x && road.x + road.w >= pb.x - 5) {
-          // Place truck at the end of this segment closest to the plaza
-          const tx = Math.min(road.x + road.w - 10, pb.x - 5);
-          const ty = road.y + road.h * 0.5;
-          return { road, x: tx, y: ty, dirX: -1, dirY: 0 };
-        }
-      } else if (venue.facingPlaza === 'top') {
-        // Venue on bottom edge → road runs horizontally just below plaza bottom
-        if (road.horizontal &&
-            road.y < pb.y + pb.h + ROAD_WIDTH + 2 &&
-            road.y + road.h > pb.y + pb.h &&
-            road.x < pb.x && road.x + road.w >= pb.x - 5) {
-          const tx = Math.min(road.x + road.w - 10, pb.x - 5);
-          const ty = road.y + road.h * 0.5;
-          return { road, x: tx, y: ty, dirX: -1, dirY: 0 };
-        }
-      } else if (venue.facingPlaza === 'right') {
-        // Venue on left edge → road runs vertically just left of plaza
-        if (!road.horizontal &&
-            road.x + road.w > pb.x - ROAD_WIDTH - 2 &&
-            road.x < pb.x &&
-            road.y < pb.y && road.y + road.h >= pb.y - 5) {
-          const tx = road.x + road.w * 0.5;
-          const ty = Math.min(road.y + road.h - 10, pb.y - 5);
-          return { road, x: tx, y: ty, dirX: 0, dirY: -1 };
-        }
-      } else {
-        // Venue on right edge → road runs vertically just right of plaza
-        if (!road.horizontal &&
-            road.x < pb.x + pb.w + ROAD_WIDTH + 2 &&
-            road.x + road.w > pb.x + pb.w &&
-            road.y < pb.y && road.y + road.h >= pb.y - 5) {
-          const tx = road.x + road.w * 0.5;
-          const ty = Math.min(road.y + road.h - 10, pb.y - 5);
-          return { road, x: tx, y: ty, dirX: 0, dirY: 1 };
-        }
+      // distance from point to road center
+      const cx = road.x + road.w / 2;
+      const cy = road.y + road.h / 2;
+      const d = Math.hypot(cx - px, cy - py);
+      if (d < bestDist) { bestDist = d; best = road; }
+    }
+    return best;
+  }
+
+  /**
+   * Check if the truck is currently close to the target entrance (on a plaza-bordering road).
+   * Returns true if within striking distance of the entrance.
+   */
+  private isNearEntrance(entrance: PlazaEntrance): boolean {
+    return Math.hypot(this.x - entrance.x, this.y - entrance.y) < ROAD_WIDTH * 2;
+  }
+
+  /**
+   * When at a road junction and seeking the plaza, pick the connecting road
+   * that brings us closest to the target entrance. Falls back to normal
+   * connecting-road logic if nothing better is found.
+   */
+  private findConnectingRoadToward(layout: CityLayout, tx: number, ty: number): RoadSegment | null {
+    const snap = ROAD_WIDTH * 1.5;
+    let best: RoadSegment | null = null;
+    let bestDist = Infinity;
+    for (const road of layout.roads) {
+      if (road === this.road) continue;
+      if (this.x >= road.x - snap && this.x <= road.x + road.w + snap &&
+          this.y >= road.y - snap && this.y <= road.y + road.h + snap) {
+        // Score by how close road midpoint is to the target
+        const cx = road.x + road.w / 2;
+        const cy = road.y + road.h / 2;
+        const d = Math.hypot(cx - tx, cy - ty);
+        if (d < bestDist) { bestDist = d; best = road; }
       }
     }
-    return null;
+    return best;
   }
 
   update(layout: CityLayout, pedestrians: Pedestrian[], cars: Car[]) {
-    if (this.isDelivery) {
+    if (this.carType === 'delivery') {
       this.updateDelivery(layout, pedestrians, cars);
     } else {
       this.updateNormal(layout, pedestrians, cars);
+    }
+
+    // Update siren phase for emergency vehicles
+    if (this.carType === 'police' || this.carType === 'ambulance' || this.carType === 'firetruck') {
+      this.sirenPhase += 0.15;
     }
   }
 
@@ -253,95 +413,232 @@ export class Car {
   }
 
   /**
-   * Delivery approach: the truck drives normally on roads. When its timer
-   * expires AND it's on a road that borders the plaza (within ROAD_WIDTH of
-   * the plaza edge), it stops, picks a random venue, and drops a package
-   * at that venue's door. Roads are clipped around the plaza so the truck
-   * can never drive *inside* the plaza — it stops on the bordering road.
+   * Delivery truck state machine: drives on roads toward the plaza,
+   * then enters through an entrance to deliver packages to venue fronts.
    */
   private updateDelivery(layout: CityLayout, pedestrians: Pedestrian[], cars: Car[]) {
+    const plazaSpeed = this.baseSpeed * 0.6; // slow inside plaza
 
-    // === PARKED: delivering a package ===
-    if (this.isParkedDelivering) {
-      this.vx *= 0.85;
-      this.vy *= 0.85;
-      this.deliveryPauseTimer++;
+    switch (this.deliveryState) {
+      case 'road': {
+        // Normal road driving, count down to next delivery
+        this.updateNormal(layout, pedestrians, cars);
+        this.deliveryTimer--;
+        if (this.deliveryTimer <= 0 && layout.venues.length > 0) {
+          // Pick a random venue that no other truck is targeting
+          const available = layout.venues.filter(v =>
+            !cars.some(c => c !== this && c.carType === 'delivery' &&
+              c.deliveryState !== 'road' && c.targetVenue === v)
+          );
+          if (available.length === 0) {
+            this.deliveryTimer = 60;
+            return;
+          }
+          const venue = available[Math.floor(Math.random() * available.length)];
+          this.targetVenue = venue;
 
-      // Drop the package halfway through
-      if (!this.packageDropped && this.deliveryPauseTimer >= 50 && this.targetVenue) {
-        const v = this.targetVenue;
-        // Place package at the venue's plaza-facing entrance
-        let px = v.x + v.w / 2;
-        let py = v.y + v.h / 2;
-        if (v.facingPlaza === 'bottom') py = v.y + v.h + 8;
-        else if (v.facingPlaza === 'top') py = v.y - 8;
-        else if (v.facingPlaza === 'right') px = v.x + v.w + 8;
-        else px = v.x - 8;
+          // Find entrance nearest to the delivery point
+          const deliveryPt = this.getVenueDeliveryPoint(venue);
+          this.targetEntrance = this.findNearestEntrance(layout, deliveryPt.x, deliveryPt.y);
+          if (!this.targetEntrance) {
+            this.deliveryTimer = 60;
+            this.targetVenue = null;
+            return;
+          }
 
-        Car.droppedPackages.push({
-          x: px, y: py,
-          timer: 400 + Math.floor(Math.random() * 200),
-          color: PKG_COLORS[Math.floor(Math.random() * PKG_COLORS.length)],
-        });
-        this.packageDropped = true;
+          // Switch to seeking_plaza — keep driving on roads but bias toward entrance
+          this.deliveryState = 'seeking_plaza';
+        }
+        break;
       }
 
-      // Done delivering — resume driving
-      if (this.deliveryPauseTimer >= 120) {
-        this.isParkedDelivering = false;
-        this.targetVenue = null;
-        this.packageDropped = false;
-        this.deliveryTimer = 120 + Math.random() * 240;
-        this.currentSpeed = this.baseSpeed;
+      case 'seeking_plaza': {
+        // Drive on roads normally, but when reaching a junction pick
+        // the road closest to the target entrance. Once close enough
+        // to the entrance, switch to direct movement into the plaza.
+        if (!this.targetEntrance) { this.deliveryState = 'road'; break; }
+
+        // Check if we're close enough to the entrance to leave the road
+        if (this.isNearEntrance(this.targetEntrance)) {
+          this.targetX = this.targetEntrance.x;
+          this.targetY = this.targetEntrance.y;
+          this.deliveryState = 'to_entrance';
+          break;
+        }
+
+        // Drive on road with pedestrian/car avoidance
+        let targetSpeed = this.baseSpeed;
+        const frontX = this.x + this.dirX * this.length * 0.5;
+        const frontY = this.y + this.dirY * this.length * 0.5;
+        for (const p of pedestrians) {
+          const dx = p.x - frontX;
+          const dy = p.y - frontY;
+          const along = dx * this.dirX + dy * this.dirY;
+          const perp = Math.abs(dx * this.dirY - dy * this.dirX);
+          if (along > 0 && along < 40 && perp < 12) {
+            targetSpeed = Math.min(targetSpeed, this.baseSpeed * (along / 40) * 0.5);
+          }
+        }
+        for (const other of cars) {
+          if (other === this) continue;
+          const dx = other.x - frontX;
+          const dy = other.y - frontY;
+          const along = dx * this.dirX + dy * this.dirY;
+          const perp = Math.abs(dx * this.dirY - dy * this.dirX);
+          if (along > 0 && along < 30 && perp < 10) {
+            targetSpeed = Math.min(targetSpeed, this.baseSpeed * (along / 30) * 0.3);
+          }
+        }
+        this.currentSpeed += (targetSpeed - this.currentSpeed) * 0.1;
+        if (this.currentSpeed < 0.02) this.currentSpeed = 0;
         this.vx = this.dirX * this.currentSpeed;
         this.vy = this.dirY * this.currentSpeed;
+        this.x += this.vx;
+        this.y += this.vy;
+
+        // When leaving current road, bias toward a road closer to the entrance
+        if (this.isOutsideRoad()) {
+          const biased = this.findConnectingRoadToward(
+            layout, this.targetEntrance.x, this.targetEntrance.y
+          );
+          const toward = { x: this.targetEntrance.x, y: this.targetEntrance.y };
+          if (biased) {
+            this.transitionToRoad(biased, toward);
+          } else {
+            // Fallback: pick any connecting road
+            const connecting = this.findConnectingRoad(layout);
+            if (connecting) {
+              this.transitionToRoad(connecting, toward);
+            } else {
+              this.road = this.pickRandomRoad(layout);
+              this.placeOnRoad(this.road);
+            }
+          }
+        }
+        break;
       }
-      return;
+
+      case 'to_entrance': {
+        // Short direct drive from the plaza-bordering road into the entrance
+        const arrived = this.moveToward(this.targetX, this.targetY, plazaSpeed);
+        if (arrived && this.targetVenue) {
+          // Build path through plaza center to avoid cutting through venues
+          const dp = this.getVenueDeliveryPoint(this.targetVenue);
+          this.plazaWaypoints = this.buildPlazaPath(
+            { x: this.x, y: this.y }, dp, layout
+          );
+          this.plazaWaypointIdx = 0;
+          const wp = this.plazaWaypoints[0];
+          this.targetX = wp.x;
+          this.targetY = wp.y;
+          this.deliveryState = 'to_venue';
+        }
+        break;
+      }
+
+      case 'to_venue': {
+        // Follow plaza waypoints to the venue front
+        const arrived = this.moveToward(this.targetX, this.targetY, plazaSpeed * 0.7);
+        if (arrived) {
+          this.plazaWaypointIdx++;
+          if (this.plazaWaypointIdx < this.plazaWaypoints.length) {
+            const wp = this.plazaWaypoints[this.plazaWaypointIdx];
+            this.targetX = wp.x;
+            this.targetY = wp.y;
+            break;
+          }
+          this.deliveryState = 'delivering';
+          this.deliveryPauseTimer = 0;
+          this.packageDropped = false;
+          this.currentSpeed = 0;
+          this.vx = 0;
+          this.vy = 0;
+        }
+        break;
+      }
+
+      case 'delivering': {
+        // Parked at venue, drop package
+        this.vx = 0;
+        this.vy = 0;
+        this.deliveryPauseTimer++;
+
+        if (!this.packageDropped && this.deliveryPauseTimer >= 50 && this.targetVenue) {
+          const v = this.targetVenue;
+          let px = v.x + v.w / 2;
+          let py = v.y + v.h / 2;
+          if (v.facingPlaza === 'bottom') py = v.y + v.h + 8;
+          else if (v.facingPlaza === 'top') py = v.y - 8;
+          else if (v.facingPlaza === 'right') px = v.x + v.w + 8;
+          else px = v.x - 8;
+
+          Car.droppedPackages.push({
+            x: px, y: py,
+            timer: 400 + Math.floor(Math.random() * 200),
+            color: PKG_COLORS[Math.floor(Math.random() * PKG_COLORS.length)],
+          });
+          this.packageDropped = true;
+        }
+
+        if (this.deliveryPauseTimer >= 120) {
+          // Done — head back out to an exit entrance
+          this.exitEntrance = this.findNearestEntrance(layout, this.x, this.y);
+          if (this.exitEntrance) {
+            this.plazaWaypoints = this.buildPlazaPath(
+              { x: this.x, y: this.y },
+              { x: this.exitEntrance.x, y: this.exitEntrance.y },
+              layout
+            );
+            this.plazaWaypointIdx = 0;
+            const wp = this.plazaWaypoints[0];
+            this.targetX = wp.x;
+            this.targetY = wp.y;
+          }
+          this.deliveryState = 'to_exit';
+        }
+        break;
+      }
+
+      case 'to_exit': {
+        // Follow plaza waypoints back toward an entrance
+        const arrived = this.moveToward(this.targetX, this.targetY, plazaSpeed);
+        if (arrived) {
+          this.plazaWaypointIdx++;
+          if (this.plazaWaypointIdx < this.plazaWaypoints.length) {
+            const wp = this.plazaWaypoints[this.plazaWaypointIdx];
+            this.targetX = wp.x;
+            this.targetY = wp.y;
+            break;
+          }
+          // Find nearest road to rejoin
+          const nearRoad = this.findNearestRoadToPoint(layout, this.x, this.y);
+          if (nearRoad) {
+            this.targetX = nearRoad.x + nearRoad.w / 2;
+            this.targetY = nearRoad.y + nearRoad.h / 2;
+            this.road = nearRoad;
+          }
+          this.deliveryState = 'rejoin_road';
+        }
+        break;
+      }
+
+      case 'rejoin_road': {
+        // Drive from entrance to the nearest road
+        const arrived = this.moveToward(this.targetX, this.targetY, plazaSpeed);
+        if (arrived) {
+          // Snap onto road — bias direction away from plaza
+          const roadCenter = { x: this.road.x + this.road.w / 2, y: this.road.y + this.road.h / 2 };
+          this.transitionToRoad(this.road, roadCenter);
+          this.deliveryState = 'road';
+          this.targetVenue = null;
+          this.targetEntrance = null;
+          this.exitEntrance = null;
+          this.deliveryTimer = 200 + Math.random() * 300;
+          this.currentSpeed = this.baseSpeed;
+        }
+        break;
+      }
     }
-
-    // === DRIVING: normal movement, count down timer ===
-    this.updateNormal(layout, pedestrians, cars);
-    this.deliveryTimer--;
-
-    if (this.deliveryTimer > 0) return;
-    if (layout.venues.length === 0) return;
-
-    // Timer expired — pick a venue and drive to the nearest plaza-bordering road.
-    // Roads are clipped around the plaza, so we find a road segment whose edge
-    // touches the plaza bounds and teleport the truck there (like arriving at
-    // a junction). This guarantees the truck visibly stops on the road next to
-    // the plaza to make its delivery.
-    const pb = layout.plazaBounds;
-    const venue = layout.venues[Math.floor(Math.random() * layout.venues.length)];
-
-    // Check no other truck is already delivering to this venue
-    const taken = cars.some(c =>
-      c !== this && c.isDelivery && c.isParkedDelivering && c.targetVenue === venue
-    );
-    if (taken) {
-      this.deliveryTimer = 30 + Math.floor(Math.random() * 60);
-      return;
-    }
-
-    // Find a road segment that borders the plaza near this venue
-    const plazaRoad = this.findPlazaBorderRoad(layout, venue);
-    if (plazaRoad) {
-      this.road = plazaRoad.road;
-      this.x = plazaRoad.x;
-      this.y = plazaRoad.y;
-      this.dirX = plazaRoad.dirX;
-      this.dirY = plazaRoad.dirY;
-      this.angle = Math.atan2(this.dirY, this.dirX);
-    }
-
-    // Park and deliver
-    this.isParkedDelivering = true;
-    this.targetVenue = venue;
-    this.deliveryPauseTimer = 0;
-    this.packageDropped = false;
-    this.currentSpeed = 0;
-    this.vx = 0;
-    this.vy = 0;
   }
 
   /** Tick all dropped packages (call once per frame from main loop) */
@@ -385,16 +682,16 @@ export class Car {
     ctx.rotate(this.angle);
 
     const isBraking = this.currentSpeed < this.baseSpeed * 0.5;
+    const darkFactor = 1 - nightAlpha * 0.4;
+    const r = parseInt(this.color.slice(1, 3), 16);
+    const g = parseInt(this.color.slice(3, 5), 16);
+    const b = parseInt(this.color.slice(5, 7), 16);
 
     // Shadow
     ctx.fillStyle = `rgba(0, 0, 0, ${0.2 + nightAlpha * 0.1})`;
     ctx.fillRect(-this.length / 2 + 1.5, -this.width / 2 + 1.5, this.length, this.width);
 
     // Car body
-    const darkFactor = 1 - nightAlpha * 0.4;
-    const r = parseInt(this.color.slice(1, 3), 16);
-    const g = parseInt(this.color.slice(3, 5), 16);
-    const b = parseInt(this.color.slice(5, 7), 16);
     ctx.fillStyle = `rgb(${Math.floor(r * darkFactor)}, ${Math.floor(g * darkFactor)}, ${Math.floor(b * darkFactor)})`;
 
     const hw = this.length / 2;
@@ -412,26 +709,8 @@ export class Car {
     ctx.quadraticCurveTo(-hw, -hh, -hw + cr, -hh);
     ctx.fill();
 
-    // Delivery cargo box on back
-    if (this.isDelivery) {
-      ctx.fillStyle = `rgb(${Math.floor(r * darkFactor * 0.75)}, ${Math.floor(g * darkFactor * 0.75)}, ${Math.floor(b * darkFactor * 0.75)})`;
-      ctx.fillRect(-hw + 1, -hh + 1.5, this.length * 0.42, this.width - 3);
-      ctx.strokeStyle = `rgba(0,0,0,0.25)`;
-      ctx.lineWidth = 0.5;
-      ctx.strokeRect(-hw + 1, -hh + 1.5, this.length * 0.42, this.width - 3);
-
-      // Hazard flashers when parked
-      if (this.isParkedDelivering) {
-        const flash = Math.sin(Date.now() / 200) > 0;
-        if (flash) {
-          ctx.fillStyle = `rgba(255, 160, 0, 0.9)`;
-          ctx.fillRect(-hw, -hh, 2, 2);
-          ctx.fillRect(-hw, hh - 2, 2, 2);
-          ctx.fillRect(hw - 2, -hh, 2, 2);
-          ctx.fillRect(hw - 2, hh - 2, 2, 2);
-        }
-      }
-    }
+    // Type-specific details
+    this.drawTypeDetails(ctx, nightAlpha, darkFactor, hw, hh, r, g, b);
 
     // Windshield
     ctx.fillStyle = `rgba(150, 200, 230, ${0.6 - nightAlpha * 0.3})`;
@@ -464,5 +743,136 @@ export class Car {
     ctx.fillRect(-this.length / 2, this.width / 2 - 3, 2, 2);
 
     ctx.restore();
+  }
+
+  private drawTypeDetails(
+    ctx: CanvasRenderingContext2D, nightAlpha: number, darkFactor: number,
+    hw: number, hh: number, r: number, g: number, b: number
+  ) {
+    const isParked = this.deliveryState === 'delivering';
+    const flash = Math.sin(Date.now() / 200) > 0;
+
+    switch (this.carType) {
+      case 'delivery': {
+        // Cargo box on back
+        ctx.fillStyle = `rgb(${Math.floor(r * darkFactor * 0.75)}, ${Math.floor(g * darkFactor * 0.75)}, ${Math.floor(b * darkFactor * 0.75)})`;
+        ctx.fillRect(-hw + 1, -hh + 1.5, this.length * 0.42, this.width - 3);
+        ctx.strokeStyle = `rgba(0,0,0,0.25)`;
+        ctx.lineWidth = 0.5;
+        ctx.strokeRect(-hw + 1, -hh + 1.5, this.length * 0.42, this.width - 3);
+
+        // Hazard flashers when in the plaza (not on roads)
+        if (this.deliveryState !== 'road' && this.deliveryState !== 'seeking_plaza') {
+          if (flash) {
+            ctx.fillStyle = `rgba(255, 160, 0, 0.9)`;
+            ctx.fillRect(-hw, -hh, 2, 2);
+            ctx.fillRect(-hw, hh - 2, 2, 2);
+            ctx.fillRect(hw - 2, -hh, 2, 2);
+            ctx.fillRect(hw - 2, hh - 2, 2, 2);
+          }
+        }
+        break;
+      }
+
+      case 'police': {
+        // Light bar on roof
+        const sirenOn = Math.sin(this.sirenPhase) > 0;
+        const sirenOn2 = Math.sin(this.sirenPhase + Math.PI) > 0;
+        // Blue light (left)
+        ctx.fillStyle = sirenOn ? 'rgba(0, 100, 255, 0.95)' : 'rgba(0, 60, 150, 0.5)';
+        ctx.fillRect(-2, -hh + 1, 3, 2);
+        // Red light (right)
+        ctx.fillStyle = sirenOn2 ? 'rgba(255, 0, 0, 0.95)' : 'rgba(150, 0, 0, 0.5)';
+        ctx.fillRect(-2, hh - 3, 3, 2);
+
+        // Light glow at night
+        if (nightAlpha > 0.1) {
+          if (sirenOn) {
+            const grad = ctx.createRadialGradient(-1, -hh, 0, -1, -hh, 20);
+            grad.addColorStop(0, `rgba(0, 100, 255, ${nightAlpha * 0.3})`);
+            grad.addColorStop(1, 'rgba(0, 100, 255, 0)');
+            ctx.fillStyle = grad;
+            ctx.fillRect(-21, -hh - 20, 40, 40);
+          }
+          if (sirenOn2) {
+            const grad = ctx.createRadialGradient(-1, hh, 0, -1, hh, 20);
+            grad.addColorStop(0, `rgba(255, 0, 0, ${nightAlpha * 0.3})`);
+            grad.addColorStop(1, 'rgba(255, 0, 0, 0)');
+            ctx.fillStyle = grad;
+            ctx.fillRect(-21, hh - 20, 40, 40);
+          }
+        }
+
+        // Side stripe
+        ctx.fillStyle = `rgba(255, 255, 255, ${0.3 * darkFactor})`;
+        ctx.fillRect(-hw + 3, -hh, this.length - 6, 1.5);
+        ctx.fillRect(-hw + 3, hh - 1.5, this.length - 6, 1.5);
+        break;
+      }
+
+      case 'ambulance': {
+        // Red cross marking
+        ctx.fillStyle = `rgba(220, 30, 30, ${0.85 * darkFactor})`;
+        ctx.fillRect(-3, -1, 6, 2);
+        ctx.fillRect(-1, -3, 2, 6);
+
+        // Red stripe down the sides
+        ctx.fillStyle = `rgba(220, 30, 30, ${0.6 * darkFactor})`;
+        ctx.fillRect(-hw + 2, -hh, this.length - 4, 1.5);
+        ctx.fillRect(-hw + 2, hh - 1.5, this.length - 4, 1.5);
+
+        // Light bar
+        const sirenOn = Math.sin(this.sirenPhase) > 0;
+        ctx.fillStyle = sirenOn ? 'rgba(255, 0, 0, 0.95)' : 'rgba(150, 0, 0, 0.5)';
+        ctx.fillRect(hw * 0.2, -hh + 1, 3, 2);
+        ctx.fillStyle = !sirenOn ? 'rgba(255, 0, 0, 0.95)' : 'rgba(150, 0, 0, 0.5)';
+        ctx.fillRect(hw * 0.2, hh - 3, 3, 2);
+
+        if (nightAlpha > 0.1 && sirenOn) {
+          const grad = ctx.createRadialGradient(hw * 0.2, 0, 0, hw * 0.2, 0, 25);
+          grad.addColorStop(0, `rgba(255, 0, 0, ${nightAlpha * 0.25})`);
+          grad.addColorStop(1, 'rgba(255, 0, 0, 0)');
+          ctx.fillStyle = grad;
+          ctx.fillRect(hw * 0.2 - 25, -25, 50, 50);
+        }
+        break;
+      }
+
+      case 'firetruck': {
+        // Equipment strip (lighter red side panel)
+        ctx.fillStyle = `rgba(200, 50, 50, ${0.7 * darkFactor})`;
+        ctx.fillRect(-hw + 2, -hh + 1.5, this.length * 0.5, this.width - 3);
+
+        // Chrome bumper
+        ctx.fillStyle = `rgba(200, 200, 210, ${0.6 * darkFactor})`;
+        ctx.fillRect(hw - 2, -hh + 1, 2, this.width - 2);
+
+        // Ladder rack (top-down view: thin lines)
+        ctx.strokeStyle = `rgba(160, 160, 170, ${0.7 * darkFactor})`;
+        ctx.lineWidth = 0.8;
+        ctx.beginPath();
+        ctx.moveTo(-hw + 4, -hh + 2.5);
+        ctx.lineTo(hw * 0.3, -hh + 2.5);
+        ctx.moveTo(-hw + 4, hh - 2.5);
+        ctx.lineTo(hw * 0.3, hh - 2.5);
+        ctx.stroke();
+
+        // Light bar
+        const sirenOn = Math.sin(this.sirenPhase) > 0;
+        ctx.fillStyle = sirenOn ? 'rgba(255, 0, 0, 0.95)' : 'rgba(150, 0, 0, 0.5)';
+        ctx.fillRect(hw * 0.3, -hh + 0.5, 4, 2);
+        ctx.fillStyle = !sirenOn ? 'rgba(255, 255, 255, 0.95)' : 'rgba(180, 180, 180, 0.5)';
+        ctx.fillRect(hw * 0.3, hh - 2.5, 4, 2);
+
+        if (nightAlpha > 0.1 && sirenOn) {
+          const grad = ctx.createRadialGradient(hw * 0.3, 0, 0, hw * 0.3, 0, 30);
+          grad.addColorStop(0, `rgba(255, 50, 0, ${nightAlpha * 0.3})`);
+          grad.addColorStop(1, 'rgba(255, 50, 0, 0)');
+          ctx.fillStyle = grad;
+          ctx.fillRect(hw * 0.3 - 30, -30, 60, 60);
+        }
+        break;
+      }
+    }
   }
 }
