@@ -153,13 +153,13 @@ export class CityLayout {
     const offsetX = (width - (this.gridCols - 1) * cellSize) / 2;
     const offsetY = (height - (this.gridRows - 1) * cellSize) / 2;
 
-    // Find center block for the plaza (3×3)
+    // Find center block for the plaza (4 wide × 3 tall — rectangular)
     const centerCol = Math.floor(this.gridCols / 2);
     const centerRow = Math.floor(this.gridRows / 2);
 
     const validPlazaCols: number[] = [];
     const validPlazaRows: number[] = [];
-    for (let dc = -1; dc <= 1; dc++) {
+    for (let dc = -2; dc <= 1; dc++) {
       const c = centerCol + dc;
       if (c >= 0 && c < this.gridCols) validPlazaCols.push(c);
     }
