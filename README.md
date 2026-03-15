@@ -82,11 +82,16 @@ At night: buildings show lit windows, street lights and plaza lamp posts emit ra
 
 ### Weather
 
-Procedural cloud system with three depth layers (far, mid, near):
-- Seeded random number generator for consistent cloud shapes
-- Multi-lobe cumulus and stratus cloud types
-- Three-pass rendering: shadow underlayer, main body, highlight tops
-- Ground shadows drift beneath the clouds
+Dynamic live weather powered by the Open-Meteo API:
+- **Location Setting:** Allows testing specific weather conditions manually globally
+- **Rich Conditions:** Supports clear, cloudy, fog, drizzle, rain, heavy rain, thunderstorms, snow, heavy snow, and hail based on realtime WMO codes
+- **Atmospheric Effects:**
+  - Procedural parallax clouds darken dynamically into storm clouds and drift over the city in top-down volumetric rendering
+  - Rain and hail particles fall visibly below the cloud layer, dynamically bouncing and melting on the plaza
+  - Widespread reflective puddles generate ripples and splash effects, drying gradually over time
+  - Ground accumulative snow cover creates spreading white patches
+  - Jagged lightning flash overlays during thunderstorms
+- **Responsive Pedestrians:** 100% of pedestrians deploy colorful umbrellas in the rain or snow, and dynamically sprint for cover or adjust walking pace depending on the weather intensity (drizzle, heavy rain, hail, slippery snow).
 
 ### Rendering Architecture
 

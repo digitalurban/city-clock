@@ -153,7 +153,8 @@ export class Weather {
         // Scale alpha by cloud cover percentage
         this.targetAlpha = 0.2 + (cover / 100) * 0.3;
       } else {
-        this.targetAlpha = 0.7 + (cover / 100) * 0.3;
+        // Boost target alpha for rain/snow to ensure visibility
+        this.targetAlpha = Math.max(0.6, 0.7 + (cover / 100) * 0.3);
       }
 
       if (instant) {
@@ -207,17 +208,23 @@ export class Weather {
 
     // Pre-create rain drops (pool — recycled)
     this.rainDrops = [];
-    for (let i = 0; i < 300; i++) {
+    for (let i = 0; i < 2000; i++) { // Increased pool significantly for better density
       this.rainDrops.push(this.newDrop());
+    }
+
+    // Pre-create hail particles
+    this.hailParticles = [];
+    for (let i = 0; i < 150; i++) {
+      this.hailParticles.push(this.newHailParticle());
     }
 
     // Create puddles at fixed positions (on plazas and sidewalks)
     this.puddles = [];
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < 150; i++) { // Much higher density of puddles
       this.puddles.push({
         x: Math.random() * worldW,
         y: Math.random() * worldH,
-        radius: 4 + Math.random() * 8,
+        radius: 8 + Math.random() * 12, // Bigger puddles
         phase: Math.random() * Math.PI * 2,
       });
     }
@@ -236,14 +243,37 @@ export class Weather {
   }
 
   private newDrop(): RainDrop {
-    const isSnow = this.current === 'snow';
+    const isSnow = this.current === 'snow' || this.current === 'heavy_snow';
+    const isHeavy = this.current === 'heavy_rain' || this.current === 'heavy_snow' || this.current === 'thunderstorm';
+    const isDrizzle = this.current === 'drizzle';
+
+    let speed, length, opacity;
+    if (isSnow) {
+      speed = (isHeavy ? 2 : 1) + Math.random() * 2;
+      length = (isHeavy ? 3 : 2) + Math.random() * 2;
+      opacity = isHeavy ? 0.5 + Math.random() * 0.4 : 0.3 + Math.random() * 0.5;
+    } else {
+      speed = isDrizzle ? 2 + Math.random() * 2 : (isHeavy ? 6 + Math.random() * 4 : 4 + Math.random() * 3);
+      length = isDrizzle ? 3 + Math.random() * 3 : (isHeavy ? 10 + Math.random() * 12 : 6 + Math.random() * 8);
+      opacity = isDrizzle ? 0.1 + Math.random() * 0.15 : (isHeavy ? 0.2 + Math.random() * 0.3 : 0.15 + Math.random() * 0.25);
+    }
+
     return {
       x: Math.random() * this.worldW,
       y: Math.random() * this.worldH,
-      speed: isSnow ? 1 + Math.random() * 2 : 4 + Math.random() * 3,
-      length: isSnow ? 2 + Math.random() * 2 : 6 + Math.random() * 8,
-      opacity: isSnow ? 0.3 + Math.random() * 0.5 : 0.15 + Math.random() * 0.25,
-      isSnow: isSnow
+      speed, length, opacity,
+      isSnow: isSnow,
+      isHail: this.current === 'hail'
+    };
+  }
+
+  private newHailParticle(): HailParticle {
+    return {
+      x: Math.random() * this.worldW,
+      y: -Math.random() * 100, // Start above the screen
+      vx: (Math.random() - 0.5) * 2,
+      vy: 8 + Math.random() * 6,
+      life: 1.0 // 1.0 = falling, < 1.0 = bouncing on ground
     };
   }
 
@@ -255,16 +285,34 @@ export class Weather {
     this.alpha += (this.targetAlpha - this.alpha) * 0.005;
 
     // Dynamic puddle and snow level accumulators
-    if (this.current === 'rain') {
+    if (this.current === 'rain' || this.current === 'thunderstorm') {
       this.puddleLevel = Math.min(1.0, this.puddleLevel + 0.0005);
+    } else if (this.current === 'heavy_rain') {
+      this.puddleLevel = Math.min(1.0, this.puddleLevel + 0.001);
+    } else if (this.current === 'drizzle') {
+      this.puddleLevel = Math.min(0.4, this.puddleLevel + 0.0002);
     } else {
       this.puddleLevel = Math.max(0.0, this.puddleLevel - 0.0002);
     }
 
     if (this.current === 'snow') {
       this.snowLevel = Math.min(1.0, this.snowLevel + 0.0002);
+    } else if (this.current === 'heavy_snow') {
+      this.snowLevel = Math.min(1.0, this.snowLevel + 0.0006);
     } else {
       this.snowLevel = Math.max(0.0, this.snowLevel - 0.0001);
+    }
+
+    // Lightning driver
+    if (this.current === 'thunderstorm' || this.current === 'hail') {
+      if (this.lightningPhase <= 0 && Math.random() < 0.005) { // 0.5% chance per frame to strike
+        this.lightningPhase = 1.0;
+      }
+      if (this.lightningPhase > 0) {
+        this.lightningPhase -= Math.random() * 0.1 + 0.02; // jagged decay
+      }
+    } else {
+      this.lightningPhase = 0;
     }
 
     // Real weather: re-fetch every 5 minutes
@@ -282,17 +330,43 @@ export class Weather {
     }
 
     // Animate rain drops
-    const isSnowing = this.current === 'snow';
+    const isSnowingStatus = this.current === 'snow' || this.current === 'heavy_snow';
+    const isHailingStatus = this.current === 'hail';
     for (const drop of this.rainDrops) {
-      if (drop.isSnow !== isSnowing) {
+      if (drop.isSnow !== isSnowingStatus || drop.isHail !== isHailingStatus) {
         // Re-roll drop to match current weather type if it changed
         Object.assign(drop, this.newDrop());
       }
       drop.y += drop.speed;
-      drop.x += isSnowing ? Math.sin(Date.now() / 1000 + drop.y * 0.05) * 1.5 + 0.5 : 0.5; // snow drifts
+      drop.x += isSnowingStatus ? Math.sin(Date.now() / 1000 + drop.y * 0.05) * 1.5 + 0.5 : 0.5; // snow drifts
       if (drop.y > this.worldH) {
         drop.y = -drop.length;
         drop.x = Math.random() * this.worldW;
+      }
+    }
+
+    // Animate hail particles
+    if (isHailingStatus) {
+      for (const hail of this.hailParticles) {
+        hail.x += hail.vx;
+        hail.y += hail.vy;
+
+        if (hail.life >= 1.0) {
+          // Falling phase
+          if (hail.y > this.worldH * 0.9 + Math.random() * 100) {
+            // Hit the ground
+            hail.life = 0.99; // start bouncing/melting phase
+            hail.vy = -hail.vy * 0.3; // bounce up slightly
+            hail.vx *= 0.5;
+          }
+        } else {
+          // Bouncing / Melting phase
+          hail.life -= 0.05; // Quick melt
+          hail.vy += 0.5; // Gravity pulls it back down fast
+          if (hail.life <= 0) {
+            Object.assign(hail, this.newHailParticle());
+          }
+        }
       }
     }
 
@@ -343,6 +417,84 @@ export class Weather {
     if (!this.initialised) return;
     const time = Date.now() / 1000;
 
+    // --- Rain / Snow drops ---
+    const intensityRaw = Math.max(0, (this.alpha - 0.4) * 1.67); // 0-1
+    if (intensityRaw > 0.01 && (this.current === 'rain' || this.current === 'snow' || this.current === 'heavy_rain' || this.current === 'heavy_snow' || this.current === 'thunderstorm' || this.current === 'drizzle' || this.current === 'hail')) {
+      const isHeavy = this.current === 'heavy_rain' || this.current === 'heavy_snow' || this.current === 'thunderstorm';
+      const isDrizzle = this.current === 'drizzle';
+      // More drops for heavy, fewer for drizzle
+      let dropsMultiplier = isHeavy ? 2.0 : (isDrizzle ? 0.4 : 1.0);
+      const dropsToDraw = Math.floor(this.rainDrops.length * intensityRaw * dropsMultiplier);
+
+      const isSnowingStatus = this.current === 'snow' || this.current === 'heavy_snow';
+      // Use a darker blue/grey for rain so it heavily contrasts the light beige plaza!
+      ctx.strokeStyle = isSnowingStatus ? `rgba(255, 255, 255, ${Math.min(1.0, 0.8 * intensityRaw + 0.3)})` : `rgba(70, 90, 130, ${Math.min(1.0, 0.8 * intensityRaw + 0.3)})`;
+      ctx.lineWidth = isSnowingStatus ? (isHeavy ? 3 : 2) : (isDrizzle ? 1.0 : (isHeavy ? 3 : 2));
+      ctx.beginPath();
+      for (let i = 0; i < dropsToDraw; i++) {
+        const d = this.rainDrops[i];
+        if (!d) continue;
+        ctx.moveTo(d.x, d.y);
+        ctx.lineTo(d.x + (isSnowingStatus ? Math.sin(time + d.y) * 2 : 0.5), d.y + d.length);
+      }
+      ctx.stroke();
+
+      // --- Hail Bouncing ---
+      if (this.current === 'hail') {
+        ctx.fillStyle = `rgba(230, 240, 255, ${0.9 * intensityRaw})`;
+        for (const hail of this.hailParticles) {
+          ctx.beginPath();
+          // Scale size based on life (melts as it bounces)
+          const radius = Math.max(0.5, 2 * hail.life);
+          ctx.arc(hail.x, hail.y, radius, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+      // --- Puddle ripples (during rain or lingering after) ---
+      const pl = this.puddleLevel * Math.max(0, (this.alpha - 0.2) * 1.25);
+      if (pl > 0.05 && !isSnowingStatus) {
+        for (const puddle of this.puddles) {
+          const ripple = Math.sin(time * 3 + puddle.phase) * 0.5 + 0.5;
+          // Very visible puddle lines (darker for contrast)
+          const pa = pl * (0.4 + 0.5 * ripple);
+          ctx.strokeStyle = `rgba(50, 70, 110, ${pa})`;
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.arc(puddle.x, puddle.y, puddle.radius * (0.6 + ripple * 0.4) * pl, 0, Math.PI * 2);
+          ctx.stroke();
+          // Inner ripple
+          ctx.beginPath();
+          ctx.arc(puddle.x, puddle.y, puddle.radius * 0.3 * (1 + ripple * 0.5) * pl, 0, Math.PI * 2);
+          ctx.stroke();
+
+          // Occasional splash dots
+          if (Math.random() < pl * 0.2) {
+            ctx.fillStyle = `rgba(150, 180, 220, ${0.9 * pl})`;
+            ctx.beginPath();
+            const sx = puddle.x + (Math.random() - 0.5) * puddle.radius * pl;
+            const sy = puddle.y + (Math.random() - 0.5) * puddle.radius * pl;
+            ctx.arc(sx, sy, 1.0 + Math.random(), 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+      }
+    }
+
+    // --- Snow Cover (gathers on ground) ---
+    if (this.snowLevel > 0.01) {
+      const sl = this.snowLevel * (1 - nightAlpha * 0.3); // lightly shaded at night
+      ctx.fillStyle = `rgba(240, 245, 255, ${sl * 0.65})`;
+      for (const patch of this.snowPatches) {
+        ctx.save();
+        ctx.translate(patch.x, patch.y);
+        ctx.rotate(patch.rotation);
+        ctx.beginPath();
+        ctx.ellipse(0, 0, patch.radiusX * (0.2 + 0.8 * this.snowLevel), patch.radiusY * (0.2 + 0.8 * this.snowLevel), 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+    }
     // --- Parallax clouds ---
     // Background layer clouds are ALWAYS visible (ambient depth).
     // Mid and near layers become more visible with weather intensity.
@@ -363,8 +515,10 @@ export class Weather {
       layerAlpha *= (1 - nightAlpha * 0.5);
       if (layerAlpha < 0.01) continue;
 
-      // Cloud color shifts slightly by layer for depth
-      const grey = cloud.layer === 0 ? 200 : cloud.layer === 1 ? 185 : 170;
+      // Cloud color shifts slightly by layer for depth. Darken them during rain!
+      const stormDarkness = this.alpha * 80;
+      const baseGrey = cloud.layer === 0 ? 200 : cloud.layer === 1 ? 185 : 170;
+      const grey = Math.max(70, baseGrey - stormDarkness);
 
       const cx = cloud.x;
       const cy = cloud.y;
@@ -445,81 +599,27 @@ export class Weather {
       ctx.stroke();
     }
 
-    // --- Rain / Snow drops ---
-    const intensityRaw = Math.max(0, (this.alpha - 0.4) * 1.67); // 0-1
-    if (intensityRaw > 0.01 && (this.current === 'rain' || this.current === 'snow')) {
-      const dropsToDraw = Math.floor(this.rainDrops.length * intensityRaw);
-
-      const isSnow = this.current === 'snow';
-      ctx.strokeStyle = isSnow ? `rgba(255, 255, 255, ${0.8 * intensityRaw})` : `rgba(160, 180, 220, ${0.3 * intensityRaw})`;
-      ctx.lineWidth = isSnow ? 2 : 1;
-      ctx.beginPath();
-      for (let i = 0; i < dropsToDraw; i++) {
-        const d = this.rainDrops[i];
-        ctx.moveTo(d.x, d.y);
-        ctx.lineTo(d.x + (isSnow ? Math.sin(time + d.y) * 2 : 0.5), d.y + d.length);
-      }
-      ctx.stroke();
-
-      // --- Puddle ripples (during rain or lingering after) ---
-      const pl = this.puddleLevel * Math.max(0, (this.alpha - 0.2) * 1.25);
-      if (pl > 0.05 && !isSnow) {
-        for (const puddle of this.puddles) {
-          const ripple = Math.sin(time * 3 + puddle.phase) * 0.5 + 0.5;
-          const pa = pl * 0.12 * ripple;
-          ctx.strokeStyle = `rgba(140, 160, 200, ${pa})`;
-          ctx.lineWidth = 0.5;
-          ctx.beginPath();
-          ctx.arc(puddle.x, puddle.y, puddle.radius * (0.6 + ripple * 0.4) * pl, 0, Math.PI * 2);
-          ctx.stroke();
-          // Inner ripple
-          ctx.beginPath();
-          ctx.arc(puddle.x, puddle.y, puddle.radius * 0.3 * (1 + ripple * 0.5) * pl, 0, Math.PI * 2);
-          ctx.stroke();
-
-          // Occasional splash dots
-          if (Math.random() < pl * 0.1) {
-            ctx.fillStyle = `rgba(200, 220, 255, ${0.5 * pl})`;
-            ctx.beginPath();
-            const sx = puddle.x + (Math.random() - 0.5) * puddle.radius * pl;
-            const sy = puddle.y + (Math.random() - 0.5) * puddle.radius * pl;
-            ctx.arc(sx, sy, 0.5 + Math.random(), 0, Math.PI * 2);
-            ctx.fill();
-          }
-        }
-      }
-    }
-
-    // --- Snow Cover (gathers on ground) ---
-    if (this.snowLevel > 0.01) {
-      const sl = this.snowLevel * (1 - nightAlpha * 0.3); // lightly shaded at night
-      ctx.fillStyle = `rgba(240, 245, 255, ${sl * 0.65})`;
-      for (const patch of this.snowPatches) {
-        ctx.save();
-        ctx.translate(patch.x, patch.y);
-        ctx.rotate(patch.rotation);
-        ctx.beginPath();
-        ctx.ellipse(0, 0, patch.radiusX * (0.2 + 0.8 * this.snowLevel), patch.radiusY * (0.2 + 0.8 * this.snowLevel), 0, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
-      }
-    }
   }
 
   /**
    * Draw a screen-space overlay for rain/cloud tint (call after resetting transform).
-   * Adds a subtle blue-grey wash during rain.
+   * Adds a subtle blue-grey wash during rain, and handles lightning flashes.
    */
   drawScreenOverlay(ctx: CanvasRenderingContext2D, screenW: number, screenH: number) {
-    if (this.alpha < 0.05) return;
-    const tint = Math.min(0.08, this.alpha * 0.08);
+    if (this.lightningPhase > 0) {
+      // White/blue flash for lightning
+      ctx.fillStyle = `rgba(220, 240, 255, ${this.lightningPhase * 0.8})`;
+      ctx.fillRect(0, 0, screenW, screenH);
+    } else if (this.alpha >= 0.05) {
+      const tint = Math.min(0.08, this.alpha * 0.08);
 
-    if (this.current === 'fog') {
-      ctx.fillStyle = `rgba(200, 210, 220, ${this.alpha * 0.4})`;
-      ctx.fillRect(0, 0, screenW, screenH);
-    } else {
-      ctx.fillStyle = `rgba(100, 110, 130, ${tint})`;
-      ctx.fillRect(0, 0, screenW, screenH);
+      if (this.current === 'fog') {
+        ctx.fillStyle = `rgba(200, 210, 220, ${this.alpha * 0.4})`;
+        ctx.fillRect(0, 0, screenW, screenH);
+      } else {
+        ctx.fillStyle = `rgba(100, 110, 130, ${tint})`;
+        ctx.fillRect(0, 0, screenW, screenH);
+      }
     }
   }
 }

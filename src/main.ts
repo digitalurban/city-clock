@@ -598,7 +598,15 @@ function loop() {
 
   // Update and draw pedestrians
   for (const p of pedestrians) {
-    p.update(pedestrians, layout, isDancing, weather.intensity);
+    p.update(
+      pedestrians,
+      layout,
+      isDancing,
+      weather.intensity,
+      weather.type,
+      w,
+      h
+    );
     // @ts-ignore - we'll update the signature in Pedestrian.ts next
     p.draw(ctx, nightAlpha, weather.intensity, isDancing);
   }

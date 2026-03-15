@@ -207,10 +207,17 @@ export class Pedestrian {
       this.waypointX = wx;
       this.waypointY = wy;
     }
-    this.waypointTimer = 0;
   }
 
-  update(pedestrians: Pedestrian[], layout: CityLayout, isDancing: boolean = false, weatherIntensity: number = 0) {
+  update(
+    pedestrians: Pedestrian[],
+    layout: CityLayout,
+    isDancing: boolean = false,
+    weatherIntensity: number = 0,
+    weatherType: string = 'clear',
+    width: number,
+    height: number
+  ) {
     let ax = 0;
     let ay = 0;
     const time = Date.now() / 1000;
@@ -835,9 +842,25 @@ export class Pedestrian {
       }
     } else {
       let speedMultiplier = this.isRidingBicycle ? 2.5 : 1;
-      // Hurry up if it's raining and no umbrella
-      if (weatherIntensity > 0.2 && !this.hasUmbrella) {
-        speedMultiplier *= Math.min(1.8, 1 + weatherIntensity);
+
+      // Weather reactions
+      if (!this.clockTarget) {
+        if (weatherType === 'hail') {
+          // Hail makes everyone run as fast as possible regardless of umbrella
+          speedMultiplier *= 2.5;
+        } else if ((weatherType === 'heavy_rain' || weatherType === 'thunderstorm') && !this.hasUmbrella) {
+          // Heavy rain / Thunderstorm - huge sprint if no umbrella
+          speedMultiplier *= 2.0;
+        } else if (weatherType === 'rain' && !this.hasUmbrella) {
+          // Normal rain sprint
+          speedMultiplier *= 1.5;
+        } else if (weatherType === 'drizzle' && !this.hasUmbrella) {
+          // Light drizzle hurry
+          speedMultiplier *= 1.2;
+        } else if (weatherType === 'snow' || weatherType === 'heavy_snow') {
+          // Slow down slightly on slippery snow
+          speedMultiplier *= 0.85;
+        }
       }
 
       if (speed > this.maxSpeed * speedMultiplier) {
@@ -873,7 +896,12 @@ export class Pedestrian {
     }
   }
 
-  draw(ctx: CanvasRenderingContext2D, nightAlpha: number, weatherIntensity: number = 0, isDancing: boolean = false) {
+  draw(
+    ctx: CanvasRenderingContext2D,
+    nightAlpha: number,
+    weatherIntensity: number,
+    isDancing: boolean
+  ) {
     ctx.save();
     ctx.translate(this.x, this.y);
     ctx.rotate(this.angle);
@@ -1045,8 +1073,8 @@ export class Pedestrian {
       }
     }
 
-    // Umbrella when raining/snowing (if they have one)
-    if (weatherIntensity > 0.3 && !this.isAtHome && !this.isSitting && this.hasUmbrella) {
+    // Umbrella when raining/snowing
+    if (weatherIntensity > 0.3 && !this.isAtHome && !this.isSitting) {
       const wobble = Math.sin(this.walkPhase * 2) * 0.1 * s;
       const ur = s * 1.5;
 
