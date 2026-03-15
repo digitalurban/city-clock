@@ -41,7 +41,7 @@ let currentPedCount = TOTAL_PEDESTRIANS;
 let alarmTime: string | null = null;
 let isAlarmActive = false;
 let isDancing = false;
-const alarmAudio = new Audio('./MiniCityAlarm.mp3');
+const alarmAudio = new Audio('./alarm.mp3'); // Using the alarm.mp3 from the public directory
 alarmAudio.loop = true;
 
 function clampPan(w: number, h: number) {
@@ -563,24 +563,42 @@ function loop() {
       isDancing = true;
       alarmAudio.play().catch(e => console.error("Audio play failed:", e));
 
-      // Show snooze button
-      let snoozeBtn = document.getElementById('snooze-btn');
-      if (!snoozeBtn) {
-        snoozeBtn = document.createElement('button');
+      // Show alarm options container
+      let alarmControls = document.getElementById('alarm-controls');
+      if (!alarmControls) {
+        alarmControls = document.createElement('div');
+        alarmControls.id = 'alarm-controls';
+        alarmControls.style.cssText = `
+          position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%); z-index: 200;
+          display: flex; gap: 15px;
+        `;
+        document.body.appendChild(alarmControls);
+
+        const snoozeBtn = document.createElement('button');
         snoozeBtn.id = 'snooze-btn';
         snoozeBtn.textContent = 'Snooze (9 min)';
         snoozeBtn.style.cssText = `
-  position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%); z-index: 200;
-  background: #ffaa00; color: #fff; border: none; border-radius: 20px;
-  padding: 12px 24px; font-size: 18px; font-weight: bold; cursor: pointer;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5); border: 2px solid #fff;
-  `;
-        document.body.appendChild(snoozeBtn);
+          background: #ffaa00; color: #fff; border: none; border-radius: 20px;
+          padding: 12px 24px; font-size: 18px; font-weight: bold; cursor: pointer;
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5); border: 2px solid #fff;
+        `;
+        alarmControls.appendChild(snoozeBtn);
+
+        const dismissBtn = document.createElement('button');
+        dismissBtn.id = 'dismiss-btn';
+        dismissBtn.textContent = 'Dismiss';
+        dismissBtn.style.cssText = `
+          background: #e63946; color: #fff; border: none; border-radius: 20px;
+          padding: 12px 24px; font-size: 18px; font-weight: bold; cursor: pointer;
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5); border: 2px solid #fff;
+        `;
+        alarmControls.appendChild(dismissBtn);
+
         snoozeBtn.addEventListener('click', () => {
           isAlarmActive = false;
           isDancing = false;
           alarmAudio.pause();
-          snoozeBtn!.style.display = 'none';
+          alarmControls!.style.display = 'none';
 
           // Add 9 minutes
           const [h, m] = alarmTime!.split(':').map(Number);
@@ -591,8 +609,21 @@ function loop() {
           const status = document.getElementById('alarm-status-label');
           if (status) status.textContent = alarmTime;
         });
+
+        dismissBtn.addEventListener('click', () => {
+          isAlarmActive = false;
+          isDancing = false;
+          alarmAudio.pause();
+          alarmTime = null; // Clear the alarm
+          alarmControls!.style.display = 'none';
+
+          const status = document.getElementById('alarm-status-label');
+          const input = document.getElementById('alarm-time-input') as HTMLInputElement;
+          if (status) status.textContent = 'None';
+          if (input) input.value = ''; // Clear input field
+        });
       }
-      snoozeBtn.style.display = 'block';
+      alarmControls.style.display = 'flex';
     }
   }
 
