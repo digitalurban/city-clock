@@ -33,6 +33,14 @@ interface Puddle {
   phase: number;
 }
 
+interface SnowPatch {
+  x: number;
+  y: number;
+  radiusX: number;
+  radiusY: number;
+  rotation: number;
+}
+
 // WMO Weather interpretation codes → WeatherType
 function wmoToWeather(code: number): WeatherType {
   // 0-1: clear, 2-3: cloudy, 45-48: fog (cloudy),
@@ -53,9 +61,14 @@ export class Weather {
   private rainDrops: RainDrop[] = [];
   private clouds: Cloud[] = [];
   private puddles: Puddle[] = [];
+  private snowPatches: SnowPatch[] = [];
   private worldW: number = 0;
   private worldH: number = 0;
   private initialised: boolean = false;
+
+  // Dynamic levels (0 to 1)
+  private puddleLevel: number = 0;
+  private snowLevel: number = 0;
 
   // Real weather from Open-Meteo
   public useRealWeather: boolean = false;
@@ -85,7 +98,7 @@ export class Weather {
         this.userLat = geoData.results[0].latitude;
         this.userLon = geoData.results[0].longitude;
         this.useRealWeather = true;
-        this.fetchWeather();
+        this.fetchWeather(true); // pass true for instant
         console.log(`Weather location set to: ${geoData.results[0].name}, ${geoData.results[0].country}`);
       } else {
         console.warn(`City not found: ${city}`);
@@ -96,7 +109,7 @@ export class Weather {
   }
 
   /** Fetch current weather from Open-Meteo */
-  private async fetchWeather() {
+  private async fetchWeather(instant: boolean = false) {
     if (!this.useRealWeather) return;
     try {
       const url = `https://api.open-meteo.com/v1/forecast?latitude=${this.userLat}&longitude=${this.userLon}&current=weather_code,cloud_cover`;
@@ -116,6 +129,12 @@ export class Weather {
         this.targetAlpha = 0.2 + (cover / 100) * 0.3;
       } else {
         this.targetAlpha = 0.7 + (cover / 100) * 0.3;
+      }
+
+      if (instant) {
+        this.alpha = this.targetAlpha;
+        this.puddleLevel = weatherType === 'rain' ? 1.0 : 0.0;
+        this.snowLevel = weatherType === 'snow' ? 1.0 : 0.0;
       }
 
       this.realWeatherFetched = true;
@@ -176,6 +195,18 @@ export class Weather {
         phase: Math.random() * Math.PI * 2,
       });
     }
+
+    // Create snow patches
+    this.snowPatches = [];
+    for (let i = 0; i < 40; i++) {
+      this.snowPatches.push({
+        x: Math.random() * worldW,
+        y: Math.random() * worldH,
+        radiusX: 10 + Math.random() * 20,
+        radiusY: 5 + Math.random() * 10,
+        rotation: Math.random() * Math.PI,
+      });
+    }
   }
 
   private newDrop(): RainDrop {
@@ -196,6 +227,19 @@ export class Weather {
 
     // Smooth transition
     this.alpha += (this.targetAlpha - this.alpha) * 0.005;
+
+    // Dynamic puddle and snow level accumulators
+    if (this.current === 'rain') {
+      this.puddleLevel = Math.min(1.0, this.puddleLevel + 0.0005);
+    } else {
+      this.puddleLevel = Math.max(0.0, this.puddleLevel - 0.0002);
+    }
+
+    if (this.current === 'snow') {
+      this.snowLevel = Math.min(1.0, this.snowLevel + 0.0002);
+    } else {
+      this.snowLevel = Math.max(0.0, this.snowLevel - 0.0001);
+    }
 
     // Real weather: re-fetch every 5 minutes
     if (this.useRealWeather) {
@@ -391,31 +435,47 @@ export class Weather {
       }
       ctx.stroke();
 
-      // --- Puddle ripples (during rain) ---
-      if (intensityRaw > 0.2 && !isSnow) {
+      // --- Puddle ripples (during rain or lingering after) ---
+      const pl = this.puddleLevel * Math.max(0, (this.alpha - 0.2) * 1.25);
+      if (pl > 0.05 && !isSnow) {
         for (const puddle of this.puddles) {
           const ripple = Math.sin(time * 3 + puddle.phase) * 0.5 + 0.5;
-          const pa = intensityRaw * 0.12 * ripple;
+          const pa = pl * 0.12 * ripple;
           ctx.strokeStyle = `rgba(140, 160, 200, ${pa})`;
           ctx.lineWidth = 0.5;
           ctx.beginPath();
-          ctx.arc(puddle.x, puddle.y, puddle.radius * (0.6 + ripple * 0.4), 0, Math.PI * 2);
+          ctx.arc(puddle.x, puddle.y, puddle.radius * (0.6 + ripple * 0.4) * pl, 0, Math.PI * 2);
           ctx.stroke();
           // Inner ripple
           ctx.beginPath();
-          ctx.arc(puddle.x, puddle.y, puddle.radius * 0.3 * (1 + ripple * 0.5), 0, Math.PI * 2);
+          ctx.arc(puddle.x, puddle.y, puddle.radius * 0.3 * (1 + ripple * 0.5) * pl, 0, Math.PI * 2);
           ctx.stroke();
 
           // Occasional splash dots
-          if (Math.random() < intensityRaw * 0.1) {
-            ctx.fillStyle = `rgba(200, 220, 255, ${0.5 * intensityRaw})`;
+          if (Math.random() < pl * 0.1) {
+            ctx.fillStyle = `rgba(200, 220, 255, ${0.5 * pl})`;
             ctx.beginPath();
-            const sx = puddle.x + (Math.random() - 0.5) * puddle.radius;
-            const sy = puddle.y + (Math.random() - 0.5) * puddle.radius;
+            const sx = puddle.x + (Math.random() - 0.5) * puddle.radius * pl;
+            const sy = puddle.y + (Math.random() - 0.5) * puddle.radius * pl;
             ctx.arc(sx, sy, 0.5 + Math.random(), 0, Math.PI * 2);
             ctx.fill();
           }
         }
+      }
+    }
+
+    // --- Snow Cover (gathers on ground) ---
+    if (this.snowLevel > 0.01) {
+      const sl = this.snowLevel * (1 - nightAlpha * 0.3); // lightly shaded at night
+      ctx.fillStyle = `rgba(240, 245, 255, ${sl * 0.65})`;
+      for (const patch of this.snowPatches) {
+        ctx.save();
+        ctx.translate(patch.x, patch.y);
+        ctx.rotate(patch.rotation);
+        ctx.beginPath();
+        ctx.ellipse(0, 0, patch.radiusX * (0.2 + 0.8 * this.snowLevel), patch.radiusY * (0.2 + 0.8 * this.snowLevel), 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
       }
     }
   }
