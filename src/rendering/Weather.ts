@@ -1,6 +1,7 @@
 /**
- * Weather system — cycles between clear, cloudy, and rain.
- * Renders clouds drifting across the sky, rain particles, and puddle shimmers.
+ * Weather system — uses real weather from Open-Meteo API based on user location.
+ * Falls back to random cycling if geolocation unavailable.
+ * Renders parallax clouds at multiple depth layers, rain particles, and puddle shimmers.
  */
 
 type WeatherType = 'clear' | 'cloudy' | 'rain';
@@ -21,6 +22,7 @@ interface Cloud {
   speed: number;
   opacity: number;
   seed: number;
+  layer: number; // 0 = far background, 1 = mid, 2 = near foreground
 }
 
 interface Puddle {
@@ -28,6 +30,16 @@ interface Puddle {
   y: number;
   radius: number;
   phase: number;
+}
+
+// WMO Weather interpretation codes → WeatherType
+function wmoToWeather(code: number): WeatherType {
+  // 0-1: clear, 2-3: cloudy, 45-48: fog (cloudy),
+  // 51-67: drizzle/rain, 71-77: snow (rain), 80-82: showers, 85-86: snow showers, 95-99: thunderstorm
+  if (code <= 1) return 'clear';
+  if (code <= 3) return 'cloudy';
+  if (code <= 48) return 'cloudy';
+  return 'rain';
 }
 
 export class Weather {
@@ -42,8 +54,65 @@ export class Weather {
   private worldH: number = 0;
   private initialised: boolean = false;
 
+  // Real weather from Open-Meteo
+  private useRealWeather: boolean = false;
+  private realWeatherFetched: boolean = false;
+  private fetchTimer: number = 0;
+  private userLat: number = 0;
+  private userLon: number = 0;
+  private cloudCover: number = 0; // 0-100 from API
+
   constructor() {
-    this.transitionTimer = 600 + Math.random() * 1200; // 10-30s before first change
+    this.transitionTimer = 600 + Math.random() * 1200;
+    this.requestGeolocation();
+  }
+
+  /** Request user location for real weather */
+  private requestGeolocation() {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        this.userLat = pos.coords.latitude;
+        this.userLon = pos.coords.longitude;
+        this.useRealWeather = true;
+        this.fetchWeather();
+      },
+      () => {
+        // Geolocation denied — fall back to random weather cycling
+      },
+      { timeout: 5000 }
+    );
+  }
+
+  /** Fetch current weather from Open-Meteo */
+  private async fetchWeather() {
+    try {
+      const url = `https://api.open-meteo.com/v1/forecast?latitude=${this.userLat}&longitude=${this.userLon}&current=weather_code,cloud_cover`;
+      const resp = await fetch(url);
+      const data = await resp.json();
+      const code = data.current.weather_code as number;
+      const cover = data.current.cloud_cover as number;
+
+      this.cloudCover = cover;
+      const weatherType = wmoToWeather(code);
+      this.current = weatherType;
+
+      if (weatherType === 'clear') {
+        this.targetAlpha = 0;
+      } else if (weatherType === 'cloudy') {
+        // Scale alpha by cloud cover percentage
+        this.targetAlpha = 0.2 + (cover / 100) * 0.3;
+      } else {
+        this.targetAlpha = 0.7 + (cover / 100) * 0.3;
+      }
+
+      this.realWeatherFetched = true;
+      // Next fetch in 5 minutes (18000 frames at 60fps)
+      this.fetchTimer = 18000;
+    } catch {
+      // Network error — retry in 1 minute
+      this.fetchTimer = 3600;
+    }
   }
 
   /** Call once when world dimensions change */
@@ -52,19 +121,31 @@ export class Weather {
     this.worldH = worldH;
     this.initialised = true;
 
-    // Pre-create clouds
+    // Create parallax cloud layers:
+    // Layer 0 (far): large, slow, faint — always visible for depth
+    // Layer 1 (mid): medium speed/size — visible in all weather
+    // Layer 2 (near): faster, smaller, more opaque — more visible when cloudy/rain
     this.clouds = [];
-    const numClouds = 6 + Math.floor(Math.random() * 5);
-    for (let i = 0; i < numClouds; i++) {
-      this.clouds.push({
-        x: Math.random() * worldW,
-        y: Math.random() * worldH * 0.7,
-        w: 60 + Math.random() * 120,
-        h: 25 + Math.random() * 35,
-        speed: 0.15 + Math.random() * 0.3,
-        opacity: 0.15 + Math.random() * 0.2,
-        seed: Math.random() * 1000,
-      });
+    const layerConfigs = [
+      { count: 5, wMin: 120, wMax: 250, hMin: 35, hMax: 60, speedMin: 0.08, speedMax: 0.15, opMin: 0.06, opMax: 0.12 },
+      { count: 5, wMin: 80, wMax: 160, hMin: 25, hMax: 45, speedMin: 0.18, speedMax: 0.32, opMin: 0.10, opMax: 0.20 },
+      { count: 4, wMin: 50, wMax: 120, hMin: 20, hMax: 35, speedMin: 0.30, speedMax: 0.50, opMin: 0.15, opMax: 0.30 },
+    ];
+
+    for (let layer = 0; layer < layerConfigs.length; layer++) {
+      const cfg = layerConfigs[layer];
+      for (let i = 0; i < cfg.count; i++) {
+        this.clouds.push({
+          x: Math.random() * worldW,
+          y: Math.random() * worldH * 0.6,
+          w: cfg.wMin + Math.random() * (cfg.wMax - cfg.wMin),
+          h: cfg.hMin + Math.random() * (cfg.hMax - cfg.hMin),
+          speed: cfg.speedMin + Math.random() * (cfg.speedMax - cfg.speedMin),
+          opacity: cfg.opMin + Math.random() * (cfg.opMax - cfg.opMin),
+          seed: Math.random() * 1000,
+          layer,
+        });
+      }
     }
 
     // Pre-create rain drops (pool — recycled)
@@ -102,14 +183,21 @@ export class Weather {
     // Smooth transition
     this.alpha += (this.targetAlpha - this.alpha) * 0.005;
 
-    // Timer to switch weather
-    this.transitionTimer--;
-    if (this.transitionTimer <= 0) {
-      this.cycleWeather();
+    // Real weather: re-fetch every 5 minutes
+    if (this.useRealWeather) {
+      this.fetchTimer--;
+      if (this.fetchTimer <= 0) {
+        this.fetchWeather();
+      }
+    } else {
+      // Fallback: random weather cycling
+      this.transitionTimer--;
+      if (this.transitionTimer <= 0) {
+        this.cycleWeather();
+      }
     }
 
     // Animate rain drops
-    const rainIntensity = Math.max(0, (this.alpha - 0.5) * 2); // 0-1 (only during rain)
     for (const drop of this.rainDrops) {
       drop.y += drop.speed;
       drop.x += 0.5; // slight wind
@@ -119,12 +207,12 @@ export class Weather {
       }
     }
 
-    // Animate clouds
+    // Animate clouds — different speeds per layer for parallax
     for (const cloud of this.clouds) {
       cloud.x += cloud.speed;
       if (cloud.x > this.worldW + cloud.w) {
         cloud.x = -cloud.w;
-        cloud.y = Math.random() * this.worldH * 0.7;
+        cloud.y = Math.random() * this.worldH * 0.6;
       }
     }
   }
@@ -160,37 +248,66 @@ export class Weather {
 
   /**
    * Draw weather effects in WORLD space (call with world transform active).
-   * Renders clouds, rain, and puddle shimmers.
+   * Renders parallax clouds at multiple depth layers, rain, and puddle shimmers.
    */
   drawWorldEffects(ctx: CanvasRenderingContext2D, nightAlpha: number) {
     if (!this.initialised) return;
     const time = Date.now() / 1000;
 
-    // --- Clouds (always present, vary opacity by weather) ---
-    const cloudAlpha = this.alpha > 0.1 ? this.alpha : 0;
-    if (cloudAlpha > 0.01) {
-      for (const cloud of this.clouds) {
-        const baseAlpha = cloud.opacity * cloudAlpha * (1 - nightAlpha * 0.5);
-        if (baseAlpha < 0.01) continue;
+    // --- Parallax clouds ---
+    // Background layer clouds are ALWAYS visible (ambient depth).
+    // Mid and near layers become more visible with weather intensity.
+    for (const cloud of this.clouds) {
+      let layerAlpha: number;
+      if (cloud.layer === 0) {
+        // Far layer: always visible, subtle
+        layerAlpha = cloud.opacity * (0.5 + this.alpha * 0.5);
+      } else if (cloud.layer === 1) {
+        // Mid layer: slightly visible in clear, full in cloudy
+        layerAlpha = cloud.opacity * (0.25 + this.alpha * 0.75);
+      } else {
+        // Near layer: only visible when cloudy/rain
+        layerAlpha = cloud.opacity * this.alpha;
+      }
 
-        ctx.fillStyle = `rgba(180, 185, 195, ${baseAlpha})`;
-        // Draw cloud as overlapping ellipses
-        const cx = cloud.x;
-        const cy = cloud.y;
-        const hw = cloud.w / 2;
-        const hh = cloud.h / 2;
+      // Reduce at night
+      layerAlpha *= (1 - nightAlpha * 0.5);
+      if (layerAlpha < 0.01) continue;
 
+      // Cloud color shifts slightly by layer for depth
+      const grey = cloud.layer === 0 ? 200 : cloud.layer === 1 ? 185 : 170;
+      ctx.fillStyle = `rgba(${grey}, ${grey + 5}, ${grey + 10}, ${layerAlpha})`;
+
+      const cx = cloud.x;
+      const cy = cloud.y;
+      const hw = cloud.w / 2;
+      const hh = cloud.h / 2;
+
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, hw, hh, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.ellipse(cx - hw * 0.4, cy + hh * 0.2, hw * 0.6, hh * 0.7, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.ellipse(cx + hw * 0.35, cy + hh * 0.15, hw * 0.55, hh * 0.65, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.ellipse(cx + hw * 0.1, cy - hh * 0.3, hw * 0.5, hh * 0.5, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Cloud shadow on ground (parallax — further layers cast wider, fainter shadows)
+      if (cloud.layer <= 1 && layerAlpha > 0.03) {
+        const shadowOffsetY = (cloud.layer === 0 ? 80 : 40);
+        const shadowScale = cloud.layer === 0 ? 1.2 : 1.0;
+        const shadowAlpha = layerAlpha * (cloud.layer === 0 ? 0.04 : 0.06);
+        ctx.fillStyle = `rgba(0, 0, 0, ${shadowAlpha})`;
         ctx.beginPath();
-        ctx.ellipse(cx, cy, hw, hh, 0, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.beginPath();
-        ctx.ellipse(cx - hw * 0.4, cy + hh * 0.2, hw * 0.6, hh * 0.7, 0, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.beginPath();
-        ctx.ellipse(cx + hw * 0.35, cy + hh * 0.15, hw * 0.55, hh * 0.65, 0, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.beginPath();
-        ctx.ellipse(cx + hw * 0.1, cy - hh * 0.3, hw * 0.5, hh * 0.5, 0, 0, Math.PI * 2);
+        ctx.ellipse(
+          cx + shadowOffsetY * 0.3, cy + shadowOffsetY,
+          hw * shadowScale, hh * shadowScale * 0.5,
+          0, 0, Math.PI * 2
+        );
         ctx.fill();
       }
     }
