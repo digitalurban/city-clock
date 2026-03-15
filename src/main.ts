@@ -558,7 +558,7 @@ function loop() {
     const now = new Date();
     const currentH = now.getHours().toString().padStart(2, '0');
     const currentM = now.getMinutes().toString().padStart(2, '0');
-    if (`${currentH}:${currentM} ` === alarmTime) {
+    if (`${currentH}:${currentM}` === alarmTime) {
       isAlarmActive = true;
       isDancing = true;
       alarmAudio.play().catch(e => console.error("Audio play failed:", e));
@@ -570,10 +570,10 @@ function loop() {
         snoozeBtn.id = 'snooze-btn';
         snoozeBtn.textContent = 'Snooze (9 min)';
         snoozeBtn.style.cssText = `
-  position: fixed; bottom: 80px; left: 50 %; transform: translateX(-50 %); z - index: 200;
-  background: #ffaa00; color: #fff; border: none; border - radius: 20px;
-  padding: 12px 24px; font - size: 18px; font - weight: bold; cursor: pointer;
-  box - shadow: 0 4px 12px rgba(0, 0, 0, 0.5); border: 2px solid #fff;
+  position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%); z-index: 200;
+  background: #ffaa00; color: #fff; border: none; border-radius: 20px;
+  padding: 12px 24px; font-size: 18px; font-weight: bold; cursor: pointer;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5); border: 2px solid #fff;
   `;
         document.body.appendChild(snoozeBtn);
         snoozeBtn.addEventListener('click', () => {
@@ -586,7 +586,7 @@ function loop() {
           const [h, m] = alarmTime!.split(':').map(Number);
           const date = new Date();
           date.setHours(h, m + 9);
-          alarmTime = `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')} `;
+          alarmTime = `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
 
           const status = document.getElementById('alarm-status-label');
           if (status) status.textContent = alarmTime;
