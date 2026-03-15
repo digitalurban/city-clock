@@ -112,6 +112,9 @@ export class Pedestrian {
   // Carrying food/drink from cafes
   hasFood: boolean = false;
 
+  // Crosswalk routing intermediate waypoint
+  intermediateWaypoint: { x: number; y: number } | null = null;
+
   constructor(layout: CityLayout, index: number, clockEligibleCount: number) {
     this.isClockEligible = index < clockEligibleCount;
     this.idOffset = Math.random() * 1000;
@@ -157,6 +160,21 @@ export class Pedestrian {
     this.waypointY = wp.y;
     this.waypointTimer = 0;
     this.walkPhase = Math.random() * Math.PI * 2;
+  }
+
+  private setWaypointWithCrosswalkRouting(layout: CityLayout, wx: number, wy: number) {
+    if (!layout.isInPlaza(this.x, this.y) && !layout.isInPlaza(wx, wy) &&
+        layout.requiresCrossing(this.x, this.y, wx, wy)) {
+      const cw = layout.getNearestCrosswalk(this.x, this.y);
+      this.intermediateWaypoint = { x: wx, y: wy };
+      this.waypointX = cw.x;
+      this.waypointY = cw.y;
+    } else {
+      this.intermediateWaypoint = null;
+      this.waypointX = wx;
+      this.waypointY = wy;
+    }
+    this.waypointTimer = 0;
   }
 
   update(pedestrians: Pedestrian[], layout: CityLayout) {
@@ -397,6 +415,13 @@ export class Pedestrian {
         const wpDist = Math.sqrt(wpDx * wpDx + wpDy * wpDy);
 
         if (wpDist < 15 || this.waypointTimer > 600) {
+          // If we have an intermediate waypoint (crosswalk routing), go to final destination
+          if (this.intermediateWaypoint) {
+            this.waypointX = this.intermediateWaypoint.x;
+            this.waypointY = this.intermediateWaypoint.y;
+            this.intermediateWaypoint = null;
+            this.waypointTimer = 0;
+          } else {
           // Dissolve group followers at waypoint
           if (this.groupFollowers.length > 0) {
             for (const f of this.groupFollowers) f.groupLeader = null;
@@ -549,10 +574,9 @@ export class Pedestrian {
           if (!this.isSitting && !this.isBenchSitting && !this.isQueuing && !this.isWindowShopping && !this.socialMode && !this.isCheckingPhone && !this.isTakingPhoto) {
             if (Math.random() < 0.3) this.hasFood = false; // might finish food
             const wp = layout.getRandomSidewalkWaypoint();
-            this.waypointX = wp.x;
-            this.waypointY = wp.y;
-            this.waypointTimer = 0;
+            this.setWaypointWithCrosswalkRouting(layout, wp.x, wp.y);
           }
+          } // close else for intermediate waypoint check
         }
 
         if (wpDist > 0) {
@@ -628,6 +652,23 @@ export class Pedestrian {
             const rd = Math.sqrt(rdx * rdx + rdy * rdy) || 1;
             ax += (rdx / rd) * this.maxForce * 8;
             ay += (rdy / rd) * this.maxForce * 8;
+            break;
+          }
+        }
+      }
+
+      // 6. Road repulsion — keep pedestrians on sidewalks (skip plaza, crosswalks, clock mode)
+      if (!this.clockTarget && !this.clockDismissTarget &&
+          !layout.isInPlaza(nextX, nextY) && !layout.isOnCrosswalk(nextX, nextY)) {
+        for (const road of layout.roads) {
+          const rm = 4;
+          if (nextX >= road.x - rm && nextX <= road.x + road.w + rm &&
+              nextY >= road.y - rm && nextY <= road.y + road.h + rm) {
+            const rdx = this.x - (road.x + road.w / 2);
+            const rdy = this.y - (road.y + road.h / 2);
+            const rd = Math.sqrt(rdx * rdx + rdy * rdy) || 1;
+            ax += (rdx / rd) * this.maxForce * 10;
+            ay += (rdy / rd) * this.maxForce * 10;
             break;
           }
         }

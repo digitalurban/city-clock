@@ -1056,6 +1056,47 @@ export class CityLayout {
     return x >= p.x && x <= p.x + p.w && y >= p.y && y <= p.y + p.h;
   }
 
+  isOnCrosswalk(x: number, y: number): boolean {
+    for (const wr of this.walkableRects) {
+      if (wr.type === 'crosswalk' &&
+          x >= wr.x && x <= wr.x + wr.w &&
+          y >= wr.y && y <= wr.y + wr.h) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  getNearestCrosswalk(x: number, y: number): { x: number; y: number } {
+    let bestDist = Infinity;
+    let bestX = x, bestY = y;
+    for (const wr of this.walkableRects) {
+      if (wr.type !== 'crosswalk') continue;
+      const cx = wr.x + wr.w / 2;
+      const cy = wr.y + wr.h / 2;
+      const d = (cx - x) * (cx - x) + (cy - y) * (cy - y);
+      if (d < bestDist) {
+        bestDist = d;
+        bestX = cx;
+        bestY = cy;
+      }
+    }
+    return { x: bestX, y: bestY };
+  }
+
+  requiresCrossing(x1: number, y1: number, x2: number, y2: number): boolean {
+    const steps = Math.max(5, Math.floor(Math.hypot(x2 - x1, y2 - y1) / 10));
+    for (let i = 1; i < steps; i++) {
+      const t = i / steps;
+      const sx = x1 + (x2 - x1) * t;
+      const sy = y1 + (y2 - y1) * t;
+      if (this.isOnRoad(sx, sy) && !this.isInPlaza(sx, sy)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   isInBuilding(x: number, y: number, margin = 4): boolean {
     for (const b of this.buildings) {
       if (x >= b.x - margin && x <= b.x + b.w + margin &&
