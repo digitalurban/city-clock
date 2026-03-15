@@ -13,6 +13,7 @@ A procedurally generated top-down city where pedestrians form a digital clock in
 ## Features
 
 - **Live clock** - 112 pedestrians form seven-segment digits showing the current time (HH:MM) for 15 seconds each minute
+- **Alarm System** - Set a custom time via the Options menu to trigger an alarm `mp3`, causing the entire city population to dance in the plaza, complete with a 9-minute snooze button
 - **Double-tap to show time** - Double-tap or double-click anywhere to force the clock formation immediately
 - **Procedural city** - grid of city blocks, roads, crosswalks, trees, parks and coloured buildings generated to fill the world
 - **Central plaza** - ringed by named venues (cafes, bars, bookshops, flower shops) with outdoor seating, benches, and lamp posts
