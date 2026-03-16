@@ -232,25 +232,88 @@ export class Car {
     }
   }
 
-  private findConnectingRoad(layout: CityLayout): RoadSegment | null {
-    const snap = ROAD_WIDTH * 1.5;
+  private findConnectingRoad(layout: CityLayout, perpOnly: boolean = false): RoadSegment | null {
+    const snap = ROAD_WIDTH * 2.0;
     let fallback: RoadSegment | null = null;
 
-    // Look for roads that overlap with current position
     for (const road of layout.roads) {
       if (road === this.road) continue;
 
       if (this.x >= road.x - snap && this.x <= road.x + road.w + snap &&
         this.y >= road.y - snap && this.y <= road.y + road.h + snap) {
 
-        // Prefer perpendicular roads (intersections)
+        // Prefer perpendicular roads (turns at intersections)
         if (road.horizontal !== this.road.horizontal) {
           return road;
         }
-        fallback = road;
+        if (!perpOnly) fallback = road;
       }
     }
     return fallback;
+  }
+
+  /**
+   * Find the next intersection along the car's current direction of travel.
+   * Returns the intersection and estimated distance to it.
+   */
+  private findNextIntersection(layout: CityLayout): { inter: IntersectionDef; dist: number } | null {
+    let best: { inter: IntersectionDef; dist: number } | null = null;
+
+    for (const inter of layout.intersections) {
+      // The intersection must be ahead of us, on our road's axis
+      let ahead = false;
+      let dist = 0;
+      if (this.road.horizontal) {
+        // Check intersection is within our road's Y band
+        if (Math.abs(inter.y - (this.road.y + this.road.h / 2)) > this.road.h) continue;
+        const dx = inter.x - this.x;
+        ahead = (dx * this.dirX) > 0; // same sign = ahead in our direction
+        dist = Math.abs(dx);
+      } else {
+        if (Math.abs(inter.x - (this.road.x + this.road.w / 2)) > this.road.w) continue;
+        const dy = inter.y - this.y;
+        ahead = (dy * this.dirY) > 0;
+        dist = Math.abs(dy);
+      }
+      if (!ahead) continue;
+      if (!best || dist < best.dist) best = { inter, dist };
+    }
+    return best;
+  }
+
+  /**
+   * Find a perpendicular road that connects at the given intersection point.
+   */
+  private findRoadAtIntersection(layout: CityLayout, ix: number, iy: number): RoadSegment | null {
+    const snap = ROAD_WIDTH * 2.0;
+    for (const road of layout.roads) {
+      if (road === this.road) continue;
+      if (road.horizontal === this.road.horizontal) continue; // must be perpendicular
+      if (ix >= road.x - snap && ix <= road.x + road.w + snap &&
+        iy >= road.y - snap && iy <= road.y + road.h + snap) {
+        return road;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Check if the car is approaching the end of its current road.
+   * Returns true if within `lookahead` pixels of the road end in the direction of travel.
+   */
+  private isApproachingRoadEnd(layout: CityLayout): boolean {
+    const r = this.road;
+    // Use a generous lookahead so we pick up the turn in time
+    const lookahead = this.length * 4 + 30;
+
+    if (r.horizontal) {
+      if (this.dirX > 0 && this.x > r.x + r.w - lookahead) return true;
+      if (this.dirX < 0 && this.x < r.x + lookahead) return true;
+    } else {
+      if (this.dirY > 0 && this.y > r.y + r.h - lookahead) return true;
+      if (this.dirY < 0 && this.y < r.y + lookahead) return true;
+    }
+    return false;
   }
 
   /** Transition smoothly to a new road, picking correct lane and optionally starting turn animation */
@@ -715,40 +778,71 @@ export class Car {
     this.vx = this.dirX * this.currentSpeed;
     this.vy = this.dirY * this.currentSpeed;
 
-    let nextX = this.x + this.vx;
-    let nextY = this.y + this.vy;
+    // ---- Proactive junction turning ----
+    // Strategy:
+    //  1. Look ahead along current road for the next intersection.
+    //  2. If within turning distance, switch to the perpendicular road there.
+    //  3. If the road end is reached with no intersection, find any adjacent perp road.
+    if (!this.isTurning) {
+      const TURN_LOOKAHEAD = this.length * 4 + 30;
+      const nextInter = this.findNextIntersection(layout);
 
-    // Prevent building clipping during normal driving
-    const obstacle = this.checkObstacles(layout, nextX, nextY);
-    if (obstacle) {
-      // If we're about to hit a building, stop or slide along it
-      if (this.currentSpeed > 0.1) {
-        // Reflect velocity slightly to "bounce" gently or slide
-        const dot = this.dirX * obstacle.nx + this.dirY * obstacle.ny;
-        if (dot < 0) {
-          // Moving toward building, zero out the component toward it
-          this.vx = (this.dirX - obstacle.nx * dot) * this.currentSpeed;
-          this.vy = (this.dirY - obstacle.ny * dot) * this.currentSpeed;
-          nextX = this.x + this.vx;
-          nextY = this.y + this.vy;
+      if (nextInter && nextInter.dist < TURN_LOOKAHEAD) {
+        const perpRoad = this.findRoadAtIntersection(layout, nextInter.inter.x, nextInter.inter.y);
+        if (perpRoad) {
+          let jx: number, jy: number;
+          if (perpRoad.horizontal) {
+            jx = this.x;
+            jy = perpRoad.y + perpRoad.h / 2;
+          } else {
+            jx = perpRoad.x + perpRoad.w / 2;
+            jy = this.y;
+          }
+          this.transitionToRoad(perpRoad, { x: jx, y: jy }, layout);
+          return;
+        }
+      }
+
+      // Fallback: if we're at the road end, try adjacent perp roads
+      if (this.isApproachingRoadEnd(layout)) {
+        const perpFallback = this.findConnectingRoad(layout, true);
+        if (perpFallback) {
+          let jx: number, jy: number;
+          if (perpFallback.horizontal) {
+            jx = this.x;
+            jy = perpFallback.y + perpFallback.h / 2;
+          } else {
+            jx = perpFallback.x + perpFallback.w / 2;
+            jy = this.y;
+          }
+          this.transitionToRoad(perpFallback, { x: jx, y: jy }, layout);
+          return;
+        }
+        // True dead-end: reverse
+        if (this.stuckTimer > 30) {
+          this.reverseDirection();
+          this.stuckTimer = 0;
+          return;
         }
       }
     }
 
+    if (this.isTurning) return;
+
+    const nextX = this.x + this.vx;
+    const nextY = this.y + this.vy;
+
     this.x = nextX;
     this.y = nextY;
 
+    // Safety net: if somehow off-road after moving, snap to a connecting road
     if (this.isOutsideRoad()) {
       const connecting = this.findConnectingRoad(layout);
       if (connecting) {
         this.transitionToRoad(connecting, undefined, layout);
-      } else {
-        // Only reverse if we are actually stuck (speed low for a while)
-        // to prevent "bouncing" when just nudged slightly off road
-        if (this.currentSpeed < 0.1 && this.stuckTimer > 30) {
-          this.reverseDirection();
-          this.stuckTimer = 0;
-        }
+      } else if (this.currentSpeed < 0.1 && this.stuckTimer > 60) {
+        this.reverseDirection();
+        this.stuckTimer = 0;
       }
     }
   }
