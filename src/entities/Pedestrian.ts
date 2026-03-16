@@ -260,19 +260,27 @@ export class Pedestrian {
 
     } else if (this.clockDismissTarget) {
       // === DISMISS MODE ===
+      // Send each pedestrian to their own individual waypoint (not shared, avoids clustering)
       const dx = this.clockDismissTarget.x - this.x;
       const dy = this.clockDismissTarget.y - this.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
 
-      if (dist < 5) {
-        this.vx *= 0.7;
-        this.vy *= 0.7;
+      if (dist < 20) {
+        // Reached dismiss target — smoothly enter autonomous mode
+        this.clockDismissTarget = null;
+        // Set a fresh individual waypoint spread across the plaza/sidewalks
+        const wp = layout.getRandomSidewalkWaypoint();
+        this.waypointX = wp.x;
+        this.waypointY = wp.y;
+        this.waypointTimer = Math.floor(Math.random() * 200); // stagger restarts
+        this.vx *= 0.5;
+        this.vy *= 0.5;
       } else {
-        ax += (dx / dist) * this.maxForce * 8.0;
-        ay += (dy / dist) * this.maxForce * 8.0;
+        ax += (dx / dist) * this.maxForce * 6.0;
+        ay += (dy / dist) * this.maxForce * 6.0;
       }
-      this.vx *= 0.92;
-      this.vy *= 0.92;
+      this.vx *= 0.90;
+      this.vy *= 0.90;
 
     } else {
       // === AUTONOMOUS MODE ===
@@ -528,7 +536,10 @@ export class Pedestrian {
         const wpDy = this.waypointY - this.y;
         const wpDist = Math.sqrt(wpDx * wpDx + wpDy * wpDy);
 
-        if (wpDist < 15 || this.waypointTimer > 600) {
+        if (wpDist < 18 || this.waypointTimer > 300) {
+          // Detect stuck — if timer expired but we barely moved, force a brand new waypoint
+          // far away to break the oscillation
+          const forceNewWaypoint = this.waypointTimer > 300;
           // If we have an intermediate waypoint (crosswalk routing), go to final destination
           if (this.intermediateWaypoint) {
             this.waypointX = this.intermediateWaypoint.x;
@@ -733,9 +744,10 @@ export class Pedestrian {
             }
 
             // Otherwise pick a new waypoint
+            // If stuck (timer expired without reaching target), skip activities and just move
             if (!this.isSitting && !this.isBenchSitting && !this.isQueuing && !this.isWindowShopping && !this.socialMode && !this.isCheckingPhone && !this.isTakingPhoto && !this.isGoingHome && !this.isAtHome) {
 
-              if (layout.activeEvent && !this.isClockEligible && roll < 0.3) {
+              if (!forceNewWaypoint && layout.activeEvent && !this.isClockEligible && roll < 0.3) {
                 // Route to event
                 const ev = layout.activeEvent;
                 const d = Math.hypot(ev.x - this.x, ev.y - this.y);
@@ -760,6 +772,8 @@ export class Pedestrian {
                 if (Math.random() < 0.3) this.hasFood = false; // might finish food
                 const wp = layout.getRandomSidewalkWaypoint();
                 this.setWaypointWithCrosswalkRouting(layout, wp.x, wp.y);
+                // Stagger timer when forced to prevent all stuck peds refreshing at once
+                if (forceNewWaypoint) this.waypointTimer = Math.floor(Math.random() * 60);
               }
             }
           } // close else for intermediate waypoint check
@@ -799,9 +813,12 @@ export class Pedestrian {
           ay += (sepY / sepCount) * this.maxForce * 3.0;
         }
 
-        // 3. Wander noise
-        ax += Math.cos(time * 0.7 + this.idOffset) * this.maxForce * 0.5;
-        ay += Math.sin(time * 0.9 + this.idOffset * 1.3) * this.maxForce * 0.5;
+        // 3. Organic wander — small random angle drift unique per pedestrian
+        // Use a per-pedestrian random walk rather than fixed sin/cos so pedestrians
+        // don't all sway in sync. Much smaller magnitude to avoid jitter.
+        const wanderStrength = this.maxForce * 0.25;
+        ax += Math.cos(time * 0.4 + this.idOffset * 7.3) * wanderStrength;
+        ay += Math.sin(time * 0.5 + this.idOffset * 5.1) * wanderStrength;
       }
 
       // Dancing logic
