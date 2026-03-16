@@ -117,6 +117,12 @@ window.addEventListener('mouseup', () => {
 });
 
 canvas.style.cursor = 'grab';
+// Prevent all native iOS/Android touch gestures on the canvas
+// so our custom single-finger pan and two-finger pinch take full control.
+canvas.style.touchAction = 'none';
+// Also prevent the document from scrolling under the canvas on iOS Safari
+document.body.style.overflow = 'hidden';
+document.body.style.touchAction = 'none';
 
 // ==================== Double-tap / double-click to force clock ====================
 let lastTapTime = 0;
@@ -438,22 +444,22 @@ function resize() {
 
   canvas.width = width * dpr;
   canvas.height = height * dpr;
-  canvas.style.width = `${width} px`;
-  canvas.style.height = `${height} px`;
+  canvas.style.width = `${width}px`;
+  canvas.style.height = `${height}px`;
 
   layout = new CityLayout(worldW, worldH);
 
-  // Zoom so the plaza fills ~80% of the viewport
-  const plazaCX = layout.plazaBounds.x + layout.plazaBounds.w / 2;
-  const plazaCY = layout.plazaBounds.y + layout.plazaBounds.h / 2;
-  const plazaFillFraction = 0.8;
-  const zoomToFitW = (width * plazaFillFraction) / layout.plazaBounds.w;
-  const zoomToFitH = (height * plazaFillFraction) / layout.plazaBounds.h;
-  const initialZoom = Math.min(zoomToFitW, zoomToFitH);
-  minZoom = initialZoom / 1.5;
-  zoom = Math.max(minZoom, Math.min(MAX_ZOOM, initialZoom));
-  panX = width / 2 - plazaCX * zoom;
-  panY = height / 2 - plazaCY * zoom;
+  // Initial camera: fit the full world into the viewport, centred.
+  // On mobile this gives a zoomed-out city overview; users can pinch in.
+  const zoomFitW = width / worldW;
+  const zoomFitH = height / worldH;
+  // Fit-to-screen (show entire world) is the baseline. minZoom is slightly less.
+  const fitZoom = Math.min(zoomFitW, zoomFitH);
+  minZoom = fitZoom * 0.6;
+  zoom = Math.max(minZoom, Math.min(MAX_ZOOM, fitZoom));
+  // Centre the world in the viewport
+  panX = (width - worldW * zoom) / 2;
+  panY = (height - worldH * zoom) / 2;
   clampPan(width, height);
 
   // Re-spawn entities
