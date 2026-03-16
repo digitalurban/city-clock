@@ -197,13 +197,15 @@ export class Car {
     if (road.horizontal) {
       const direction = Math.random() > 0.5 ? 1 : -1;
       this.x = road.x + Math.random() * road.w;
-      this.y = road.y + (direction > 0 ? road.h * 0.25 : road.h * 0.75);
+      // Right-side traffic: Right (dirX=1) is bottom (0.75), Left (dirX=-1) is top (0.25)
+      this.y = road.y + (direction > 0 ? road.h * 0.75 : road.h * 0.25);
       this.dirX = direction;
       this.dirY = 0;
       this.angle = direction > 0 ? 0 : Math.PI;
     } else {
       const direction = Math.random() > 0.5 ? 1 : -1;
       this.y = road.y + Math.random() * road.h;
+      // Right-side traffic: Down (dirY=1) is left (0.25), Up (dirY=-1) is right (0.75)
       this.x = road.x + (direction > 0 ? road.w * 0.25 : road.w * 0.75);
       this.dirX = 0;
       this.dirY = direction;
@@ -292,12 +294,14 @@ export class Car {
       this.turnEndY = targetY;
 
       // Control point for quadratic bezier (the intersection point)
+      // We pull the control point SLIGHTLY further out to avoid clipping the inner building corner
+      const turnMargin = 4;
       if (this.road.horizontal) {
-        this.turnControlX = targetX;
-        this.turnControlY = this.y;
+        this.turnControlX = targetX + (this.dirX > 0 ? -turnMargin : turnMargin);
+        this.turnControlY = this.y + (newDirY > 0 ? -turnMargin : turnMargin);
       } else {
-        this.turnControlX = this.x;
-        this.turnControlY = targetY;
+        this.turnControlX = this.x + (newDirX > 0 ? -turnMargin : turnMargin);
+        this.turnControlY = targetY + (this.dirY > 0 ? -turnMargin : turnMargin);
       }
 
       this.turnStartAngle = this.angle;
@@ -323,6 +327,36 @@ export class Car {
     this.vy = this.dirY * this.currentSpeed;
   }
 
+  /**
+   * Check for collisions with buildings, houses, and venues.
+   * Returns a nudge vector {x, y} to push the car away from obstacles.
+   */
+  private checkObstacles(layout: CityLayout, nextX: number, nextY: number): { nx: number; ny: number } | null {
+    const m = 8; // Margin
+    const allObstacles = [...layout.buildings, ...layout.venues, ...layout.houses];
+
+    for (const b of allObstacles) {
+      // Don't collide with target venue if we are delivering
+      if (this.targetVenue && b === this.targetVenue &&
+        (this.deliveryState === 'to_venue' || this.deliveryState === 'delivering')) continue;
+
+      if (nextX >= b.x - m && nextX <= b.x + b.w + m &&
+        nextY >= b.y - m && nextY <= b.y + b.h + m) {
+
+        // Find center of building
+        const bCx = b.x + b.w / 2;
+        const bCy = b.y + b.h / 2;
+
+        // Push away from center
+        const dx = nextX - bCx;
+        const dy = nextY - bCy;
+        const dist = Math.hypot(dx, dy) || 1;
+        return { nx: dx / dist, ny: dy / dist };
+      }
+    }
+    return null;
+  }
+
   /** Move directly toward a target point with building collision avoidance. Returns true when arrived. */
   private moveToward(tx: number, ty: number, speed: number, layout?: CityLayout): boolean {
     const dx = tx - this.x;
@@ -338,43 +372,18 @@ export class Car {
     let nextX = this.x + nx * speed;
     let nextY = this.y + ny * speed;
 
-    // Building collision avoidance (skip if no layout provided)
+    // Building collision avoidance
     if (layout) {
-      const m = 6;
-      const allObstacles = [...layout.buildings, ...layout.venues];
-      for (const b of allObstacles) {
-        // Don't collide with target venue (truck delivering to it)
-        if (this.targetVenue && b === this.targetVenue) continue;
-        if (nextX >= b.x - m && nextX <= b.x + b.w + m &&
-          nextY >= b.y - m && nextY <= b.y + b.h + m) {
-          // Steer perpendicular to avoid the building
-          const bCx = b.x + b.w / 2;
-          const bCy = b.y + b.h / 2;
-          const avoidDx = nextX - bCx;
-          const avoidDy = nextY - bCy;
-          const avoidDist = Math.sqrt(avoidDx * avoidDx + avoidDy * avoidDy) || 1;
-          nx = avoidDx / avoidDist;
-          ny = avoidDy / avoidDist;
-          nextX = this.x + nx * speed;
-          nextY = this.y + ny * speed;
-          break;
-        }
-      }
-      // Also avoid houses
-      for (const h of layout.houses) {
-        if (nextX >= h.x - m && nextX <= h.x + h.w + m &&
-          nextY >= h.y - m && nextY <= h.y + h.h + m) {
-          const bCx = h.x + h.w / 2;
-          const bCy = h.y + h.h / 2;
-          const avoidDx = nextX - bCx;
-          const avoidDy = nextY - bCy;
-          const avoidDist = Math.sqrt(avoidDx * avoidDx + avoidDy * avoidDy) || 1;
-          nx = avoidDx / avoidDist;
-          ny = avoidDy / avoidDist;
-          nextX = this.x + nx * speed;
-          nextY = this.y + ny * speed;
-          break;
-        }
+      const obstacle = this.checkObstacles(layout, nextX, nextY);
+      if (obstacle) {
+        // Blend current direction with avoidance direction for smoothness
+        nx = nx * 0.4 + obstacle.nx * 0.6;
+        ny = ny * 0.4 + obstacle.ny * 0.6;
+        const d = Math.hypot(nx, ny);
+        nx /= d;
+        ny /= d;
+        nextX = this.x + nx * speed;
+        nextY = this.y + ny * speed;
       }
     }
 
@@ -666,7 +675,8 @@ export class Car {
       if (along > 0 && along < safetyDist && perp < safetyWidth) {
         const dotDir = this.dirX * other.dirX + this.dirY * other.dirY;
         // Brake for cars in our direction, OR any car that is nearly stopped (likely in a jam)
-        if (dotDir > -0.5 || other.currentSpeed < 0.2) {
+        // OR cars coming head-on if they are too close to our lane
+        if (dotDir > -0.5 || other.currentSpeed < 0.2 || (dotDir < -0.8 && perp < 6)) {
           targetSpeed = Math.min(targetSpeed, this.baseSpeed * (along / safetyDist) * 0.4);
         }
       }
@@ -703,8 +713,29 @@ export class Car {
 
     this.vx = this.dirX * this.currentSpeed;
     this.vy = this.dirY * this.currentSpeed;
-    this.x += this.vx;
-    this.y += this.vy;
+
+    let nextX = this.x + this.vx;
+    let nextY = this.y + this.vy;
+
+    // Prevent building clipping during normal driving
+    const obstacle = this.checkObstacles(layout, nextX, nextY);
+    if (obstacle) {
+      // If we're about to hit a building, stop or slide along it
+      if (this.currentSpeed > 0.1) {
+        // Reflect velocity slightly to "bounce" gently or slide
+        const dot = this.dirX * obstacle.nx + this.dirY * obstacle.ny;
+        if (dot < 0) {
+          // Moving toward building, zero out the component toward it
+          this.vx = (this.dirX - obstacle.nx * dot) * this.currentSpeed;
+          this.vy = (this.dirY - obstacle.ny * dot) * this.currentSpeed;
+          nextX = this.x + this.vx;
+          nextY = this.y + this.vy;
+        }
+      }
+    }
+
+    this.x = nextX;
+    this.y = nextY;
 
     if (this.isOutsideRoad()) {
       const connecting = this.findConnectingRoad(layout);
