@@ -907,17 +907,17 @@ export class Pedestrian {
         if (weatherType === 'hail') {
           // Hail makes everyone run as fast as possible regardless of umbrella
           speedMultiplier *= 2.5;
-        } else if ((weatherType === 'heavy_rain' || weatherType === 'thunderstorm') && !this.hasUmbrella) {
-          // Heavy rain / Thunderstorm - huge sprint if no umbrella
+        } else if ((weatherType === 'heavy_rain' || weatherType === 'thunderstorm') && !this.hasUmbrella && !this.isRidingBicycle) {
+          // Heavy rain / Thunderstorm - huge sprint if no umbrella (pedestrians only)
           speedMultiplier *= 2.0;
-        } else if (weatherType === 'rain' && !this.hasUmbrella) {
-          // Normal rain sprint
+        } else if (weatherType === 'rain' && !this.hasUmbrella && !this.isRidingBicycle) {
+          // Normal rain sprint (pedestrians only)
           speedMultiplier *= 1.5;
-        } else if (weatherType === 'drizzle' && !this.hasUmbrella) {
-          // Light drizzle hurry
+        } else if (weatherType === 'drizzle' && !this.hasUmbrella && !this.isRidingBicycle) {
+          // Light drizzle hurry (pedestrians only)
           speedMultiplier *= 1.2;
-        } else if (weatherType === 'snow' || weatherType === 'heavy_snow') {
-          // Slow down slightly on slippery snow
+        } else if ((weatherType === 'snow' || weatherType === 'heavy_snow') && !this.isRidingBicycle) {
+          // Slow down slightly on slippery snow (pedestrians only)
           speedMultiplier *= 0.85;
         }
       }
@@ -1132,8 +1132,8 @@ export class Pedestrian {
       }
     }
 
-    // Umbrella when raining/snowing
-    if (weatherIntensity > 0.3 && !this.isAtHome && !this.isSitting) {
+    // Umbrella when raining/snowing (pedestrians only, cyclists keep both hands on bars)
+    if (weatherIntensity > 0.3 && !this.isAtHome && !this.isSitting && !this.isRidingBicycle) {
       const wobble = Math.sin(this.walkPhase * 2) * 0.1 * s;
       const ur = s * 1.5;
 
