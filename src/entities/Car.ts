@@ -202,6 +202,8 @@ export class Car {
       this.dirY = direction;
       this.angle = direction > 0 ? Math.PI / 2 : -Math.PI / 2;
     }
+    // angleTarget must match angle on spawn — otherwise the lerp drags cars sideways
+    this.angleTarget = this.angle;
     this.vx = this.dirX * this.baseSpeed;
     this.vy = this.dirY * this.baseSpeed;
   }
