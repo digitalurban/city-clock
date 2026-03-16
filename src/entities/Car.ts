@@ -66,20 +66,8 @@ export class Car {
   plazaWaypoints: { x: number; y: number }[] = [];
   plazaWaypointIdx: number = 0;
 
-  // Smooth turning fields
-  private isTurning: boolean = false;
-  private turnProgress: number = 0;
-  private turnStartX: number = 0;
-  private turnStartY: number = 0;
-  private turnEndX: number = 0;
-  private turnEndY: number = 0;
-  private turnControlX: number = 0;
-  private turnControlY: number = 0;
-  private turnStartAngle: number = 0;
-  private turnEndAngle: number = 0;
-  private turnArcLength: number = 0;
-  private pendingRoad: RoadSegment | null = null;
-  private pendingToward: { x: number; y: number } | null = null;
+  // Smooth angle interpolation (no bezier, just lerp the visual heading)
+  private angleTarget: number = 0;
   private stuckTimer: number = 0;
 
   // Traffic light: stopped at red
@@ -218,10 +206,9 @@ export class Car {
 
   private isOutsideRoad(): boolean {
     const r = this.road;
-    const margin = this.isTurning ? 25 : 5; // Much more lenient during animated turns
-    const roadMargin = this.isTurning ? 30 : 10; // lateral margin to stay on road
+    const margin = 5;
+    const roadMargin = 10;
     if (r.horizontal) {
-      // Check if we've gone past the ends OR drifted too far laterally
       const offEnds = this.x < r.x - margin || this.x > r.x + r.w + margin;
       const lateral = Math.abs(this.y - (r.y + r.h / 2)) > r.h / 2 + roadMargin;
       return offEnds || lateral;
@@ -316,67 +303,33 @@ export class Car {
     return false;
   }
 
-  /** Transition smoothly to a new road, picking correct lane and optionally starting turn animation */
-  private transitionToRoad(road: RoadSegment, target?: { x: number; y: number }, layout?: CityLayout) {
-    if (this.isTurning) return; // already turning
-    this.stuckTimer = 0; // reset stuck timer on transition
-
-    if (target) {
-      // Start quadratic bezier turn animation
-      this.isTurning = true;
-      this.turnProgress = 0;
-      this.turnStartX = this.x;
-      this.turnStartY = this.y;
-      this.turnEndX = target.x;
-      this.turnEndY = target.y;
-
-      // Ensure target is on the correct lane of the new road
-      if (road.horizontal) {
-        const dirX = target.x > this.x ? 1 : -1;
-        this.turnEndX = target.x;
-        this.turnEndY = road.y + (dirX > 0 ? road.h * 0.75 : road.h * 0.25);
-        this.turnEndAngle = dirX > 0 ? 0 : Math.PI;
-      } else {
-        const dirY = target.y > this.y ? 1 : -1;
-        this.turnEndX = road.x + (dirY > 0 ? road.w * 0.25 : road.w * 0.75);
-        this.turnEndY = target.y;
-        this.turnEndAngle = dirY > 0 ? Math.PI / 2 : -Math.PI / 2;
-      }
-
-      // Control point for quadratic bezier (the intersection point)
-      // We pull the control point SLIGHTLY further out to avoid clipping the inner building corner
-      const turnMargin = 4;
-      if (this.road.horizontal) {
-        this.turnControlX = this.turnEndX + (this.dirX > 0 ? -turnMargin : turnMargin);
-        this.turnControlY = this.y + (this.turnEndAngle === Math.PI / 2 ? -turnMargin : turnMargin);
-      } else {
-        this.turnControlX = this.x + (this.turnEndAngle === 0 ? -turnMargin : turnMargin);
-        this.turnControlY = this.turnEndY + (this.dirY > 0 ? -turnMargin : turnMargin);
-      }
-
-      this.turnStartAngle = this.angle;
-      const d1 = Math.hypot(this.turnControlX - this.turnStartX, this.turnControlY - this.turnStartY);
-      const d2 = Math.hypot(this.turnEndX - this.turnControlX, this.turnEndY - this.turnControlY);
-      this.turnArcLength = d1 + d2;
-
-      this.pendingRoad = road;
-      return;
-    }
-
-    // Direct transition (non-turning)
+  /**
+   * Transition to a new road. Snaps the car to the correct lane position
+   * immediately, then lets the visual angle interpolate smoothly.
+   * This avoids all the Bezier flickering problems.
+   */
+  private transitionToRoad(road: RoadSegment) {
+    this.stuckTimer = 0;
     this.road = road;
+
     if (road.horizontal) {
-      const dirX = this.dirX !== 0 ? Math.sign(this.dirX) : (Math.random() > 0.5 ? 1 : -1);
+      // Keep moving in whichever horizontal direction gets us further into this road
+      // (pick direction based on which end of the road we entered from)
+      const dirX = this.dirX !== 0 ? Math.sign(this.dirX) :
+        (this.x < road.x + road.w / 2 ? 1 : -1);
       this.dirX = dirX;
       this.dirY = 0;
+      // Snap to the correct lane (right-hand traffic)
       this.y = road.y + (dirX > 0 ? road.h * 0.75 : road.h * 0.25);
-      this.angle = dirX > 0 ? 0 : Math.PI;
+      this.angleTarget = dirX > 0 ? 0 : Math.PI;
     } else {
-      const dirY = this.dirY !== 0 ? Math.sign(this.dirY) : (Math.random() > 0.5 ? 1 : -1);
+      const dirY = this.dirY !== 0 ? Math.sign(this.dirY) :
+        (this.y < road.y + road.h / 2 ? 1 : -1);
       this.dirX = 0;
       this.dirY = dirY;
+      // Snap to the correct lane
       this.x = road.x + (dirY > 0 ? road.w * 0.25 : road.w * 0.75);
-      this.angle = dirY > 0 ? Math.PI / 2 : -Math.PI / 2;
+      this.angleTarget = dirY > 0 ? Math.PI / 2 : -Math.PI / 2;
     }
     this.vx = this.dirX * this.currentSpeed;
     this.vy = this.dirY * this.currentSpeed;
@@ -613,50 +566,11 @@ export class Car {
   }
 
   update(layout: CityLayout, pedestrians: Pedestrian[], cars: Car[], trafficPhase: number = 0) {
-    // Handle smooth turning animation
-    if (this.isTurning) {
-      this.turnProgress += this.currentSpeed / Math.max(this.turnArcLength, 1);
-      if (this.turnProgress >= 1) {
-        // Finish turn
-        this.isTurning = false;
-        this.x = this.turnEndX;
-        this.y = this.turnEndY;
-        this.angle = this.turnEndAngle;
-        if (this.pendingRoad) {
-          this.road = this.pendingRoad;
-          // Set direction based on turn end angle
-          if (this.pendingRoad.horizontal) {
-            this.dirX = Math.cos(this.turnEndAngle) > 0 ? 1 : -1;
-            this.dirY = 0;
-          } else {
-            this.dirX = 0;
-            this.dirY = Math.sin(this.turnEndAngle) > 0 ? 1 : -1;
-          }
-          this.vx = this.dirX * this.currentSpeed;
-          this.vy = this.dirY * this.currentSpeed;
-          this.pendingRoad = null;
-        }
-      } else {
-        // Quadratic Bézier interpolation
-        const t = this.turnProgress;
-        const invT = 1 - t;
-
-        // P(t) = (1-t)^2*P0 + 2*(1-t)*t*P1 + t^2*P2
-        this.x = invT * invT * this.turnStartX + 2 * invT * t * this.turnControlX + t * t * this.turnEndX;
-        this.y = invT * invT * this.turnStartY + 2 * invT * t * this.turnControlY + t * t * this.turnEndY;
-
-        // Tangent angle for visual orientation
-        // P'(t) = 2*(1-t)*(P1-P0) + 2*t*(P2-P1)
-        const tx = 2 * (1 - t) * (this.turnControlX - this.turnStartX) + 2 * t * (this.turnEndX - this.turnControlX);
-        const ty = 2 * (1 - t) * (this.turnControlY - this.turnStartY) + 2 * t * (this.turnEndY - this.turnControlY);
-        this.angle = Math.atan2(ty, tx);
-      }
-      // Update siren phase for emergency vehicles
-      if (this.carType === 'police' || this.carType === 'ambulance' || this.carType === 'firetruck') {
-        this.sirenPhase += 0.15;
-      }
-      return;
-    }
+    // Smoothly interpolate visual angle toward target (lerp shortest arc)
+    let da = this.angleTarget - this.angle;
+    while (da > Math.PI) da -= Math.PI * 2;
+    while (da < -Math.PI) da += Math.PI * 2;
+    this.angle += da * 0.18; // ~20 frame lerp
 
     // Calculate red light status once per frame
     const isEmergency = this.carType === 'police' || this.carType === 'ambulance' || this.carType === 'firetruck';
@@ -753,7 +667,7 @@ export class Car {
     // Gridlock resolution: if stopped too long (>6 seconds = ~360 frames), try to reverse or nudge
     // ONLY if not stopped at a red light. This prevents cars from turning around at traffic signals.
     if (this.stoppedFrames > 360 && !stoppedAtRedLight) {
-      if (Math.random() < 0.2 && !this.isTurning && this.deliveryState === 'road') {
+      if (Math.random() < 0.2 && this.deliveryState === 'road') {
         this.reverseDirection();
       } else {
         // Nudge: slightly shift position to break local overlap jams
@@ -779,55 +693,31 @@ export class Car {
     this.vy = this.dirY * this.currentSpeed;
 
     // ---- Proactive junction turning ----
-    // Strategy:
-    //  1. Look ahead along current road for the next intersection.
-    //  2. If within turning distance, switch to the perpendicular road there.
-    //  3. If the road end is reached with no intersection, find any adjacent perp road.
-    if (!this.isTurning) {
-      const TURN_LOOKAHEAD = this.length * 4 + 30;
-      const nextInter = this.findNextIntersection(layout);
+    const TURN_LOOKAHEAD = this.length * 4 + 30;
+    const nextInter = this.findNextIntersection(layout);
 
-      if (nextInter && nextInter.dist < TURN_LOOKAHEAD) {
-        const perpRoad = this.findRoadAtIntersection(layout, nextInter.inter.x, nextInter.inter.y);
-        if (perpRoad) {
-          let jx: number, jy: number;
-          if (perpRoad.horizontal) {
-            jx = this.x;
-            jy = perpRoad.y + perpRoad.h / 2;
-          } else {
-            jx = perpRoad.x + perpRoad.w / 2;
-            jy = this.y;
-          }
-          this.transitionToRoad(perpRoad, { x: jx, y: jy }, layout);
-          return;
-        }
-      }
-
-      // Fallback: if we're at the road end, try adjacent perp roads
-      if (this.isApproachingRoadEnd(layout)) {
-        const perpFallback = this.findConnectingRoad(layout, true);
-        if (perpFallback) {
-          let jx: number, jy: number;
-          if (perpFallback.horizontal) {
-            jx = this.x;
-            jy = perpFallback.y + perpFallback.h / 2;
-          } else {
-            jx = perpFallback.x + perpFallback.w / 2;
-            jy = this.y;
-          }
-          this.transitionToRoad(perpFallback, { x: jx, y: jy }, layout);
-          return;
-        }
-        // True dead-end: reverse
-        if (this.stuckTimer > 30) {
-          this.reverseDirection();
-          this.stuckTimer = 0;
-          return;
-        }
+    if (nextInter && nextInter.dist < TURN_LOOKAHEAD) {
+      const perpRoad = this.findRoadAtIntersection(layout, nextInter.inter.x, nextInter.inter.y);
+      if (perpRoad) {
+        this.transitionToRoad(perpRoad);
+        return;
       }
     }
 
-    if (this.isTurning) return;
+    // Fallback: if we're at the road end, try adjacent perp roads
+    if (this.isApproachingRoadEnd(layout)) {
+      const perpFallback = this.findConnectingRoad(layout, true);
+      if (perpFallback) {
+        this.transitionToRoad(perpFallback);
+        return;
+      }
+      // True dead-end: reverse
+      if (this.stuckTimer > 30) {
+        this.reverseDirection();
+        this.stuckTimer = 0;
+        return;
+      }
+    }
 
     const nextX = this.x + this.vx;
     const nextY = this.y + this.vy;
@@ -839,7 +729,7 @@ export class Car {
     if (this.isOutsideRoad()) {
       const connecting = this.findConnectingRoad(layout);
       if (connecting) {
-        this.transitionToRoad(connecting, undefined, layout);
+        this.transitionToRoad(connecting);
       } else if (this.currentSpeed < 0.1 && this.stuckTimer > 60) {
         this.reverseDirection();
         this.stuckTimer = 0;
@@ -993,12 +883,12 @@ export class Car {
             layout, this.targetEntrance.x, this.targetEntrance.y
           );
           if (biased) {
-            this.transitionToRoad(biased, { x: this.targetEntrance.x, y: this.targetEntrance.y }, layout);
+            this.transitionToRoad(biased);
           } else {
             // Fallback: pick any connecting road
             const connecting = this.findConnectingRoad(layout);
             if (connecting) {
-              this.transitionToRoad(connecting, { x: this.targetEntrance.x, y: this.targetEntrance.y }, layout);
+              this.transitionToRoad(connecting);
             } else {
               if (this.currentSpeed < 0.1 && this.stuckTimer > 360) {
                 this.reverseDirection();
@@ -1117,7 +1007,7 @@ export class Car {
         if (arrived) {
           // Snap onto road — bias direction away from plaza
           const roadCenter = { x: this.road.x + this.road.w / 2, y: this.road.y + this.road.h / 2 };
-          this.transitionToRoad(this.road, roadCenter);
+          this.transitionToRoad(this.road);
           this.deliveryState = 'road';
           this.targetVenue = null;
           this.targetEntrance = null;
