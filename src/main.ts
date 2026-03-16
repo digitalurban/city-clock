@@ -47,12 +47,22 @@ alarmAudio.loop = true;
 function clampPan(w: number, h: number) {
   const worldW = w * WORLD_SCALE;
   const worldH = h * WORLD_SCALE;
-  const minPanX = w - worldW * zoom;
-  const maxPanX = 0;
-  const minPanY = h - worldH * zoom;
-  const maxPanY = 0;
-  panX = Math.max(minPanX, Math.min(maxPanX, panX));
-  panY = Math.max(minPanY, Math.min(maxPanY, panY));
+
+  if (worldW * zoom <= w) {
+    panX = (w - worldW * zoom) / 2;
+  } else {
+    const minPanX = w - worldW * zoom;
+    const maxPanX = 0;
+    panX = Math.max(minPanX, Math.min(maxPanX, panX));
+  }
+
+  if (worldH * zoom <= h) {
+    panY = (h - worldH * zoom) / 2;
+  } else {
+    const minPanY = h - worldH * zoom;
+    const maxPanY = 0;
+    panY = Math.max(minPanY, Math.min(maxPanY, panY));
+  }
 }
 
 function applyZoom(factor: number, pivotX: number, pivotY: number, w: number, h: number) {
@@ -135,7 +145,7 @@ canvas.addEventListener('touchstart', (e) => {
 }, { passive: true });
 
 // ==================== Touch pinch zoom + drag to pan ====================
-const activeTouches: Map<number, { x: number; y: number }> = new Map();
+const activeTouches: Map<number, { x: number; y: number; clientX: number; clientY: number }> = new Map();
 let lastPinchDist = -1;
 let touchDragId: number | null = null;
 let touchDragStartX = 0;
@@ -146,7 +156,12 @@ let touchDragStartPanY = 0;
 canvas.addEventListener('touchstart', (e) => {
   const rect = canvas.getBoundingClientRect();
   for (const t of e.changedTouches) {
-    activeTouches.set(t.identifier, { x: t.clientX - rect.left, y: t.clientY - rect.top });
+    activeTouches.set(t.identifier, {
+      x: t.clientX - rect.left,
+      y: t.clientY - rect.top,
+      clientX: t.clientX,
+      clientY: t.clientY
+    });
   }
   if (activeTouches.size === 1) {
     const t = e.changedTouches[0];
@@ -162,7 +177,12 @@ canvas.addEventListener('touchmove', (e) => {
   e.preventDefault();
   const rect = canvas.getBoundingClientRect();
   for (const t of e.changedTouches) {
-    activeTouches.set(t.identifier, { x: t.clientX - rect.left, y: t.clientY - rect.top });
+    activeTouches.set(t.identifier, {
+      x: t.clientX - rect.left,
+      y: t.clientY - rect.top,
+      clientX: t.clientX,
+      clientY: t.clientY
+    });
   }
 
   if (activeTouches.size === 1 && touchDragId !== null) {
@@ -198,8 +218,8 @@ canvas.addEventListener('touchend', (e) => {
   if (activeTouches.size === 1) {
     const [id, pos] = [...activeTouches.entries()][0];
     touchDragId = id;
-    touchDragStartX = pos.x;
-    touchDragStartY = pos.y;
+    touchDragStartX = pos.clientX;
+    touchDragStartY = pos.clientY;
     touchDragStartPanX = panX;
     touchDragStartPanY = panY;
   }
