@@ -379,36 +379,38 @@ export class Car {
       this.y = ty;
       return true;
     }
-    let nx = dx / dist;
-    let ny = dy / dist;
-    let nextX = this.x + nx * speed;
-    let nextY = this.y + ny * speed;
+    const nx = dx / dist;
+    const ny = dy / dist;
 
-    // Building collision avoidance
+    let moveX = nx * speed;
+    let moveY = ny * speed;
+
+    // Building collision: if next position hits an obstacle, cancel the component
+    // moving into it. This prevents sliding sideways into walls.
     if (layout) {
+      const nextX = this.x + moveX;
+      const nextY = this.y + moveY;
       const obstacle = this.checkObstacles(layout, nextX, nextY);
       if (obstacle) {
-        // Blend current direction with avoidance direction for smoothness
-        nx = nx * 0.4 + obstacle.nx * 0.6;
-        ny = ny * 0.4 + obstacle.ny * 0.6;
-        const d = Math.hypot(nx, ny);
-        nx /= d;
-        ny /= d;
-        nextX = this.x + nx * speed;
-        nextY = this.y + ny * speed;
+        // Project motion away from obstacle surface (remove "into" component)
+        const dot = moveX * obstacle.nx + moveY * obstacle.ny;
+        if (dot < 0) {
+          moveX -= dot * obstacle.nx;
+          moveY -= dot * obstacle.ny;
+        }
       }
     }
 
-    this.x = nextX;
-    this.y = nextY;
-    this.vx = nx * speed;
-    this.vy = ny * speed;
-    // Smoothly rotate toward target
-    const targetAngle = Math.atan2(ny, nx);
+    this.x += moveX;
+    this.y += moveY;
+    this.vx = moveX;
+    this.vy = moveY;
+    // Smoothly rotate toward actual movement direction
+    const targetAngle = Math.atan2(moveY, moveX);
     let angleDiff = targetAngle - this.angle;
     while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
     while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
-    this.angle += angleDiff * 0.15;
+    this.angle += angleDiff * 0.2;
     return false;
   }
 

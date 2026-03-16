@@ -1,5 +1,6 @@
 import { PEDESTRIAN_BASE_SPEED, PEDESTRIAN_MAX_FORCE, SEPARATION_RADIUS, PEDESTRIAN_COLORS } from '../utils/constants';
 import type { CityLayout, VenueDef, PlazaBenchDef } from '../city/CityLayout';
+import type { Car } from './Car';
 
 // Skin tone palette — varied across the full human range
 const SKIN_TONES = [
@@ -229,7 +230,8 @@ export class Pedestrian {
     weatherIntensity: number = 0,
     weatherType: string = 'clear',
     width: number,
-    height: number
+    height: number,
+    cars: Car[] = []
   ) {
     this.currentWeatherType = weatherType;
     let ax = 0;
@@ -874,7 +876,20 @@ export class Pedestrian {
         }
       }
 
-      // 6. Road repulsion — keep pedestrians on sidewalks (skip plaza, crosswalks, clock mode)
+      // 6. Vehicle repulsion — pedestrians flee from any car/truck in the plaza
+      for (const car of cars) {
+        const cdx = this.x - car.x;
+        const cdy = this.y - car.y;
+        const cdist = Math.hypot(cdx, cdy);
+        const FLEE_RADIUS = 45;
+        if (cdist < FLEE_RADIUS && cdist > 0) {
+          const strength = ((FLEE_RADIUS - cdist) / FLEE_RADIUS) * this.maxForce * 20;
+          ax += (cdx / cdist) * strength;
+          ay += (cdy / cdist) * strength;
+        }
+      }
+
+      // 7. Road repulsion — keep pedestrians on sidewalks (skip plaza, crosswalks, clock mode)
       if (!this.clockTarget && !this.clockDismissTarget &&
         !layout.isInPlaza(nextX, nextY) && !layout.isOnCrosswalk(nextX, nextY)) {
         for (const road of layout.roads) {

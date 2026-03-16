@@ -659,9 +659,9 @@ function loop() {
       weather.intensity,
       weather.type,
       w,
-      h
+      h,
+      cars
     );
-    // @ts-ignore - we'll update the signature in Pedestrian.ts next
     p.draw(ctx, nightAlpha, weather.intensity, isDancing);
   }
 
