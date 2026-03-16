@@ -449,17 +449,20 @@ function resize() {
 
   layout = new CityLayout(worldW, worldH);
 
-  // Initial camera: fit the full world into the viewport, centred.
-  // On mobile this gives a zoomed-out city overview; users can pinch in.
+  // Initial camera: fit the world to the viewport, centred on the plaza.
+  // minZoom = the zoom where the world exactly fills the viewport in its
+  // narrower dimension — this hard-stops black space appearing.
   const zoomFitW = width / worldW;
   const zoomFitH = height / worldH;
-  // Fit-to-screen (show entire world) is the baseline. minZoom is slightly less.
   const fitZoom = Math.min(zoomFitW, zoomFitH);
-  minZoom = fitZoom * 0.6;
+  minZoom = fitZoom;                                      // <-- no more black space
   zoom = Math.max(minZoom, Math.min(MAX_ZOOM, fitZoom));
-  // Centre the world in the viewport
-  panX = (width - worldW * zoom) / 2;
-  panY = (height - worldH * zoom) / 2;
+
+  // Centre view on the plaza at load time
+  const plazaCX = layout.plazaBounds.x + layout.plazaBounds.w / 2;
+  const plazaCY = layout.plazaBounds.y + layout.plazaBounds.h / 2;
+  panX = width / 2 - plazaCX * zoom;
+  panY = height / 2 - plazaCY * zoom;
   clampPan(width, height);
 
   // Re-spawn entities
