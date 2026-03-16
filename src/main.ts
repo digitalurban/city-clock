@@ -449,18 +449,26 @@ function resize() {
 
   layout = new CityLayout(worldW, worldH);
 
-  // Initial camera: fit the world to the viewport, centred on the plaza.
-  // minZoom = the zoom where the world exactly fills the viewport in its
-  // narrower dimension — this hard-stops black space appearing.
+  // minZoom = zoom at which the full world fills the viewport (no black space ever)
   const zoomFitW = width / worldW;
   const zoomFitH = height / worldH;
   const fitZoom = Math.min(zoomFitW, zoomFitH);
-  minZoom = fitZoom;                                      // <-- no more black space
-  zoom = Math.max(minZoom, Math.min(MAX_ZOOM, fitZoom));
+  minZoom = fitZoom;
 
-  // Centre view on the plaza at load time
-  const plazaCX = layout.plazaBounds.x + layout.plazaBounds.w / 2;
-  const plazaCY = layout.plazaBounds.y + layout.plazaBounds.h / 2;
+  // Initial zoom: show the plaza with ~2 city blocks of context on each side.
+  // We target a viewport window of 2.2 × plaza dimensions so the clock is
+  // clearly readable but enough street is visible to orient the user.
+  const plazaW = layout.plazaBounds.w;
+  const plazaH = layout.plazaBounds.h;
+  const CONTEXT = 2.2; // viewport = CONTEXT × plaza size
+  const initialZoomW = width / (plazaW * CONTEXT);
+  const initialZoomH = height / (plazaH * CONTEXT);
+  const initialZoom = Math.min(initialZoomW, initialZoomH);
+  zoom = Math.max(minZoom, Math.min(MAX_ZOOM, initialZoom));
+
+  // Centre view on the plaza
+  const plazaCX = layout.plazaBounds.x + plazaW / 2;
+  const plazaCY = layout.plazaBounds.y + plazaH / 2;
   panX = width / 2 - plazaCX * zoom;
   panY = height / 2 - plazaCY * zoom;
   clampPan(width, height);
