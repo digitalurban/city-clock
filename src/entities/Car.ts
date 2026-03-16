@@ -69,6 +69,8 @@ export class Car {
   // Smooth angle interpolation (no bezier, just lerp the visual heading)
   private angleTarget: number = 0;
   private stuckTimer: number = 0;
+  // Cooldown after a road transition to prevent re-triggering for several frames
+  private transitionCooldown: number = 0;
 
   // Traffic light: stopped at red
   stoppedAtLight: boolean = false;
@@ -692,30 +694,38 @@ export class Car {
     this.vx = this.dirX * this.currentSpeed;
     this.vy = this.dirY * this.currentSpeed;
 
-    // ---- Proactive junction turning ----
-    const TURN_LOOKAHEAD = this.length * 4 + 30;
-    const nextInter = this.findNextIntersection(layout);
+    // ---- Junction turning ----
+    // Tick down cooldown from last transition
+    if (this.transitionCooldown > 0) {
+      this.transitionCooldown--;
+    } else {
+      // Trigger turn ONLY when car front is within ROAD_WIDTH/2 of an intersection.
+      // This is a tight radius (~10px) so it fires exactly once as the car passes through.
+      const TRIGGER_RADIUS = ROAD_WIDTH * 0.6;
+      const nextInter = this.findNextIntersection(layout);
 
-    if (nextInter && nextInter.dist < TURN_LOOKAHEAD) {
-      const perpRoad = this.findRoadAtIntersection(layout, nextInter.inter.x, nextInter.inter.y);
-      if (perpRoad) {
-        this.transitionToRoad(perpRoad);
-        return;
+      if (nextInter && nextInter.dist < TRIGGER_RADIUS) {
+        const perpRoad = this.findRoadAtIntersection(layout, nextInter.inter.x, nextInter.inter.y);
+        if (perpRoad) {
+          this.transitionToRoad(perpRoad);
+          this.transitionCooldown = 90; // freeze for ~1.5s
+          return;
+        }
       }
-    }
 
-    // Fallback: if we're at the road end, try adjacent perp roads
-    if (this.isApproachingRoadEnd(layout)) {
-      const perpFallback = this.findConnectingRoad(layout, true);
-      if (perpFallback) {
-        this.transitionToRoad(perpFallback);
-        return;
-      }
-      // True dead-end: reverse
-      if (this.stuckTimer > 30) {
-        this.reverseDirection();
-        this.stuckTimer = 0;
-        return;
+      // Road-end fallback: if somehow past the road end, find any perp road
+      if (this.isApproachingRoadEnd(layout) && nextInter === null) {
+        const perpFallback = this.findConnectingRoad(layout, true);
+        if (perpFallback) {
+          this.transitionToRoad(perpFallback);
+          this.transitionCooldown = 90;
+          return;
+        }
+        if (this.stuckTimer > 30) {
+          this.reverseDirection();
+          this.stuckTimer = 0;
+          return;
+        }
       }
     }
 
@@ -730,6 +740,7 @@ export class Car {
       const connecting = this.findConnectingRoad(layout);
       if (connecting) {
         this.transitionToRoad(connecting);
+        this.transitionCooldown = 60;
       } else if (this.currentSpeed < 0.1 && this.stuckTimer > 60) {
         this.reverseDirection();
         this.stuckTimer = 0;
