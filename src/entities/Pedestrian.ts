@@ -139,6 +139,9 @@ export class Pedestrian {
   // Bicycle
   hasBicycle: boolean = false;
   isRidingBicycle: boolean = false;
+
+  // Track current weather for drawing (e.g. umbrellas)
+  currentWeatherType: string = 'clear';
   bicycleSpeed: number = 0;
 
   constructor(layout: CityLayout, index: number, clockEligibleCount: number) {
@@ -228,9 +231,10 @@ export class Pedestrian {
     width: number,
     height: number
   ) {
+    this.currentWeatherType = weatherType;
     let ax = 0;
     let ay = 0;
-    const time = Date.now() / 1000;
+    const time = Date.now() * 0.001;
 
     if (this.clockTarget) {
       // === CLOCK MODE ===
@@ -1133,7 +1137,8 @@ export class Pedestrian {
     }
 
     // Umbrella when raining/snowing (pedestrians only, cyclists keep both hands on bars)
-    if (weatherIntensity > 0.3 && !this.isAtHome && !this.isSitting && !this.isRidingBicycle) {
+    const isPrecipitation = ['rain', 'heavy_rain', 'drizzle', 'snow', 'heavy_snow', 'thunderstorm', 'hail'].includes(this.currentWeatherType);
+    if (weatherIntensity > 0.3 && isPrecipitation && !this.isAtHome && !this.isSitting && !this.isRidingBicycle) {
       const wobble = Math.sin(this.walkPhase * 2) * 0.1 * s;
       const ur = s * 1.5;
 

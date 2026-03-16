@@ -218,8 +218,8 @@ export class Car {
 
   private isOutsideRoad(): boolean {
     const r = this.road;
-    const margin = 5;
-    const roadMargin = 10; // lateral margin to stay on road
+    const margin = this.isTurning ? 25 : 5; // Much more lenient during animated turns
+    const roadMargin = this.isTurning ? 30 : 10; // lateral margin to stay on road
     if (r.horizontal) {
       // Check if we've gone past the ends OR drifted too far laterally
       const offEnds = this.x < r.x - margin || this.x > r.x + r.w + margin;
@@ -595,10 +595,33 @@ export class Car {
       return;
     }
 
+    // Calculate red light status once per frame
+    const isEmergency = this.carType === 'police' || this.carType === 'ambulance' || this.carType === 'firetruck';
+    let stoppedAtRedLight = false;
+    if (!isEmergency) {
+      const signal = this.getTrafficSignal(layout, trafficPhase);
+      if (signal === 'red') {
+        const inIntersection = this.isInsideIntersection(layout);
+        if (!inIntersection) {
+          stoppedAtRedLight = true;
+        }
+      } else if (signal === 'yellow') {
+        for (const inter of layout.intersections) {
+          const dist = Math.hypot(inter.x - this.x, inter.y - this.y);
+          if (dist < 50) {
+            const dotAlong = (inter.x - this.x) * this.dirX + (inter.y - this.y) * this.dirY;
+            if (dotAlong > 20) {
+              stoppedAtRedLight = true;
+            }
+          }
+        }
+      }
+    }
+
     if (this.carType === 'delivery') {
-      this.updateDelivery(layout, pedestrians, cars, trafficPhase);
+      this.updateDelivery(layout, pedestrians, cars, trafficPhase, stoppedAtRedLight);
     } else {
-      this.updateNormal(layout, pedestrians, cars, trafficPhase);
+      this.updateNormal(layout, pedestrians, cars, trafficPhase, stoppedAtRedLight);
     }
 
     // Update siren phase for emergency vehicles
@@ -610,36 +633,14 @@ export class Car {
   // Track how long car has been stopped (for gridlock resolution)
   private stoppedFrames: number = 0;
 
-  private updateNormal(layout: CityLayout, pedestrians: Pedestrian[], cars: Car[], trafficPhase: number) {
+  private updateNormal(layout: CityLayout, pedestrians: Pedestrian[], cars: Car[], trafficPhase: number, stoppedAtRedLight: boolean) {
     let targetSpeed = this.baseSpeed;
     const frontX = this.x + this.dirX * this.length * 0.5;
     const frontY = this.y + this.dirY * this.length * 0.5;
 
     // Traffic light check (emergency vehicles ignore)
-    const isEmergency = this.carType === 'police' || this.carType === 'ambulance' || this.carType === 'firetruck';
-    let stoppedAtRedLight = false;
-    if (!isEmergency) {
-      const signal = this.getTrafficSignal(layout, trafficPhase);
-      if (signal === 'red') {
-        // Only stop if we're NOT already inside the intersection
-        const inIntersection = this.isInsideIntersection(layout);
-        if (!inIntersection) {
-          targetSpeed = 0;
-          stoppedAtRedLight = true;
-        }
-        // If already inside intersection, keep going to clear it
-      } else if (signal === 'yellow') {
-        for (const inter of layout.intersections) {
-          const dist = Math.hypot(inter.x - this.x, inter.y - this.y);
-          if (dist > 50) continue;
-          const dotAlong = (inter.x - this.x) * this.dirX + (inter.y - this.y) * this.dirY;
-          if (dotAlong > 20) {
-            targetSpeed = 0;
-            stoppedAtRedLight = true;
-          }
-          break;
-        }
-      }
+    if (stoppedAtRedLight) {
+      targetSpeed = 0;
     }
 
     // Pedestrian avoidance
@@ -686,14 +687,19 @@ export class Car {
 
     this.currentSpeed += (targetSpeed - this.currentSpeed) * 0.12;
 
-    // Gridlock resolution: if stopped too long (>4 seconds = ~240 frames), try to reverse or nudge
-    if (this.stoppedFrames > 240 && !stoppedAtRedLight) {
-      if (Math.random() < 0.3 && !this.isTurning) {
+    // Gridlock resolution: if stopped too long (>6 seconds = ~360 frames), try to reverse or nudge
+    // ONLY if not stopped at a red light. This prevents cars from turning around at traffic signals.
+    if (this.stoppedFrames > 360 && !stoppedAtRedLight) {
+      if (Math.random() < 0.2 && !this.isTurning && this.deliveryState === 'road') {
         this.reverseDirection();
       } else {
         // Nudge: slightly shift position to break local overlap jams
-        this.x += (Math.random() - 0.5) * 4;
-        this.y += (Math.random() - 0.5) * 4;
+        // Prefer lateral nudges to slip past obstacles
+        if (this.road.horizontal) {
+          this.y += (Math.random() - 0.5) * 6;
+        } else {
+          this.x += (Math.random() - 0.5) * 6;
+        }
       }
       this.stoppedFrames = 0;
       return;
@@ -762,13 +768,13 @@ export class Car {
    * Delivery truck state machine: drives on roads toward the plaza,
    * then enters through an entrance to deliver packages to venue fronts.
    */
-  private updateDelivery(layout: CityLayout, pedestrians: Pedestrian[], cars: Car[], trafficPhase: number = 0) {
+  private updateDelivery(layout: CityLayout, pedestrians: Pedestrian[], cars: Car[], trafficPhase: number, stoppedAtRedLight: boolean) {
     const plazaSpeed = this.baseSpeed * 0.6; // slow inside plaza
 
     switch (this.deliveryState) {
       case 'road': {
         // Normal road driving, count down to next delivery
-        this.updateNormal(layout, pedestrians, cars, trafficPhase);
+        this.updateNormal(layout, pedestrians, cars, trafficPhase, stoppedAtRedLight);
         this.deliveryTimer--;
         if (this.deliveryTimer <= 0 && layout.venues.length > 0) {
           // Pick a random venue that no other truck is targeting
@@ -859,7 +865,10 @@ export class Car {
         this.currentSpeed += (targetSpeed - this.currentSpeed) * 0.1;
         if (this.currentSpeed < 0.02) {
           this.currentSpeed = 0;
-          this.stuckTimer++;
+          // Only increment stuck timer if NOT at a red light
+          if (!stoppedAtRedLight) {
+            this.stuckTimer++;
+          }
         } else {
           this.stuckTimer = 0;
         }
@@ -897,7 +906,7 @@ export class Car {
             if (connecting) {
               this.transitionToRoad(connecting, { x: this.targetEntrance.x, y: this.targetEntrance.y }, layout);
             } else {
-              if (this.currentSpeed < 0.1 && this.stuckTimer > 30) {
+              if (this.currentSpeed < 0.1 && this.stuckTimer > 360) {
                 this.reverseDirection();
                 this.stuckTimer = 0;
               }
