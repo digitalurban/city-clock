@@ -23,9 +23,6 @@ let trafficPhase = 0;
 let staticCanvas: HTMLCanvasElement | null = null;
 let lastStaticNightAlpha = -1;
 
-// The city world is WORLD_SCALE times the viewport in each dimension.
-const WORLD_SCALE = 2.0;
-
 // Zoom / pan state
 let zoom = 1.0;
 let panX = 0;
@@ -45,8 +42,8 @@ const alarmAudio = new Audio('./alarm.mp3'); // Using the alarm.mp3 from the pub
 alarmAudio.loop = true;
 
 function clampPan(w: number, h: number) {
-  const worldW = w * WORLD_SCALE;
-  const worldH = h * WORLD_SCALE;
+  const worldW = layout.width;
+  const worldH = layout.height;
 
   if (worldW * zoom <= w) {
     panX = (w - worldW * zoom) / 2;
@@ -439,31 +436,33 @@ function resize() {
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const width = window.innerWidth;
   const height = window.innerHeight;
-  const worldW = width * WORLD_SCALE;
-  const worldH = height * WORLD_SCALE;
 
   canvas.width = width * dpr;
   canvas.height = height * dpr;
   canvas.style.width = `${width}px`;
   canvas.style.height = `${height}px`;
 
-  layout = new CityLayout(worldW, worldH);
+  // Create the fixed-grid layout. The constructor now defines its own constant dimensions (24x18).
+  layout = new CityLayout(width, height);
+  const worldW = layout.width;
+  const worldH = layout.height;
 
-  // minZoom = zoom at which the full world fills the viewport (no black space ever)
+  // minZoom = zoom at which the world FULLY covers the viewport (no black space)
+  // We use Math.max to ensure the smaller world dimension still fills the screen.
   const zoomFitW = width / worldW;
   const zoomFitH = height / worldH;
-  const fitZoom = Math.min(zoomFitW, zoomFitH);
-  minZoom = fitZoom;
+  minZoom = Math.max(zoomFitW, zoomFitH);
 
-  // Initial zoom: show the plaza with ~2 city blocks of context on each side.
-  // We target a viewport window of 2.2 × plaza dimensions so the clock is
-  // clearly readable but enough street is visible to orient the user.
+  // Initial zoom: show the plaza with neighborhood context.
+  // We target a viewport window of ~1.8 × plaza dimensions for a closer look.
   const plazaW = layout.plazaBounds.w;
   const plazaH = layout.plazaBounds.h;
-  const CONTEXT = 2.2; // viewport = CONTEXT × plaza size
+  const CONTEXT = 1.8;
   const initialZoomW = width / (plazaW * CONTEXT);
   const initialZoomH = height / (plazaH * CONTEXT);
   const initialZoom = Math.min(initialZoomW, initialZoomH);
+
+  // Start at the initial zoom, but never less than minZoom
   zoom = Math.max(minZoom, Math.min(MAX_ZOOM, initialZoom));
 
   // Centre view on the plaza
@@ -508,10 +507,8 @@ function resize() {
 
 function buildStaticCanvas(nightAlpha: number) {
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const w = window.innerWidth;
-  const h = window.innerHeight;
-  const worldW = w * WORLD_SCALE;
-  const worldH = h * WORLD_SCALE;
+  const worldW = layout.width;
+  const worldH = layout.height;
 
   if (!staticCanvas) {
     staticCanvas = document.createElement('canvas');
@@ -572,10 +569,8 @@ function loop() {
   ctx.setTransform(dpr * zoom, 0, 0, dpr * zoom, panX * dpr, panY * dpr);
 
   // Draw cached static city
-  const worldW = w * WORLD_SCALE;
-  const worldH = h * WORLD_SCALE;
   if (staticCanvas) {
-    ctx.drawImage(staticCanvas, 0, 0, worldW, worldH);
+    ctx.drawImage(staticCanvas, 0, 0, layout.width, layout.height);
   }
 
   // Update clock targets

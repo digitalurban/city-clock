@@ -154,15 +154,19 @@ export class CityLayout {
   blockTypes: Map<string, BlockType> = new Map();
 
   constructor(width: number, height: number) {
-    this.width = width;
-    this.height = height;
+    // We now use a constant grid size for stability across all devices.
+    // The plaza will always be at the geometric center of this fixed city.
+    this.gridCols = 24;
+    this.gridRows = 18;
 
     const cellSize = BLOCK_SIZE + ROAD_WIDTH;
-    this.gridCols = Math.ceil(width / cellSize) + 1;
-    this.gridRows = Math.ceil(height / cellSize) + 1;
+    this.width = this.gridCols * cellSize;
+    this.height = this.gridRows * cellSize;
 
-    const offsetX = (width - (this.gridCols - 1) * cellSize) / 2;
-    const offsetY = (height - (this.gridRows - 1) * cellSize) / 2;
+    // Centered offsets: since we have a fixed grid, these are effectively the top-left of the coordinate system.
+    // We'll keep them as 0 for simplicity, or keep the variable names to minimize changes to existing logic.
+    const offsetX = 0;
+    const offsetY = 0;
 
     // Find center block for the plaza (4 wide × 3 tall — rectangular)
     const centerCol = Math.floor(this.gridCols / 2);
@@ -170,13 +174,13 @@ export class CityLayout {
 
     const validPlazaCols: number[] = [];
     const validPlazaRows: number[] = [];
+    // 4 cells wide: offset by -2, -1, 0, 1 from center
     for (let dc = -2; dc <= 1; dc++) {
-      const c = centerCol + dc;
-      if (c >= 0 && c < this.gridCols) validPlazaCols.push(c);
+      validPlazaCols.push(centerCol + dc);
     }
+    // 3 cells tall: offset by -1, 0, 1 from center
     for (let dr = -1; dr <= 1; dr++) {
-      const r = centerRow + dr;
-      if (r >= 0 && r < this.gridRows) validPlazaRows.push(r);
+      validPlazaRows.push(centerRow + dr);
     }
 
     for (const c of validPlazaCols) {
