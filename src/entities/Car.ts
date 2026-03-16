@@ -80,6 +80,7 @@ export class Car {
   private turnArcLength: number = 0;
   private pendingRoad: RoadSegment | null = null;
   private pendingToward: { x: number; y: number } | null = null;
+  private stuckTimer: number = 0;
 
   // Traffic light: stopped at red
   stoppedAtLight: boolean = false;
@@ -217,10 +218,17 @@ export class Car {
 
   private isOutsideRoad(): boolean {
     const r = this.road;
+    const margin = 5;
+    const roadMargin = 10; // lateral margin to stay on road
     if (r.horizontal) {
-      return this.x < r.x - 5 || this.x > r.x + r.w + 5;
+      // Check if we've gone past the ends OR drifted too far laterally
+      const offEnds = this.x < r.x - margin || this.x > r.x + r.w + margin;
+      const lateral = Math.abs(this.y - (r.y + r.h / 2)) > r.h / 2 + roadMargin;
+      return offEnds || lateral;
     } else {
-      return this.y < r.y - 5 || this.y > r.y + r.h + 5;
+      const offEnds = this.y < r.y - margin || this.y > r.y + r.h + margin;
+      const lateral = Math.abs(this.x - (r.x + r.w / 2)) > r.w / 2 + roadMargin;
+      return offEnds || lateral;
     }
   }
 
@@ -245,69 +253,45 @@ export class Car {
     return fallback;
   }
 
-  private transitionToRoad(road: RoadSegment, toward?: { x: number; y: number }) {
-    const wasSameOrientation = (this.road.horizontal === road.horizontal);
+  /** Transition smoothly to a new road, picking correct lane and optionally starting turn animation */
+  private transitionToRoad(road: RoadSegment, target?: { x: number; y: number }, layout?: CityLayout) {
+    if (this.isTurning) return; // already turning
+    this.stuckTimer = 0; // reset stuck timer on transition
 
-    // Compute target position and direction on the new road
-    let newDirX = 0, newDirY = 0, newAngle = 0;
-    let targetX = this.x, targetY = this.y;
-
-    if (road.horizontal) {
-      let dir: number;
-      if (this.dirX !== 0) {
-        dir = Math.sign(this.dirX);
-      } else if (toward) {
-        dir = toward.x > this.x ? 1 : -1;
-      } else {
-        dir = Math.random() > 0.5 ? 1 : -1;
-      }
-      newDirX = dir;
-      newDirY = 0;
-      targetX = Math.max(road.x + 5, Math.min(road.x + road.w - 5, this.x));
-      // Lane position: cars drive on the right side
-      targetY = road.y + (dir > 0 ? road.h * 0.75 : road.h * 0.25);
-      newAngle = dir > 0 ? 0 : Math.PI;
-    } else {
-      let dir: number;
-      if (this.dirY !== 0) {
-        dir = Math.sign(this.dirY);
-      } else if (toward) {
-        dir = toward.y > this.y ? 1 : -1;
-      } else {
-        dir = Math.random() > 0.5 ? 1 : -1;
-      }
-      newDirX = 0;
-      newDirY = dir;
-      targetY = Math.max(road.y + 5, Math.min(road.y + road.h - 5, this.y));
-      // Lane position: cars drive on the right side
-      targetX = road.x + (dir > 0 ? road.w * 0.25 : road.w * 0.75);
-      newAngle = dir > 0 ? Math.PI / 2 : -Math.PI / 2;
-    }
-
-    // Perpendicular transition — animate a smooth turn
-    if (!wasSameOrientation && this.currentSpeed > 0.05) {
+    if (target) {
+      // Start quadratic bezier turn animation
       this.isTurning = true;
       this.turnProgress = 0;
       this.turnStartX = this.x;
       this.turnStartY = this.y;
-      this.turnEndX = targetX;
-      this.turnEndY = targetY;
+      this.turnEndX = target.x;
+      this.turnEndY = target.y;
+
+      // Ensure target is on the correct lane of the new road
+      if (road.horizontal) {
+        const dirX = target.x > this.x ? 1 : -1;
+        this.turnEndX = target.x;
+        this.turnEndY = road.y + (dirX > 0 ? road.h * 0.75 : road.h * 0.25);
+        this.turnEndAngle = dirX > 0 ? 0 : Math.PI;
+      } else {
+        const dirY = target.y > this.y ? 1 : -1;
+        this.turnEndX = road.x + (dirY > 0 ? road.w * 0.25 : road.w * 0.75);
+        this.turnEndY = target.y;
+        this.turnEndAngle = dirY > 0 ? Math.PI / 2 : -Math.PI / 2;
+      }
 
       // Control point for quadratic bezier (the intersection point)
       // We pull the control point SLIGHTLY further out to avoid clipping the inner building corner
       const turnMargin = 4;
       if (this.road.horizontal) {
-        this.turnControlX = targetX + (this.dirX > 0 ? -turnMargin : turnMargin);
-        this.turnControlY = this.y + (newDirY > 0 ? -turnMargin : turnMargin);
+        this.turnControlX = this.turnEndX + (this.dirX > 0 ? -turnMargin : turnMargin);
+        this.turnControlY = this.y + (this.turnEndAngle === Math.PI / 2 ? -turnMargin : turnMargin);
       } else {
-        this.turnControlX = this.x + (newDirX > 0 ? -turnMargin : turnMargin);
-        this.turnControlY = targetY + (this.dirY > 0 ? -turnMargin : turnMargin);
+        this.turnControlX = this.x + (this.turnEndAngle === 0 ? -turnMargin : turnMargin);
+        this.turnControlY = this.turnEndY + (this.dirY > 0 ? -turnMargin : turnMargin);
       }
 
       this.turnStartAngle = this.angle;
-      this.turnEndAngle = newAngle;
-
-      // Approximate arc length for progress calculation
       const d1 = Math.hypot(this.turnControlX - this.turnStartX, this.turnControlY - this.turnStartY);
       const d2 = Math.hypot(this.turnEndX - this.turnControlX, this.turnEndY - this.turnControlY);
       this.turnArcLength = d1 + d2;
@@ -316,13 +300,21 @@ export class Car {
       return;
     }
 
-    // Same orientation or too slow — snap directly
+    // Direct transition (non-turning)
     this.road = road;
-    this.dirX = newDirX;
-    this.dirY = newDirY;
-    this.x = targetX;
-    this.y = targetY;
-    this.angle = newAngle;
+    if (road.horizontal) {
+      const dirX = this.dirX !== 0 ? Math.sign(this.dirX) : (Math.random() > 0.5 ? 1 : -1);
+      this.dirX = dirX;
+      this.dirY = 0;
+      this.y = road.y + (dirX > 0 ? road.h * 0.75 : road.h * 0.25);
+      this.angle = dirX > 0 ? 0 : Math.PI;
+    } else {
+      const dirY = this.dirY !== 0 ? Math.sign(this.dirY) : (Math.random() > 0.5 ? 1 : -1);
+      this.dirX = 0;
+      this.dirY = dirY;
+      this.x = road.x + (dirY > 0 ? road.w * 0.25 : road.w * 0.75);
+      this.angle = dirY > 0 ? Math.PI / 2 : -Math.PI / 2;
+    }
     this.vx = this.dirX * this.currentSpeed;
     this.vy = this.dirY * this.currentSpeed;
   }
@@ -332,11 +324,11 @@ export class Car {
    * Returns a nudge vector {x, y} to push the car away from obstacles.
    */
   private checkObstacles(layout: CityLayout, nextX: number, nextY: number): { nx: number; ny: number } | null {
-    const m = 8; // Margin
+    const m = 10; // Margin
     const allObstacles = [...layout.buildings, ...layout.venues, ...layout.houses];
 
     for (const b of allObstacles) {
-      // Don't collide with target venue if we are delivering
+      // Don't collide with target venue if we are delivering or heading to it
       if (this.targetVenue && b === this.targetVenue &&
         (this.deliveryState === 'to_venue' || this.deliveryState === 'delivering')) continue;
 
@@ -348,8 +340,10 @@ export class Car {
         const bCy = b.y + b.h / 2;
 
         // Push away from center
-        const dx = nextX - bCx;
-        const dy = nextY - bCy;
+        let dx = nextX - bCx;
+        let dy = nextY - bCy;
+
+        // If we are deep inside the building, provide a stronger directional push
         const dist = Math.hypot(dx, dy) || 1;
         return { nx: dx / dist, ny: dy / dist };
       }
@@ -482,9 +476,8 @@ export class Car {
    * Returns true if within striking distance of the entrance.
    */
   private isNearEntrance(entrance: PlazaEntrance): boolean {
-    // Proximity check for entrance
     const dist = Math.hypot(this.x - entrance.x, this.y - entrance.y);
-    return dist < ROAD_WIDTH * 1.5;
+    return dist < 60; // Increased threshold
   }
 
   /**
@@ -685,15 +678,17 @@ export class Car {
     // Track stopped duration
     if (this.currentSpeed < 0.1) {
       this.stoppedFrames++;
+      this.stuckTimer++; // Also increment stuckTimer for off-road checks
     } else {
       this.stoppedFrames = 0;
+      this.stuckTimer = 0;
     }
 
     this.currentSpeed += (targetSpeed - this.currentSpeed) * 0.12;
 
     // Gridlock resolution: if stopped too long (>4 seconds = ~240 frames), try to reverse or nudge
     if (this.stoppedFrames > 240 && !stoppedAtRedLight) {
-      if (Math.random() < 0.3) {
+      if (Math.random() < 0.3 && !this.isTurning) {
         this.reverseDirection();
       } else {
         // Nudge: slightly shift position to break local overlap jams
@@ -740,10 +735,14 @@ export class Car {
     if (this.isOutsideRoad()) {
       const connecting = this.findConnectingRoad(layout);
       if (connecting) {
-        this.transitionToRoad(connecting);
+        this.transitionToRoad(connecting, undefined, layout);
       } else {
-        // Persistent world: just turn around instead of vanishing
-        this.reverseDirection();
+        // Only reverse if we are actually stuck (speed low for a while)
+        // to prevent "bouncing" when just nudged slightly off road
+        if (this.currentSpeed < 0.1 && this.stuckTimer > 30) {
+          this.reverseDirection();
+          this.stuckTimer = 0;
+        }
       }
     }
   }
@@ -841,25 +840,49 @@ export class Car {
             targetSpeed = Math.min(targetSpeed, this.baseSpeed * (along / 40) * 0.5);
           }
         }
+        const safetyDist = (this.carType === 'delivery' || this.carType === 'bus') ? 45 : 35;
+        const safetyWidth = (this.carType === 'delivery' || this.carType === 'bus') ? 14 : 10;
+
         for (const other of cars) {
           if (other === this) continue;
           const dx = other.x - frontX;
           const dy = other.y - frontY;
           const along = dx * this.dirX + dy * this.dirY;
           const perp = Math.abs(dx * this.dirY - dy * this.dirX);
-          if (along > 0 && along < 30 && perp < 10) {
+          if (along > 0 && along < safetyDist && perp < safetyWidth) {
             const dotDir = this.dirX * other.dirX + this.dirY * other.dirY;
             if (dotDir > -0.3) {
-              targetSpeed = Math.min(targetSpeed, this.baseSpeed * (along / 30) * 0.3);
+              targetSpeed = Math.min(targetSpeed, this.baseSpeed * (along / safetyDist) * 0.3);
             }
           }
         }
         this.currentSpeed += (targetSpeed - this.currentSpeed) * 0.1;
-        if (this.currentSpeed < 0.02) this.currentSpeed = 0;
+        if (this.currentSpeed < 0.02) {
+          this.currentSpeed = 0;
+          this.stuckTimer++;
+        } else {
+          this.stuckTimer = 0;
+        }
         this.vx = this.dirX * this.currentSpeed;
         this.vy = this.dirY * this.currentSpeed;
-        this.x += this.vx;
-        this.y += this.vy;
+
+        let nextX = this.x + this.vx;
+        let nextY = this.y + this.vy;
+
+        // Plaza seeking building avoidance
+        const obstacle = this.checkObstacles(layout, nextX, nextY);
+        if (obstacle) {
+          const dot = this.dirX * obstacle.nx + this.dirY * obstacle.ny;
+          if (dot < 0) {
+            this.vx = (this.dirX - obstacle.nx * dot) * this.currentSpeed;
+            this.vy = (this.dirY - obstacle.ny * dot) * this.currentSpeed;
+            nextX = this.x + this.vx;
+            nextY = this.y + this.vy;
+          }
+        }
+
+        this.x = nextX;
+        this.y = nextY;
 
         // When leaving current road, bias toward a road closer to the entrance
         if (this.isOutsideRoad()) {
@@ -867,15 +890,17 @@ export class Car {
             layout, this.targetEntrance.x, this.targetEntrance.y
           );
           if (biased) {
-            this.transitionToRoad(biased, { x: this.targetEntrance.x, y: this.targetEntrance.y });
+            this.transitionToRoad(biased, { x: this.targetEntrance.x, y: this.targetEntrance.y }, layout);
           } else {
             // Fallback: pick any connecting road
             const connecting = this.findConnectingRoad(layout);
             if (connecting) {
-              this.transitionToRoad(connecting, { x: this.targetEntrance.x, y: this.targetEntrance.y });
+              this.transitionToRoad(connecting, { x: this.targetEntrance.x, y: this.targetEntrance.y }, layout);
             } else {
-              // Persistent world: just turn around instead of vanishing
-              this.reverseDirection();
+              if (this.currentSpeed < 0.1 && this.stuckTimer > 30) {
+                this.reverseDirection();
+                this.stuckTimer = 0;
+              }
             }
           }
         }
