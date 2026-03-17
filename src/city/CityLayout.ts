@@ -219,7 +219,7 @@ export class CityLayout {
       laneX: px + pw * 0.75,
       outerY: this.plazaBounds.y + this.plazaBounds.h + ROAD_WIDTH / 2,
       innerY: this.plazaBounds.y + this.plazaBounds.h - deliveryStopDepth,
-      stripX: laneX - laneW / 2,
+      stripX: px + pw * 0.75 - laneW / 2,
       stripY: this.plazaBounds.y + this.plazaBounds.h - deliveryStopDepth,
       stripW: laneW,
       stripH: ROAD_WIDTH + deliveryStopDepth,
