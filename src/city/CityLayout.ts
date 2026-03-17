@@ -113,6 +113,7 @@ export interface VenueDef {
   facingPlaza: 'top' | 'bottom' | 'left' | 'right';
   seatingPositions: { x: number; y: number }[];
   queuePositions: { x: number; y: number }[];
+  venueName?: string;
 }
 
 export interface CityEvent {
@@ -659,6 +660,7 @@ export class CityLayout {
         type: v.type, name: v.name, color: v.color, awningColor: v.awning,
         seed: vi * 31 + 7, facingPlaza: 'bottom', seatingPositions: seats,
         queuePositions: queue,
+        venueName: this.generateVenueName(v.type, vi * 31 + 7),
       });
       vi++;
     }
@@ -679,6 +681,7 @@ export class CityLayout {
         type: v.type, name: v.name, color: v.color, awningColor: v.awning,
         seed: vi * 31 + 7, facingPlaza: 'top', seatingPositions: seats,
         queuePositions: queue,
+        venueName: this.generateVenueName(v.type, vi * 31 + 7),
       });
       vi++;
     }
@@ -698,6 +701,7 @@ export class CityLayout {
         type: v.type, name: v.name, color: v.color, awningColor: v.awning,
         seed: vi * 31 + 7, facingPlaza: 'right', seatingPositions: seats,
         queuePositions: queue,
+        venueName: this.generateVenueName(v.type, vi * 31 + 7),
       });
       vi++;
     }
@@ -717,6 +721,7 @@ export class CityLayout {
         type: v.type, name: v.name, color: v.color, awningColor: v.awning,
         seed: vi * 31 + 7, facingPlaza: 'left', seatingPositions: seats,
         queuePositions: queue,
+        venueName: this.generateVenueName(v.type, vi * 31 + 7),
       });
       vi++;
     }
@@ -1662,6 +1667,32 @@ export class CityLayout {
         y >= h.y - margin && y <= h.y + h.h + margin) return true;
     }
     return false;
+  }
+
+  private generateVenueName(type: VenueType, seed: number): string {
+    const cafePrefixes = ['Blue', 'Golden', 'Morning', 'Lazy', 'Urban', 'Velvet', 'Sunrise', 'Cozy', 'Wild', 'Little'];
+    const cafeSuffixes = ['Bean', 'Cup', 'Brew', 'Mug', 'Roast', 'Latte', 'Cafe', 'Corner', 'Nook', 'Parlor'];
+
+    const barPrefixes = ['Rusty', 'Neon', 'Dirty', 'Silver', 'Copper', 'Glass', 'Oaken', 'Drunken', 'Blind', 'Lucky'];
+    const barSuffixes = ['Tap', 'Bottle', 'Lounge', 'Key', 'Anchor', 'Raven', 'Whale', 'Pig', 'Fox', 'Rabbit'];
+
+    const bookPrefixes = ['Ink', 'Paper', 'Dusty', 'Lost', 'Found', 'Ancient', 'Novel', 'Chapter', 'Word', 'Wise'];
+    const bookSuffixes = ['Books', 'Tales', 'Shelf', 'Binding', 'Pages', 'Library', 'Corner', 'Press', 'Scribe', 'Well'];
+
+    const restaurantPrefixes = ['Grand', 'Petite', 'Rustic', 'Modern', 'Spicy', 'Sweet', 'Golden', 'Royal', 'Simple', 'Fresh'];
+    const restaurantSuffixes = ['Bistro', 'Kitchen', 'Grill', 'Garden', 'Table', 'Plate', 'Cuisine', 'Feast', 'Bite', 'Savor'];
+
+    let prefixes = cafePrefixes;
+    let suffixes = cafeSuffixes;
+
+    if (type === 'bar') { prefixes = barPrefixes; suffixes = barSuffixes; }
+    else if (type === 'bookshop') { prefixes = bookPrefixes; suffixes = bookSuffixes; }
+    else if (type === 'restaurant') { prefixes = restaurantPrefixes; suffixes = restaurantSuffixes; }
+    else if (type === 'shop') { prefixes = restaurantPrefixes; suffixes = bookSuffixes; } // Mixed
+
+    const p = prefixes[Math.floor(seededRandom(seed) * prefixes.length)];
+    const s = suffixes[Math.floor(seededRandom(seed + 1) * suffixes.length)];
+    return `${p} ${s}`;
   }
 }
 

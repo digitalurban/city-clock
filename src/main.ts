@@ -41,6 +41,62 @@ let isDancing = false;
 const alarmAudio = new Audio('./alarm.mp3'); // Using the alarm.mp3 from the public directory
 alarmAudio.loop = true;
 
+// Selection / Follow Mode
+let selectedPedestrian: Pedestrian | null = null;
+let followHUD: HTMLDivElement | null = null;
+
+function createFollowHUD() {
+  if (followHUD) return;
+  followHUD = document.createElement('div');
+  followHUD.id = 'follow-hud';
+  followHUD.style.cssText = `
+    position: fixed; top: 80px; left: 20px; z-index: 1000;
+    background: rgba(26, 26, 46, 0.85); backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 12px;
+    padding: 15px; color: white; font-family: 'Inter', sans-serif;
+    min-width: 180px; box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+    display: none; pointer-events: none; transition: opacity 0.3sEase;
+  `;
+  document.body.appendChild(followHUD);
+}
+
+function updateFollowHUD() {
+  if (!followHUD || !selectedPedestrian) {
+    if (followHUD) followHUD.style.display = 'none';
+    return;
+  }
+  followHUD.style.display = 'block';
+  followHUD.innerHTML = `
+    <div style="font-weight: bold; font-size: 1.1em; margin-bottom: 5px; color: #4cc9f0;">${selectedPedestrian.name}</div>
+    <div style="font-size: 0.9em; opacity: 0.8; margin-bottom: 10px;">${selectedPedestrian.personality.charAt(0).toUpperCase() + selectedPedestrian.personality.slice(1)} Citizen</div>
+    <div style="margin-bottom: 8px;">
+      <span style="font-size: 0.8em; opacity: 0.6; display: block;">STATUS</span>
+      <span style="font-size: 0.9em;">${getActivityDescription(selectedPedestrian)}</span>
+    </div>
+    <div style="display: flex; gap: 10px; font-size: 0.8em;">
+      <div style="flex: 1;">
+        <div style="opacity: 0.6;">ENERGY</div>
+        <div style="height: 4px; background: #333; margin-top: 3px; border-radius: 2px;">
+          <div style="height: 100%; width: ${selectedPedestrian.energy}%; background: #4cc9f0; border-radius: 2px;"></div>
+        </div>
+      </div>
+    </div>
+    <div style="font-size: 0.7em; opacity: 0.4; margin-top: 10px; font-style: italic;">Double-tap elsewhere to unfollow</div>
+  `;
+}
+
+function getActivityDescription(p: Pedestrian): string {
+  if (p.clockTarget) return "Forming the Clock";
+  if (p.isAtHome) return "Relaxing at Home";
+  if (p.isGoingHome) return "Heading Home";
+  if (p.isSitting) return "Sitting at Venue";
+  if (p.isBenchSitting) return "Resting on Bench";
+  if (p.isQueuing) return "Queuing for Shop";
+  if (p.socialMode) return "In Conversation";
+  if (p.isRidingBicycle) return "Cycling through City";
+  return "Wandering the Streets";
+}
+
 function clampPan(w: number, h: number) {
   const worldW = layout.width;
   const worldH = layout.height;
@@ -89,12 +145,39 @@ let dragStartPanX = 0;
 let dragStartPanY = 0;
 
 canvas.addEventListener('mousedown', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const mouseX = e.clientX - rect.left;
+  const mouseY = e.clientY - rect.top;
+
   isDragging = true;
   dragStartX = e.clientX;
   dragStartY = e.clientY;
   dragStartPanX = panX;
   dragStartPanY = panY;
   canvas.style.cursor = 'grabbing';
+
+  // Selection detection
+  const worldX = (mouseX - panX) / zoom;
+  const worldY = (mouseY - panY) / zoom;
+
+  let found: Pedestrian | null = null;
+  let minDist = 20 / zoom;
+  for (const p of pedestrians) {
+    const d = Math.hypot(p.x - worldX, p.y - worldY);
+    if (d < minDist) {
+      minDist = d;
+      found = p;
+    }
+  }
+
+  if (found) {
+    selectedPedestrian = found;
+    updateFollowHUD();
+  } else if (e.detail === 2) {
+    // Double click background to clear
+    selectedPedestrian = null;
+    updateFollowHUD();
+  }
 });
 
 window.addEventListener('mousemove', (e) => {
@@ -565,8 +648,18 @@ function loop() {
   ctx.fillStyle = dayNight.getSkyColor(nightAlpha);
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  // Apply zoom + pan + DPR transform
+  // Applying zoom + pan + DPR transform
   ctx.setTransform(dpr * zoom, 0, 0, dpr * zoom, panX * dpr, panY * dpr);
+
+  // --- Follow Mode Camera Lerp ---
+  if (selectedPedestrian && !isDragging) {
+    const targetPanX = w / 2 - selectedPedestrian.x * zoom;
+    const targetPanY = h / 2 - selectedPedestrian.y * zoom;
+    panX += (targetPanX - panX) * 0.1;
+    panY += (targetPanY - panY) * 0.1;
+    clampPan(w, h); // Keep within world bounds
+    updateFollowHUD();
+  }
 
   // Draw cached static city
   if (staticCanvas) {
@@ -712,5 +805,6 @@ window.addEventListener('resize', () => {
 });
 
 createOptionsUI();
+createFollowHUD();
 resize();
 loop();

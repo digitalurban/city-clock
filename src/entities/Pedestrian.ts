@@ -145,44 +145,26 @@ export class Pedestrian {
   currentWeatherType: string = 'clear';
   bicycleSpeed: number = 0;
 
+  name: string;
+  activityState: 'home' | 'work' | 'social' | 'commuting' | 'clock' = 'social';
+  personality: 'hurried' | 'relaxed' | 'socialite' | 'homebody';
+
+  private static FIRST_NAMES = ['Aiden', 'Alice', 'Ben', 'Bella', 'Charles', 'Chloe', 'Daniel', 'Daisy', 'Ethan', 'Emma', 'Finn', 'Fiona', 'George', 'Grace', 'Henry', 'Hazel', 'Isaac', 'Iris', 'Jack', 'Jade', 'Kai', 'Kira', 'Liam', 'Luna', 'Max', 'Maya', 'Noah', 'Nora', 'Oliver', 'Olive', 'Peter', 'Piper', 'Quinn', 'Rose', 'Sam', 'Sophie', 'Thomas', 'Thea', 'Umar', 'Una', 'Victor', 'Vera', 'Will', 'Willa', 'Xander', 'Xena', 'Yusuf', 'Yara', 'Zane', 'Zoe'];
+  private static LAST_NAMES = ['Smith', 'Johnson', 'Williams', 'Brown', 'Jones', 'Garcia', 'Miller', 'Davis', 'Rodriguez', 'Martinez', 'Hernandez', 'Lopez', 'Gonzalez', 'Wilson', 'Anderson', 'Thomas', 'Taylor', 'Moore', 'Jackson', 'Martin', 'Lee', 'Perez', 'Thompson', 'White', 'Harris', 'Sanchez', 'Clark', 'Ramirez', 'Lewis', 'Robinson', 'Walker', 'Young', 'Allen', 'King', 'Wright', 'Scott', 'Torres', 'Nguyen', 'Hill', 'Flores', 'Green', 'Adams', 'Nelson', 'Baker', 'Hall', 'Rivera', 'Campbell', 'Mitchell', 'Carter', 'Roberts'];
+
   constructor(layout: CityLayout, index: number, clockEligibleCount: number) {
     this.isClockEligible = index < clockEligibleCount;
     this.idOffset = Math.random() * 1000;
-    this.size = 0.8 + Math.random() * 0.4;
-    this.baseSpeed = PEDESTRIAN_BASE_SPEED * (0.7 + Math.random() * 0.6);
-    this.maxSpeed = this.baseSpeed;
-    this.maxForce = PEDESTRIAN_MAX_FORCE * (0.8 + Math.random() * 0.4);
-    this.color = PEDESTRIAN_COLORS[Math.floor(Math.random() * PEDESTRIAN_COLORS.length)];
+    this.name = `${Pedestrian.FIRST_NAMES[Math.floor(Math.random() * Pedestrian.FIRST_NAMES.length)]} ${Pedestrian.LAST_NAMES[Math.floor(Math.random() * Pedestrian.LAST_NAMES.length)]}`;
 
-    // Varied skin tones
-    this.skinTone = SKIN_TONES[Math.floor(Math.random() * SKIN_TONES.length)];
+    // Assign personality
+    const pRoll = Math.random();
+    if (pRoll < 0.25) this.personality = 'hurried';
+    else if (pRoll < 0.5) this.personality = 'homebody';
+    else if (pRoll < 0.75) this.personality = 'socialite';
+    else this.personality = 'relaxed';
 
-    // Hair style
-    const hairRoll = Math.random();
-    if (hairRoll < 0.12) this.hairStyle = 'bald';
-    else if (hairRoll < 0.42) this.hairStyle = 'short';
-    else if (hairRoll < 0.72) this.hairStyle = 'long';
-    else this.hairStyle = 'hat';
-    this.hairColor = HAIR_COLORS[Math.floor(Math.random() * HAIR_COLORS.length)];
-    this.hatColor = HAT_COLORS[Math.floor(Math.random() * HAT_COLORS.length)];
-
-    // ~28% of non-clock pedestrians carry a shopping bag
-    this.hasBag = !this.isClockEligible && Math.random() < 0.28;
-    this.bagColor = BAG_COLORS[Math.floor(Math.random() * BAG_COLORS.length)];
-
-    this.hasUmbrella = Math.random() < 0.6; // 60% of people have umbrellas
-    this.umbrellaColor = UMBRELLA_COLORS[Math.floor(Math.random() * UMBRELLA_COLORS.length)];
-
-    // ~15% of non-clock pedestrians have a bicycle
-    this.hasBicycle = !this.isClockEligible && Math.random() < 0.15;
-    this.bicycleSpeed = PEDESTRIAN_BASE_SPEED * 3;
-
-    // Assign each non-clock pedestrian a home
-    if (!this.isClockEligible) {
-      this.assignedHome = Math.floor(Math.random() * Math.max(1, layout.houses.length));
-    }
-
-    // Spawn position
+    // Default spawn in plaza for clock or random for others
     if (this.isClockEligible) {
       const p = layout.plazaBounds;
       this.x = p.x + Math.random() * p.w;
@@ -193,10 +175,41 @@ export class Pedestrian {
       this.y = pos.y;
     }
 
-    // Varied starting needs so they don't all act at once
-    this.energy = 30 + Math.random() * 70;
-    this.hunger = 30 + Math.random() * 70;
-    this.social = 30 + Math.random() * 70;
+    // Assign home
+    if (layout.houses.length > 0) {
+      this.assignedHome = Math.floor(Math.random() * layout.houses.length);
+      // Staggered logic: some start at home
+      if (Math.random() < 0.4 && !this.isClockEligible) {
+        this.spawnAtHome(layout);
+        this.isAtHome = true;
+      }
+    }
+
+    this.size = 0.8 + Math.random() * 0.4;
+    this.baseSpeed = PEDESTRIAN_BASE_SPEED * (0.7 + Math.random() * 0.6);
+    this.maxSpeed = this.baseSpeed;
+    this.maxForce = PEDESTRIAN_MAX_FORCE * (0.8 + Math.random() * 0.4);
+    this.color = PEDESTRIAN_COLORS[Math.floor(Math.random() * PEDESTRIAN_COLORS.length)];
+    this.skinTone = SKIN_TONES[Math.floor(Math.random() * SKIN_TONES.length)];
+
+    const hairRoll = Math.random();
+    if (hairRoll < 0.12) this.hairStyle = 'bald';
+    else if (hairRoll < 0.42) this.hairStyle = 'short';
+    else if (hairRoll < 0.72) this.hairStyle = 'long';
+    else this.hairStyle = 'hat';
+    this.hairColor = HAIR_COLORS[Math.floor(Math.random() * HAIR_COLORS.length)];
+    this.hatColor = HAT_COLORS[Math.floor(Math.random() * HAT_COLORS.length)];
+
+    this.hasBag = !this.isClockEligible && Math.random() < 0.28;
+    this.bagColor = BAG_COLORS[Math.floor(Math.random() * BAG_COLORS.length)];
+    this.hasUmbrella = Math.random() < 0.6;
+    this.umbrellaColor = UMBRELLA_COLORS[Math.floor(Math.random() * UMBRELLA_COLORS.length)];
+    this.hasBicycle = !this.isClockEligible && Math.random() < 0.15;
+    this.bicycleSpeed = PEDESTRIAN_BASE_SPEED * 3;
+
+    this.energy = 40 + Math.random() * 60;
+    this.hunger = 40 + Math.random() * 60;
+    this.social = 40 + Math.random() * 60;
 
     this.angle = Math.random() * Math.PI * 2;
     this.vx = Math.cos(this.angle) * this.baseSpeed * 0.5;
@@ -207,6 +220,31 @@ export class Pedestrian {
     this.waypointY = wp.y;
     this.waypointTimer = 0;
     this.walkPhase = Math.random() * Math.PI * 2;
+  }
+
+  private spawnAtHome(layout: CityLayout) {
+    if (this.assignedHome >= 0 && this.assignedHome < layout.houses.length) {
+      const home = layout.houses[this.assignedHome];
+      this.x = home.x + home.w / 2;
+      this.y = home.y + home.h + 5;
+    }
+  }
+
+  private goToHome(layout: CityLayout) {
+    if (this.assignedHome >= 0 && this.assignedHome < layout.houses.length) {
+      const home = layout.houses[this.assignedHome];
+      const pathEnd = home.gardenPathEnd;
+      if (pathEnd) {
+        this.setWaypointWithCrosswalkRouting(layout, pathEnd.x, pathEnd.y);
+      } else {
+        this.waypointX = home.x + home.w / 2;
+        this.waypointY = home.y + home.h;
+        this.waypointTimer = 0;
+      }
+      if (this.hasBicycle) this.isRidingBicycle = true;
+      this.thoughtBubble = 'home';
+      this.thoughtTimer = 50;
+    }
   }
 
   private setWaypointWithCrosswalkRouting(layout: CityLayout, wx: number, wy: number) {
@@ -715,31 +753,59 @@ export class Pedestrian {
               }
             }
 
-            // Go home
-            if (!this.isSitting && !this.isBenchSitting && !this.isQueuing && !this.isWindowShopping && !this.socialMode && !this.isCheckingPhone && !this.isTakingPhoto && !this.isGoingHome && !this.isAtHome && !this.isClockEligible && roll >= 0.78 && roll < 0.88) {
-              if (this.assignedHome >= 0 && this.assignedHome < layout.houses.length) {
-                const home = layout.houses[this.assignedHome];
+            // Go home / Stay home logic based on Day/Night + Personality
+            const d = new Date();
+            const hour = d.getHours() + d.getMinutes() / 60;
+            const isNight = hour >= 22 || hour < 7;
+            const isComingHomeTime = hour >= 21 || (this.personality === 'homebody' && hour >= 18);
+
+            // Clock Priority: Eligible people don't go home if they need to form the clock (approx 8am-8pm)
+            const shouldStayForClock = this.isClockEligible && (hour >= 8 && hour < 20);
+
+            if (!this.isSitting && !this.isBenchSitting && !this.isQueuing && !this.isWindowShopping && !this.socialMode && !this.isCheckingPhone && !this.isTakingPhoto && !this.isGoingHome && !this.isAtHome) {
+
+              if (isNight) {
+                // If it's full night, already at home or heading there
+                if (!shouldStayForClock) {
+                  this.isGoingHome = true;
+                  this.goToHome(layout);
+                }
+              } else if (isComingHomeTime && roll < 0.1 && !shouldStayForClock) {
+                // Random chance to head home early
                 this.isGoingHome = true;
+                this.goToHome(layout);
+              }
+            }
+
+            // If at home, stay there for a while
+            if (this.isAtHome) {
+              this.homeTimer++;
+              // Re-emerge in the morning or when timer expires
+              if (!isNight || this.homeTimer > this.homeDuration) {
+                this.isAtHome = false;
                 this.homeTimer = 0;
-                this.homeDuration = 400 + Math.floor(Math.random() * 400); // stay home 400-800 frames
-
-                // Walk to garden path end first, then to front door
-                const pathEnd = home.gardenPathEnd;
-                if (pathEnd) {
-                  this.setWaypointWithCrosswalkRouting(layout, pathEnd.x, pathEnd.y);
-                } else {
-                  this.waypointX = home.x + home.w / 2;
-                  this.waypointY = home.y + home.h;
-                  this.waypointTimer = 0;
+                // Respawn outside home
+                const home = layout.houses[this.assignedHome];
+                if (home) {
+                  this.x = home.x + home.w / 2;
+                  this.y = home.y + home.h + 10;
+                  const wp = layout.getRandomSidewalkWaypoint();
+                  this.setWaypointWithCrosswalkRouting(layout, wp.x, wp.y);
                 }
+              }
+              return; // Don't process movement if at home
+            }
 
-                // If has bicycle, ride it
-                if (this.hasBicycle) {
-                  this.isRidingBicycle = true;
-                }
-
-                this.thoughtBubble = 'home';
-                this.thoughtTimer = 50;
+            if (this.isGoingHome) {
+              const dx = this.waypointX - this.x;
+              const dy = this.waypointY - this.y;
+              const dist = Math.sqrt(dx * dx + dy * dy);
+              if (dist < 10) {
+                this.isGoingHome = false;
+                this.isAtHome = true;
+                this.homeTimer = 0;
+                this.homeDuration = 600 + Math.floor(Math.random() * 600);
+                this.isRidingBicycle = false;
               }
             }
 
@@ -997,6 +1063,9 @@ export class Pedestrian {
     weatherIntensity: number,
     isDancing: boolean
   ) {
+    // Skip drawing if at home (inside building)
+    if (this.isAtHome) return;
+
     ctx.save();
     ctx.translate(this.x, this.y);
     ctx.rotate(this.angle);
