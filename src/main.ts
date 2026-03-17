@@ -404,17 +404,14 @@ function adjustCarCount(target: number) {
     cars.pop();
   }
   while (cars.length < target) {
-    const deliveryCount = Math.floor(target * 0.15);
-    const emergencyCount = Math.max(2, Math.floor(target * 0.04));
-    const emergencyTypes: Array<'police' | 'ambulance' | 'firetruck'> = ['police', 'ambulance', 'firetruck'];
-    const i = cars.length;
-    if (i < deliveryCount) {
-      cars.push(new Car(layout, 'delivery'));
-    } else if (i < deliveryCount + emergencyCount) {
-      cars.push(new Car(layout, emergencyTypes[i % emergencyTypes.length]));
-    } else {
-      cars.push(new Car(layout, 'normal'));
-    }
+    const rn = Math.random();
+    let type: 'delivery' | 'police' | 'ambulance' | 'firetruck' | 'bus' | 'garbage' | 'normal';
+    if (rn < 0.15) type = 'delivery';
+    else if (rn < 0.20) type = (['police', 'ambulance', 'firetruck'] as const)[cars.length % 3];
+    else if (rn < 0.30) type = 'bus';
+    else if (rn < 0.35) type = 'garbage';
+    else type = 'normal';
+    cars.push(new Car(layout, type));
   }
 }
 
@@ -442,7 +439,7 @@ function resize() {
   canvas.style.width = `${width}px`;
   canvas.style.height = `${height}px`;
 
-  // Create the fixed-grid layout. The constructor now defines its own constant dimensions (24x18).
+  // Create the fixed-grid layout. The constructor defines its own constant dimensions (12x8).
   layout = new CityLayout(width, height);
   const worldW = layout.width;
   const worldH = layout.height;

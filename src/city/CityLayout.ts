@@ -157,8 +157,8 @@ export class CityLayout {
   constructor(width: number, height: number) {
     // We now use a constant grid size for stability across all devices.
     // The plaza will always be at the geometric center of this fixed city.
-    this.gridCols = 24;
-    this.gridRows = 18;
+    this.gridCols = 12;
+    this.gridRows = 8;
 
     const cellSize = BLOCK_SIZE + ROAD_WIDTH;
     this.width = this.gridCols * cellSize;
