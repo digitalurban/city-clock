@@ -842,45 +842,18 @@ export class Car {
         // Once within range of the lane entry, build the full waypoint path and start driving in.
         if (!this.selectedLane || !this.targetVenue) { this.deliveryState = 'road'; break; }
 
-        this.seekingLaneTimer++;
-        if (this.seekingLaneTimer > 2000) {
-          // Timeout — give up and retry after a short pause
-          this.deliveryState = 'road';
-          this.deliveryTimer = 150 + Math.floor(Math.random() * 200);
-          this.targetVenue = null;
-          this.selectedLane = null;
+        // Check if we're close enough to the entrance to leave the road
+        if (this.isNearEntrance(this.targetEntrance)) {
+          this.targetX = this.targetEntrance.x;
+          this.targetY = this.targetEntrance.y;
+          this.deliveryState = 'to_entrance';
           break;
         }
 
-        const lane = this.selectedLane;
-        const distToEntry = Math.hypot(this.x - lane.laneX, this.y - lane.outerY);
-
-        if (distToEntry < 100) {
-          // Close enough — truck is on or very near the approach road stub.
-          // Build the full off-road path into the plaza:
-          //   WP0: lane entryY (plaza boundary)
-          //   WP1: lane innerY (past the venue band)
-          //   WP2: lateral move to delivery x at innerY
-          //   WP3: delivery point (in front of venue face)
-          const dp = this.getVenueDeliveryPoint(this.targetVenue);
-          this.plazaWaypoints = [
-            { x: lane.laneX, y: lane.entryY },
-            { x: lane.laneX, y: lane.innerY },
-            { x: dp.x, y: lane.innerY },
-            dp,
-          ];
-          this.plazaWaypointIdx = 0;
-          this.targetX = this.plazaWaypoints[0].x;
-          this.targetY = this.plazaWaypoints[0].y;
-          this.deliveryState = 'to_venue';
-          // Clear any pending lane drift — moveToward handles its own positioning
-          this.laneTargetX = NaN;
-          this.laneTargetY = NaN;
-          break;
-        }
-
-        // Still on roads — drive with traffic awareness, biasing turns toward lane entry
+        // Drive on road with pedestrian/car avoidance + traffic lights
         let targetSpeed = this.baseSpeed;
+
+        // Traffic light check for delivery trucks
         const signal = this.getTrafficSignal(layout, trafficPhase);
         if (signal === 'red') {
           targetSpeed = 0;
@@ -982,17 +955,20 @@ export class Car {
           this.packageDropped = true;
         }
 
-        if (this.deliveryPauseTimer >= 120 && this.selectedLane) {
-          // Exit: drive back through the lane, across the plaza boundary, onto the road
-          const lane = this.selectedLane;
-          this.plazaWaypoints = [
-            { x: lane.laneX, y: lane.innerY },
-            { x: lane.laneX, y: lane.entryY },
-            { x: lane.laneX, y: lane.outerY },
-          ];
-          this.plazaWaypointIdx = 0;
-          this.targetX = this.plazaWaypoints[0].x;
-          this.targetY = this.plazaWaypoints[0].y;
+        if (this.deliveryPauseTimer >= 120) {
+          // Done — head back out to an exit entrance
+          this.exitEntrance = this.findNearestEntrance(layout, this.x, this.y);
+          if (this.exitEntrance) {
+            this.plazaWaypoints = this.buildPlazaPath(
+              { x: this.x, y: this.y },
+              { x: this.exitEntrance.x, y: this.exitEntrance.y },
+              layout
+            );
+            this.plazaWaypointIdx = 0;
+            const wp = this.plazaWaypoints[0];
+            this.targetX = wp.x;
+            this.targetY = wp.y;
+          }
           this.deliveryState = 'to_exit';
         }
         break;
@@ -1004,23 +980,19 @@ export class Car {
         if (arrived) {
           this.plazaWaypointIdx++;
           if (this.plazaWaypointIdx < this.plazaWaypoints.length) {
-            this.targetX = this.plazaWaypoints[this.plazaWaypointIdx].x;
-            this.targetY = this.plazaWaypoints[this.plazaWaypointIdx].y;
-          } else {
-            // Now on the approach road — find the vertical road stub at this column
-            const nearRoad = this.findNearestRoadToPoint(layout, this.x, this.y);
-            if (nearRoad) {
-              this.road = nearRoad;
-              // Drive further along the road away from the plaza so we rejoin cleanly
-              const lane = this.selectedLane!;
-              const awayY = lane.side === 'top'
-                ? nearRoad.y + nearRoad.h / 4   // upper part of road segment above plaza
-                : nearRoad.y + nearRoad.h * 3 / 4; // lower part of road segment below
-              this.targetX = nearRoad.x + nearRoad.w / 2;
-              this.targetY = awayY;
-            }
-            this.deliveryState = 'rejoin_road';
+            const wp = this.plazaWaypoints[this.plazaWaypointIdx];
+            this.targetX = wp.x;
+            this.targetY = wp.y;
+            break;
           }
+          // Find nearest road to rejoin
+          const nearRoad = this.findNearestRoadToPoint(layout, this.x, this.y);
+          if (nearRoad) {
+            this.targetX = nearRoad.x + nearRoad.w / 2;
+            this.targetY = nearRoad.y + nearRoad.h / 2;
+            this.road = nearRoad;
+          }
+          this.deliveryState = 'rejoin_road';
         }
         break;
       }

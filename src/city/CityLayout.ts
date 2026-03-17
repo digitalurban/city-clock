@@ -222,12 +222,11 @@ export class CityLayout {
     });
     this.deliveryLanes.push({
       side: 'bottom',
-      laneX: botLaneX,
-      outerY: py + ph + ROAD_WIDTH,     // a point ON the vertical road below the plaza
-      entryY: py + ph,                   // plaza bottom boundary
-      innerY: py + ph - deliveryStopDepth,
-      stripX: botLaneX - laneW / 2,
-      stripY: py + ph - deliveryStopDepth,
+      laneX: px + pw * 0.75,
+      outerY: this.plazaBounds.y + this.plazaBounds.h + ROAD_WIDTH / 2,
+      innerY: this.plazaBounds.y + this.plazaBounds.h - deliveryStopDepth,
+      stripX: laneX - laneW / 2,
+      stripY: this.plazaBounds.y + this.plazaBounds.h - deliveryStopDepth,
       stripW: laneW,
       stripH: ROAD_WIDTH + deliveryStopDepth,
     });
