@@ -457,7 +457,7 @@ function resize() {
   // We target a viewport window of ~1.8 × plaza dimensions for a closer look.
   const plazaW = layout.plazaBounds.w;
   const plazaH = layout.plazaBounds.h;
-  const CONTEXT = 1.8;
+  const CONTEXT = 1.56;
   const initialZoomW = width / (plazaW * CONTEXT);
   const initialZoomH = height / (plazaH * CONTEXT);
   const initialZoom = Math.min(initialZoomW, initialZoomH);

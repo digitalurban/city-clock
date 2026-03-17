@@ -637,7 +637,7 @@ export class Car {
       }
     }
 
-    // Car-to-car avoidance
+    // Car-to-car avoidance: Centralized logic for all vehicle types
     for (const other of cars) {
       if (other === this) continue;
       const dx = other.x - frontX;
@@ -645,16 +645,22 @@ export class Car {
       const along = dx * this.dirX + dy * this.dirY;
       const perp = Math.abs(dx * this.dirY - dy * this.dirX);
 
-      // Increased avoidance distance for delivery trucks and buses
-      const safetyDist = (this.carType === 'delivery' || this.carType === 'bus') ? 45 : 35;
-      const safetyWidth = (this.carType === 'delivery' || this.carType === 'bus') ? 14 : 10;
+      // Wider detection for non-horizontal/vertical overlaps (e.g. slight nudges)
+      const safetyWidth = (this.carType === 'delivery' || this.carType === 'bus') ? 16 : 12;
+      const safetyDist = (this.carType === 'delivery' || this.carType === 'bus') ? 50 : 35;
+      const hardStopDist = 18; // Complete stop if very close
 
       if (along > 0 && along < safetyDist && perp < safetyWidth) {
         const dotDir = this.dirX * other.dirX + this.dirY * other.dirY;
-        // Brake for cars in our direction, OR any car that is nearly stopped (likely in a jam)
-        // OR cars coming head-on if they are too close to our lane
+        // Brake for cars in our direction OR any car that is stopped/blocking
         if (dotDir > -0.5 || other.currentSpeed < 0.2 || (dotDir < -0.8 && perp < 6)) {
-          targetSpeed = Math.min(targetSpeed, this.baseSpeed * (along / safetyDist) * 0.4);
+          if (along < hardStopDist) {
+            targetSpeed = 0;
+          } else {
+            // Sharper deceleration curve as we get closer
+            const deceleration = Math.pow((along - hardStopDist) / (safetyDist - hardStopDist), 1.5);
+            targetSpeed = Math.min(targetSpeed, this.baseSpeed * deceleration * 0.5);
+          }
         }
       }
     }
