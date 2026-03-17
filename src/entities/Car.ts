@@ -842,11 +842,26 @@ export class Car {
         // Once within range of the lane entry, build the full waypoint path and start driving in.
         if (!this.selectedLane || !this.targetVenue) { this.deliveryState = 'road'; break; }
 
-        // Check if we're close enough to the entrance to leave the road
-        if (this.isNearEntrance(this.targetEntrance)) {
-          this.targetX = this.targetEntrance.x;
-          this.targetY = this.targetEntrance.y;
-          this.deliveryState = 'to_entrance';
+        // Check if we're close enough to the delivery lane entry to leave the road
+        const lane = this.selectedLane;
+        const distToLane = Math.hypot(this.x - lane.laneX, this.y - lane.outerY);
+        if (distToLane < 60) {
+          const venue = this.targetVenue!;
+          const deliveryX = venue.x + venue.w / 2;
+          const deliveryY = lane.side === 'top' ? venue.y - 5 : venue.y + venue.h + 5;
+          this.plazaWaypoints = [
+            { x: lane.laneX, y: lane.outerY },
+            { x: lane.laneX, y: lane.entryY },
+            { x: lane.laneX, y: lane.innerY },
+            { x: deliveryX, y: lane.innerY },
+            { x: deliveryX, y: deliveryY },
+          ];
+          this.plazaWaypointIdx = 0;
+          this.targetX = this.plazaWaypoints[0].x;
+          this.targetY = this.plazaWaypoints[0].y;
+          this.laneTargetX = NaN;
+          this.laneTargetY = NaN;
+          this.deliveryState = 'to_venue';
           break;
         }
 
@@ -899,7 +914,7 @@ export class Car {
 
         // At road ends / junctions: pick road that brings us closest to lane entry
         if (this.isOutsideRoad()) {
-          const biased = this.findConnectingRoadToward(layout, lane.laneX, lane.outerY);
+          const biased = this.findConnectingRoadToward(layout, this.selectedLane.laneX, this.selectedLane.outerY);
           if (biased) {
             this.transitionToRoad(biased);
           } else {
