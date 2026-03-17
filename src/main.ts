@@ -80,6 +80,18 @@ function updateFollowHUD() {
           <div style="height: 100%; width: ${selectedPedestrian.energy}%; background: #4cc9f0; border-radius: 2px;"></div>
         </div>
       </div>
+      <div style="flex: 1;">
+        <div style="opacity: 0.6;">HUNGER</div>
+        <div style="height: 4px; background: #333; margin-top: 3px; border-radius: 2px;">
+          <div style="height: 100%; width: ${selectedPedestrian.hunger}%; background: #ff9f1c; border-radius: 2px;"></div>
+        </div>
+      </div>
+      <div style="flex: 1;">
+        <div style="opacity: 0.6;">SOCIAL</div>
+        <div style="height: 4px; background: #333; margin-top: 3px; border-radius: 2px;">
+          <div style="height: 100%; width: ${selectedPedestrian.social}%; background: #2ec4b6; border-radius: 2px;"></div>
+        </div>
+      </div>
     </div>
     <div style="font-size: 0.7em; opacity: 0.4; margin-top: 10px; font-style: italic;">Double-tap elsewhere to unfollow</div>
   `;
@@ -88,12 +100,16 @@ function updateFollowHUD() {
 function getActivityDescription(p: Pedestrian): string {
   if (p.clockTarget) return "Forming the Clock";
   if (p.isAtHome) return "Relaxing at Home";
+  if (p.isAtWork) return "At Work";
   if (p.isGoingHome) return "Heading Home";
+  if (p.isGoingToWork) return "Commuting to Work";
+  if (p.isGardening) return "Gardening at Home";
   if (p.isSitting) return "Sitting at Venue";
   if (p.isBenchSitting) return "Resting on Bench";
   if (p.isQueuing) return "Queuing for Shop";
   if (p.socialMode) return "In Conversation";
   if (p.isRidingBicycle) return "Cycling through City";
+  if (p.hunger < 30) return "Looking for Food";
   return "Wandering the Streets";
 }
 
@@ -767,7 +783,7 @@ function loop() {
       h,
       cars
     );
-    p.draw(ctx, nightAlpha, weather.intensity, isDancing);
+    p.draw(ctx, nightAlpha, weather.intensity, isDancing, selectedPedestrian === p);
   }
 
   // Trees on top (canopies)
@@ -778,11 +794,14 @@ function loop() {
   layout.drawPlazaLampGlows(ctx, nightAlpha);
 
   // Update and draw dynamic events (in world space, underneath weather/UI)
+  // Dynamic events (musicians/protests) — disabled for "Total Silence" mode
+  /* 
   if (nightAlpha < 0.3 && !layout.activeEvent && Math.random() < 0.0005) {
     layout.startEvent(Math.random() < 0.5 ? 'musician' : 'protest');
   }
-  layout.updateEvent();
-  layout.drawEvent(ctx, nightAlpha);
+  */
+  // layout.updateEvent();
+  // layout.drawEvent(ctx, nightAlpha);
 
   // Traffic lights
   layout.drawTrafficLights(ctx, nightAlpha, trafficPhase);

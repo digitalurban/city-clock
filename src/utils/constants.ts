@@ -1,8 +1,8 @@
 export const PEDS_PER_SEGMENT = 4;
-export const CLOCK_ELIGIBLE_COUNT = 28 * PEDS_PER_SEGMENT; // 112
-export let TOTAL_PEDESTRIANS = 160;
+export const CLOCK_ELIGIBLE_COUNT = 140; // Increased to ensure enough "spares" for relaying
+export let TOTAL_PEDESTRIANS = 200; // Increased total to support larger clock pool
 export let TOTAL_CARS = 70;
-export const CLOCK_ACTIVE_SECONDS = 15;
+export const CLOCK_ACTIVE_SECONDS = 60; // Always active
 
 // Allow runtime adjustment
 export function setTotalPedestrians(n: number) { TOTAL_PEDESTRIANS = n; }

@@ -28,6 +28,9 @@ export class ClockManager {
   // Force-show: triggered by double-tap, holds clock active for CLOCK_ACTIVE_SECONDS
   private forceShowUntil: number = 0;
 
+  // Stable assignments to prevent frame-to-frame position jitter
+  private assignments: Map<Pedestrian, { x: number; y: number }> = new Map();
+
   /** Force the clock to show immediately for CLOCK_ACTIVE_SECONDS */
   triggerForceShow() {
     this.forceShowUntil = Date.now() + CLOCK_ACTIVE_SECONDS * 1000;
@@ -36,141 +39,124 @@ export class ClockManager {
 
   update(pedestrians: Pedestrian[], plazaCenterX: number, plazaCenterY: number, plazaBounds: { x: number; y: number; w: number; h: number }) {
     const d = new Date();
-    const seconds = d.getSeconds();
     const currentMinute = d.getMinutes();
-    const isClockTime = seconds < CLOCK_ACTIVE_SECONDS || Date.now() < this.forceShowUntil;
 
-    const eligible = pedestrians.filter(p => p.isClockEligible);
-    const pedsPerSeg = PEDS_PER_SEGMENT;
-
-    // Clear dismiss cache on minute change so positions refresh each cycle
+    // Clear assignments on minute change to refresh the layout
     if (currentMinute !== this.lastMinute) {
       this.dismissCache.clear();
+      this.assignments.clear();
       this.lastMinute = currentMinute;
+      for (const p of pedestrians) p.clockTarget = null;
     }
 
-    if (isClockTime && eligible.length >= 28 * pedsPerSeg) {
-      const hours = d.getHours().toString().padStart(2, '0');
-      const minutes = d.getMinutes().toString().padStart(2, '0');
-      const timeStr = hours + minutes;
+    // Identify pool of available/healthy participants
+    const healthy = pedestrians.filter(p => {
+      if (p.clockTarget) return p.hunger > 8 && p.energy > 8;
+      return p.isClockEligible && p.hunger > 14 && p.energy > 14;
+    });
 
-      const pb = plazaBounds;
+    // Determine current digit layout
+    const hours = d.getHours().toString().padStart(2, '0');
+    const minutes = d.getMinutes().toString().padStart(2, '0');
+    const timeStr = hours + minutes;
 
-      // === Scale digits to fit the plaza ===
-      // Leave ~25% on each side for venues/seating/dismissed peds
-      const usableW = pb.w * 0.55;
-      const usableH = pb.h * 0.45;
+    const digitSpacing = 55;
+    const digitW = 40;
+    const digitH = 70;
+    const startX = plazaCenterX - (digitSpacing * 2.1);
+    const startY = plazaCenterY - digitH / 2;
 
-      // Compute digit dimensions from available space
-      // Layout: [digit][spacing][digit][groupSpacing][digit][spacing][digit]
-      // Total = 4*w + 2*spacing + groupSpacing
-      // Ratios based on ideal proportions (80:35:60 → w:spacing:group)
-      const w = usableW / (4 + 2 * 0.44 + 0.75); // spacing=0.44w, group=0.75w
-      const h = Math.min(usableH, w * 1.6);       // keep aspect ~1:1.6
-      const spacing = w * 0.44;
-      const groupSpacing = w * 0.75;
+    const allTargets: { x: number; y: number }[] = [];
+    for (let i = 0; i < 4; i++) {
+      const digit = parseInt(timeStr[i]);
+      const dx = startX + i * digitSpacing + (i >= 2 ? 15 : 0);
+      const dy = startY;
 
-      const totalWidth = 4 * w + 2 * spacing + groupSpacing;
-      const startX = plazaCenterX - totalWidth / 2;
-      const startY = plazaCenterY - h / 2;
+      const layout = DIGITS[digit];
+      const segments = [
+        { x: dx, y: dy, w: digitW, h: 4 }, // top
+        { x: dx + digitW - 4, y: dy, w: 4, h: digitH / 2 }, // top-right
+        { x: dx + digitW - 4, y: dy + digitH / 2, w: 4, h: digitH / 2 }, // bot-right
+        { x: dx, y: dy + digitH - 4, w: digitW, h: 4 }, // bottom
+        { x: dx, y: dy + digitH / 2, w: 4, h: digitH / 2 }, // bot-left
+        { x: dx, y: dy, w: 4, h: digitH / 2 }, // top-left
+        { x: dx, y: dy + digitH / 2 - 2, w: digitW, h: 4 }, // middle
+      ];
 
-      const margin = 30;
-
-      let idx = 0;
-
-      for (let i = 0; i < 4; i++) {
-        const digitVal = parseInt(timeStr[i]);
-        const segments = DIGITS[digitVal];
-
-        const dx = startX + i * (w + spacing) + (i >= 2 ? groupSpacing - spacing : 0);
-        const dy = startY;
-
-        const segDefs = [
-          { cx: dx + w / 2, cy: dy,         horizontal: true  }, // A
-          { cx: dx + w,     cy: dy + h / 4, horizontal: false }, // B
-          { cx: dx + w,     cy: dy + 3*h/4, horizontal: false }, // C
-          { cx: dx + w / 2, cy: dy + h,     horizontal: true  }, // D
-          { cx: dx,         cy: dy + 3*h/4, horizontal: false }, // E
-          { cx: dx,         cy: dy + h / 4, horizontal: false }, // F
-          { cx: dx + w / 2, cy: dy + h / 2, horizontal: true  }, // G
-        ];
-
-        for (let j = 0; j < 7; j++) {
-          const seg = segDefs[j];
-          const spread = seg.horizontal ? w * 0.35 : h * 0.18;
-
-          for (let k = 0; k < pedsPerSeg; k++) {
-            if (idx < eligible.length) {
-              if (segments[j]) {
-                const t = pedsPerSeg <= 1 ? 0 : (k / (pedsPerSeg - 1) - 0.5) * 2;
-                const offsetX = seg.horizontal ? t * spread : 0;
-                const offsetY = seg.horizontal ? 0 : t * spread;
-                eligible[idx].clockTarget = {
-                  x: seg.cx + offsetX,
-                  y: seg.cy + offsetY,
-                  angle: seg.horizontal ? 0 : Math.PI / 2,
-                };
-                eligible[idx].clockDismissTarget = null;
-              } else {
-                // Inactive segment — dismiss with stable position
-                eligible[idx].clockTarget = null;
-                if (!this.dismissCache.has(idx)) {
-                  // Spread evenly around all 4 edges of the plaza
-                  const edge = idx % 4;
-                  const r1 = stableRandom(idx * 17 + 3);
-                  let tx: number, ty: number;
-                  if (edge === 0) { // top
-                    tx = pb.x + margin + r1 * (pb.w - margin * 2);
-                    ty = pb.y + margin * 0.5;
-                  } else if (edge === 1) { // bottom
-                    tx = pb.x + margin + r1 * (pb.w - margin * 2);
-                    ty = pb.y + pb.h - margin * 0.5;
-                  } else if (edge === 2) { // left
-                    tx = pb.x + margin * 0.5;
-                    ty = pb.y + margin + r1 * (pb.h - margin * 2);
-                  } else { // right
-                    tx = pb.x + pb.w - margin * 0.5;
-                    ty = pb.y + margin + r1 * (pb.h - margin * 2);
-                  }
-                  this.dismissCache.set(idx, { x: tx, y: ty });
-                }
-                eligible[idx].clockDismissTarget = this.dismissCache.get(idx)!;
-              }
-              idx++;
+      segments.forEach((seg, segIdx) => {
+        if (layout[segIdx]) {
+          const count = PEDS_PER_SEGMENT;
+          for (let pIdx = 0; pIdx < count; pIdx++) {
+            const step = 1 / (count + 1);
+            if (seg.w > seg.h) {
+              allTargets.push({ x: seg.x + (pIdx + 1) * seg.w * step, y: seg.y + seg.h / 2 });
+            } else {
+              allTargets.push({ x: seg.x + seg.w / 2, y: seg.y + (pIdx + 1) * seg.h * step });
             }
           }
         }
-      }
+      });
+    }
 
-      // Remaining eligible pedestrians also get dismissed
-      for (; idx < eligible.length; idx++) {
-        eligible[idx].clockTarget = null;
-        if (!this.dismissCache.has(idx)) {
-          const r1 = stableRandom(idx * 23 + 7);
-          const edge = idx % 4;
-          let tx: number, ty: number;
-          if (edge === 0) {
-            tx = pb.x + margin + r1 * (pb.w - margin * 2);
-            ty = pb.y + margin * 0.5;
-          } else if (edge === 1) {
-            tx = pb.x + margin + r1 * (pb.w - margin * 2);
-            ty = pb.y + pb.h - margin * 0.5;
-          } else if (edge === 2) {
-            tx = pb.x + margin * 0.5;
-            ty = pb.y + margin + r1 * (pb.h - margin * 2);
-          } else {
-            tx = pb.x + pb.w - margin * 0.5;
-            ty = pb.y + margin + r1 * (pb.h - margin * 2);
-          }
-          this.dismissCache.set(idx, { x: tx, y: ty });
-        }
-        eligible[idx].clockDismissTarget = this.dismissCache.get(idx)!;
+    // Update stable assignments
+    // 1. Remove pedestrians who are no longer healthy or present
+    for (const [p, target] of this.assignments.entries()) {
+      if (!healthy.includes(p)) {
+        this.assignments.delete(p);
       }
-    } else {
-      // Clear all targets
-      for (const p of eligible) {
-        p.clockTarget = null;
-        p.clockDismissTarget = null;
+    }
+
+    // 2. Clear current targets (will be re-set from assignments map)
+    for (const p of pedestrians) {
+      p.clockTarget = null;
+    }
+
+    // 3. Re-apply existing assignments that still match current digit segments
+    const occupiedTargets = new Set<string>();
+    for (const [p, target] of this.assignments.entries()) {
+      const stillValid = allTargets.find(t => t.x === target.x && t.y === target.y);
+      if (stillValid) {
+        p.clockTarget = { x: target.x, y: target.y, angle: 0 };
+        occupiedTargets.add(`${target.x},${target.y}`);
+      } else {
+        this.assignments.delete(p);
+      }
+    }
+
+    // 4. Fill remaining targets with new volunteers
+    const freePeds = healthy.filter(p => !p.clockTarget);
+    const unassignedTargets = allTargets.filter(t => !occupiedTargets.has(`${t.x},${t.y}`));
+
+    let pedIdx = 0;
+    for (const t of unassignedTargets) {
+      if (pedIdx < freePeds.length) {
+        const p = freePeds[pedIdx++];
+        p.clockTarget = { x: t.x, y: t.y, angle: 0 };
+        this.assignments.set(p, t);
+      }
+    }
+
+    // Dismiss unassigned pedestrians to stable positions
+    for (const p of pedestrians) {
+      if (p.isClockEligible && !p.clockTarget) {
+        // Direct bounds check instead of missing isInPlaza property
+        const pb = plazaBounds;
+        const isInPlaza = p.x >= pb.x && p.x <= pb.x + pb.w && p.y >= pb.y && p.y <= pb.y + pb.h;
+
+        if (isInPlaza) {
+          let dismissTarget = this.dismissCache.get(p.idOffset);
+          if (!dismissTarget) {
+            const angle = stableRandom(p.idOffset) * Math.PI * 2;
+            const dist = 140 + stableRandom(p.idOffset + 1) * 80;
+            dismissTarget = {
+              x: plazaCenterX + Math.cos(angle) * dist,
+              y: plazaCenterY + Math.sin(angle) * dist
+            };
+            this.dismissCache.set(p.idOffset, dismissTarget);
+          }
+          p.waypointX = dismissTarget.x;
+          p.waypointY = dismissTarget.y;
+        }
       }
     }
   }
