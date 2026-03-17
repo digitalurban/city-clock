@@ -626,29 +626,46 @@ export class Car {
       targetSpeed = 0;
     }
 
-    // Pedestrian avoidance
+    // Pedestrian avoidance — scaled by vehicle length
+    const pedScanDist = this.length * 1.5 + 15;
+    const pedScanWidth = this.width * 0.8 + 4;
     for (const p of pedestrians) {
       const dx = p.x - frontX;
       const dy = p.y - frontY;
       const along = dx * this.dirX + dy * this.dirY;
       const perp = Math.abs(dx * this.dirY - dy * this.dirX);
-      if (along > 0 && along < 40 && perp < 12) {
-        targetSpeed = Math.min(targetSpeed, this.baseSpeed * (along / 40) * 0.5);
+      if (along > 0 && along < pedScanDist && perp < pedScanWidth) {
+        targetSpeed = Math.min(targetSpeed, this.baseSpeed * (along / pedScanDist) * 0.5);
       }
     }
 
-    // Car-to-car avoidance: Centralized logic for all vehicle types
+    // Car-to-car avoidance — scaled by vehicle length and width
+    const isEmergency = this.carType === 'police' || this.carType === 'ambulance' || this.carType === 'firetruck';
     for (const other of cars) {
       if (other === this) continue;
+
+      // Emergency vehicle yielding: other cars brake for nearby emergency vehicles
+      const otherIsEmergency = other.carType === 'police' || other.carType === 'ambulance' || other.carType === 'firetruck';
+      if (otherIsEmergency && !isEmergency) {
+        const emergDist = Math.hypot(other.x - this.x, other.y - this.y);
+        if (emergDist < 80) {
+          // Check if emergency vehicle is approaching us from behind or ahead
+          const toEmerg = (other.x - this.x) * this.dirX + (other.y - this.y) * this.dirY;
+          if (toEmerg > -20) {
+            targetSpeed = Math.min(targetSpeed, this.baseSpeed * 0.2);
+          }
+        }
+      }
+
       const dx = other.x - frontX;
       const dy = other.y - frontY;
       const along = dx * this.dirX + dy * this.dirY;
       const perp = Math.abs(dx * this.dirY - dy * this.dirX);
 
-      // Wider detection for non-horizontal/vertical overlaps (e.g. slight nudges)
-      const safetyWidth = (this.carType === 'delivery' || this.carType === 'bus') ? 16 : 12;
-      const safetyDist = (this.carType === 'delivery' || this.carType === 'bus') ? 50 : 35;
-      const hardStopDist = 18; // Complete stop if very close
+      // Scale detection zone by vehicle dimensions
+      const safetyDist = this.length * 1.5 + 15;
+      const safetyWidth = this.width * 0.8;
+      const hardStopDist = (this.length + other.length) * 0.45;
 
       if (along > 0 && along < safetyDist && perp < safetyWidth) {
         const dotDir = this.dirX * other.dirX + this.dirY * other.dirY;
@@ -663,12 +680,25 @@ export class Car {
           }
         }
       }
+
+      // Hard overlap push: if cars are literally overlapping, force separation
+      const centerDist = Math.hypot(other.x - this.x, other.y - this.y);
+      const minSep = (this.length + other.length) * 0.4;
+      if (centerDist < minSep && centerDist > 0.1) {
+        targetSpeed = 0;
+        // Nudge slightly apart
+        const pushScale = 0.3;
+        const pushX = (this.x - other.x) / centerDist * pushScale;
+        const pushY = (this.y - other.y) / centerDist * pushScale;
+        this.x += pushX;
+        this.y += pushY;
+      }
     }
 
     // Track stopped duration
     if (this.currentSpeed < 0.1) {
       this.stoppedFrames++;
-      this.stuckTimer++; // Also increment stuckTimer for off-road checks
+      this.stuckTimer++;
     } else {
       this.stoppedFrames = 0;
       this.stuckTimer = 0;
@@ -676,21 +706,12 @@ export class Car {
 
     this.currentSpeed += (targetSpeed - this.currentSpeed) * 0.12;
 
-    // Gridlock resolution: if stopped too long (>6 seconds = ~360 frames), try to reverse or nudge
-    // ONLY if not stopped at a red light. This prevents cars from turning around at traffic signals.
-    if (this.stoppedFrames > 360 && !stoppedAtRedLight) {
-      if (Math.random() < 0.2 && this.deliveryState === 'road') {
-        this.reverseDirection();
-      } else {
-        // Nudge: slightly shift position to break local overlap jams
-        // Prefer lateral nudges to slip past obstacles
-        if (this.road.horizontal) {
-          this.y += (Math.random() - 0.5) * 6;
-        } else {
-          this.x += (Math.random() - 0.5) * 6;
-        }
-      }
+    // Gridlock resolution: if stopped too long (>4 seconds = ~240 frames), teleport
+    if (this.stoppedFrames > 240 && !stoppedAtRedLight) {
+      this.road = this.pickRandomRoad(layout);
+      this.placeOnRoad(this.road);
       this.stoppedFrames = 0;
+      this.currentSpeed = this.baseSpeed;
       return;
     }
 
@@ -1154,21 +1175,50 @@ export class Car {
 
     switch (this.carType) {
       case 'delivery': {
-        // Cargo box on back
-        ctx.fillStyle = `rgb(${Math.floor(r * darkFactor * 0.75)}, ${Math.floor(g * darkFactor * 0.75)}, ${Math.floor(b * darkFactor * 0.75)})`;
-        ctx.fillRect(-hw + 1, -hh + 1.5, this.length * 0.42, this.width - 3);
-        ctx.strokeStyle = `rgba(0,0,0,0.25)`;
-        ctx.lineWidth = 0.5;
-        ctx.strokeRect(-hw + 1, -hh + 1.5, this.length * 0.42, this.width - 3);
+        // White/cream cargo box on back — clearly distinguishable
+        const boxW = this.length * 0.55;
+        ctx.fillStyle = `rgb(${Math.floor(240 * darkFactor)}, ${Math.floor(235 * darkFactor)}, ${Math.floor(220 * darkFactor)})`;
+        ctx.fillRect(-hw + 1, -hh + 1.5, boxW, this.width - 3);
+        ctx.strokeStyle = `rgba(0,0,0,0.3)`;
+        ctx.lineWidth = 0.6;
+        ctx.strokeRect(-hw + 1, -hh + 1.5, boxW, this.width - 3);
 
-        // Hazard flashers when in the plaza (not on roads)
+        // Roll-door lines on cargo box rear
+        ctx.strokeStyle = `rgba(0,0,0,0.15)`;
+        ctx.lineWidth = 0.4;
+        ctx.beginPath();
+        ctx.moveTo(-hw + 1, -hh + 3.5);
+        ctx.lineTo(-hw + 1, hh - 2);
+        ctx.stroke();
+        // Horizontal slat lines on cargo box
+        for (let sy = -hh + 3; sy < hh - 2; sy += 2.5) {
+          ctx.beginPath();
+          ctx.moveTo(-hw + 2, sy);
+          ctx.lineTo(-hw + 2 + boxW - 2, sy);
+          ctx.stroke();
+        }
+
+        // Orange stripe on sides of cargo box
+        ctx.fillStyle = `rgba(${Math.floor(r * darkFactor)}, ${Math.floor(g * darkFactor)}, ${Math.floor(b * darkFactor * 0.7)}, 0.8)`;
+        ctx.fillRect(-hw + 1, -hh + 1.5, boxW, 1.5);
+        ctx.fillRect(-hw + 1, hh - 3, boxW, 1.5);
+
+        // Hazard flashers when in the plaza (not on roads) — larger with glow
         if (this.deliveryState !== 'road' && this.deliveryState !== 'seeking_plaza') {
           if (flash) {
-            ctx.fillStyle = `rgba(255, 160, 0, 0.9)`;
-            ctx.fillRect(-hw, -hh, 2, 2);
-            ctx.fillRect(-hw, hh - 2, 2, 2);
-            ctx.fillRect(hw - 2, -hh, 2, 2);
-            ctx.fillRect(hw - 2, hh - 2, 2, 2);
+            ctx.fillStyle = `rgba(255, 160, 0, 0.95)`;
+            ctx.fillRect(-hw - 0.5, -hh - 0.5, 3, 3);
+            ctx.fillRect(-hw - 0.5, hh - 2.5, 3, 3);
+            ctx.fillRect(hw - 2.5, -hh - 0.5, 3, 3);
+            ctx.fillRect(hw - 2.5, hh - 2.5, 3, 3);
+            // Glow effect
+            ctx.fillStyle = `rgba(255, 180, 0, 0.2)`;
+            ctx.beginPath();
+            ctx.arc(-hw, -hh, 6, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(hw, hh, 6, 0, Math.PI * 2);
+            ctx.fill();
           }
         }
         break;
