@@ -77,9 +77,11 @@ export class Car {
   // Cooldown after a road transition to prevent re-triggering for several frames
   private transitionCooldown: number = 0;
 
-  // Smooth lane drift after a turn — avoids hard positional snap
-  private laneTargetX: number = NaN;
-  private laneTargetY: number = NaN;
+  // Velocity arc blend for smooth turns — blends direction old→new over ~15 frames
+  // so the car body never mismatches movement direction (no skidding)
+  private turnBlend: number = 1;   // 0 = just turned, 1 = blend complete
+  private blendFromDirX: number = 0;
+  private blendFromDirY: number = 0;
 
   // Traffic light: stopped at red
   stoppedAtLight: boolean = false;
@@ -323,6 +325,8 @@ export class Car {
    */
   private transitionToRoad(road: RoadSegment) {
     this.stuckTimer = 0;
+    const oldDirX = this.dirX;
+    const oldDirY = this.dirY;
     this.road = road;
 
     if (road.horizontal) {
@@ -330,18 +334,21 @@ export class Car {
         (this.x < road.x + road.w / 2 ? 1 : -1);
       this.dirX = dirX;
       this.dirY = 0;
-      // Set target lane — position drifts smoothly instead of hard snap
-      this.laneTargetY = road.y + (dirX > 0 ? road.h * 0.75 : road.h * 0.25);
-      this.laneTargetX = NaN;
+      this.y = road.y + (dirX > 0 ? road.h * 0.75 : road.h * 0.25);
       this.angleTarget = dirX > 0 ? 0 : Math.PI;
     } else {
       const dirY = this.dirY !== 0 ? Math.sign(this.dirY) :
         (this.y < road.y + road.h / 2 ? 1 : -1);
       this.dirX = 0;
       this.dirY = dirY;
-      this.laneTargetX = road.x + (dirY > 0 ? road.w * 0.25 : road.w * 0.75);
-      this.laneTargetY = NaN;
+      this.x = road.x + (dirY > 0 ? road.w * 0.25 : road.w * 0.75);
       this.angleTarget = dirY > 0 ? Math.PI / 2 : -Math.PI / 2;
+    }
+    // Start velocity arc blend only when actually turning (not going straight through)
+    if (oldDirX !== this.dirX || oldDirY !== this.dirY) {
+      this.blendFromDirX = oldDirX;
+      this.blendFromDirY = oldDirY;
+      this.turnBlend = 0;
     }
     this.vx = this.dirX * this.currentSpeed;
     this.vy = this.dirY * this.currentSpeed;
@@ -627,19 +634,26 @@ export class Car {
       this.updateNormal(layout, pedestrians, cars, trafficPhase, stoppedAtRedLight);
     }
 
-    // Smooth lane drift after a road transition — replaces hard positional snap.
-    // Position glides to the correct lane over ~20 frames; the existing angle
-    // lerp handles rotation cleanly without any extra manipulation.
-    const LANE_RATE = 0.14;
-    if (!isNaN(this.laneTargetY)) {
-      const dy = this.laneTargetY - this.y;
-      this.y += dy * LANE_RATE;
-      if (Math.abs(dy) < 0.3) { this.y = this.laneTargetY; this.laneTargetY = NaN; }
-    }
-    if (!isNaN(this.laneTargetX)) {
-      const dx = this.laneTargetX - this.x;
-      this.x += dx * LANE_RATE;
-      if (Math.abs(dx) < 0.3) { this.x = this.laneTargetX; this.laneTargetX = NaN; }
+    // Velocity arc blend: smoothly rotate movement direction old→new over 15 frames.
+    // angleTarget tracks the blended direction so the car body always matches motion.
+    if (this.turnBlend < 1) {
+      this.turnBlend = Math.min(1, this.turnBlend + 1 / 15);
+      const t = this.turnBlend;
+      const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t; // smoothstep
+      const bx = this.blendFromDirX * (1 - ease) + this.dirX * ease;
+      const by = this.blendFromDirY * (1 - ease) + this.dirY * ease;
+      const len = Math.hypot(bx, by);
+      if (len > 0.01) {
+        const nbx = bx / len;
+        const nby = by / len;
+        // Correct position: replace the straight-line step with the arced step
+        this.x += nbx * this.currentSpeed - this.dirX * this.currentSpeed;
+        this.y += nby * this.currentSpeed - this.dirY * this.currentSpeed;
+        this.vx = nbx * this.currentSpeed;
+        this.vy = nby * this.currentSpeed;
+        // Drive visual angle from actual movement — body always faces where car is going
+        this.angleTarget = Math.atan2(nby, nbx);
+      }
     }
 
     // Update siren phase for emergency vehicles
@@ -859,8 +873,7 @@ export class Car {
           this.plazaWaypointIdx = 0;
           this.targetX = this.plazaWaypoints[0].x;
           this.targetY = this.plazaWaypoints[0].y;
-          this.laneTargetX = NaN;
-          this.laneTargetY = NaN;
+          this.turnBlend = 1; // cancel any active arc blend when leaving the road
           this.deliveryState = 'to_venue';
           break;
         }
