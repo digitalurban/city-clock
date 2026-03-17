@@ -41,78 +41,6 @@ let isDancing = false;
 const alarmAudio = new Audio('./alarm.mp3'); // Using the alarm.mp3 from the public directory
 alarmAudio.loop = true;
 
-// Selection / Follow Mode
-let selectedPedestrian: Pedestrian | null = null;
-let followHUD: HTMLDivElement | null = null;
-
-function createFollowHUD() {
-  if (followHUD) return;
-  followHUD = document.createElement('div');
-  followHUD.id = 'follow-hud';
-  followHUD.style.cssText = `
-    position: fixed; top: 80px; left: 20px; z-index: 1000;
-    background: rgba(26, 26, 46, 0.85); backdrop-filter: blur(8px);
-    border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 12px;
-    padding: 15px; color: white; font-family: 'Inter', sans-serif;
-    min-width: 180px; box-shadow: 0 8px 32px rgba(0,0,0,0.3);
-    display: none; pointer-events: none; transition: opacity 0.3sEase;
-  `;
-  document.body.appendChild(followHUD);
-}
-
-function updateFollowHUD() {
-  if (!followHUD || !selectedPedestrian) {
-    if (followHUD) followHUD.style.display = 'none';
-    return;
-  }
-  followHUD.style.display = 'block';
-  followHUD.innerHTML = `
-    <div style="font-weight: bold; font-size: 1.1em; margin-bottom: 5px; color: #4cc9f0;">${selectedPedestrian.name}</div>
-    <div style="font-size: 0.9em; opacity: 0.8; margin-bottom: 10px;">${selectedPedestrian.personality.charAt(0).toUpperCase() + selectedPedestrian.personality.slice(1)} Citizen</div>
-    <div style="margin-bottom: 8px;">
-      <span style="font-size: 0.8em; opacity: 0.6; display: block;">STATUS</span>
-      <span style="font-size: 0.9em;">${getActivityDescription(selectedPedestrian)}</span>
-    </div>
-    <div style="display: flex; gap: 10px; font-size: 0.8em;">
-      <div style="flex: 1;">
-        <div style="opacity: 0.6;">ENERGY</div>
-        <div style="height: 4px; background: #333; margin-top: 3px; border-radius: 2px;">
-          <div style="height: 100%; width: ${selectedPedestrian.energy}%; background: #4cc9f0; border-radius: 2px;"></div>
-        </div>
-      </div>
-      <div style="flex: 1;">
-        <div style="opacity: 0.6;">HUNGER</div>
-        <div style="height: 4px; background: #333; margin-top: 3px; border-radius: 2px;">
-          <div style="height: 100%; width: ${selectedPedestrian.hunger}%; background: #ff9f1c; border-radius: 2px;"></div>
-        </div>
-      </div>
-      <div style="flex: 1;">
-        <div style="opacity: 0.6;">SOCIAL</div>
-        <div style="height: 4px; background: #333; margin-top: 3px; border-radius: 2px;">
-          <div style="height: 100%; width: ${selectedPedestrian.social}%; background: #2ec4b6; border-radius: 2px;"></div>
-        </div>
-      </div>
-    </div>
-    <div style="font-size: 0.7em; opacity: 0.4; margin-top: 10px; font-style: italic;">Double-tap elsewhere to unfollow</div>
-  `;
-}
-
-function getActivityDescription(p: Pedestrian): string {
-  if (p.clockTarget) return "Forming the Clock";
-  if (p.isAtHome) return "Relaxing at Home";
-  if (p.isAtWork) return "At Work";
-  if (p.isGoingHome) return "Heading Home";
-  if (p.isGoingToWork) return "Commuting to Work";
-  if (p.isGardening) return "Gardening at Home";
-  if (p.isSitting) return "Sitting at Venue";
-  if (p.isBenchSitting) return "Resting on Bench";
-  if (p.isQueuing) return "Queuing for Shop";
-  if (p.socialMode) return "In Conversation";
-  if (p.isRidingBicycle) return "Cycling through City";
-  if (p.hunger < 30) return "Looking for Food";
-  return "Wandering the Streets";
-}
-
 function clampPan(w: number, h: number) {
   const worldW = layout.width;
   const worldH = layout.height;
@@ -161,39 +89,12 @@ let dragStartPanX = 0;
 let dragStartPanY = 0;
 
 canvas.addEventListener('mousedown', (e) => {
-  const rect = canvas.getBoundingClientRect();
-  const mouseX = e.clientX - rect.left;
-  const mouseY = e.clientY - rect.top;
-
   isDragging = true;
   dragStartX = e.clientX;
   dragStartY = e.clientY;
   dragStartPanX = panX;
   dragStartPanY = panY;
   canvas.style.cursor = 'grabbing';
-
-  // Selection detection
-  const worldX = (mouseX - panX) / zoom;
-  const worldY = (mouseY - panY) / zoom;
-
-  let found: Pedestrian | null = null;
-  let minDist = 20 / zoom;
-  for (const p of pedestrians) {
-    const d = Math.hypot(p.x - worldX, p.y - worldY);
-    if (d < minDist) {
-      minDist = d;
-      found = p;
-    }
-  }
-
-  if (found) {
-    selectedPedestrian = found;
-    updateFollowHUD();
-  } else if (e.detail === 2) {
-    // Double click background to clear
-    selectedPedestrian = null;
-    updateFollowHUD();
-  }
 });
 
 window.addEventListener('mousemove', (e) => {
@@ -640,7 +541,33 @@ function buildStaticCanvas(nightAlpha: number) {
   lastStaticNightAlpha = nightAlpha;
 }
 
-function loop() {
+// ==================== Frame-rate cap + visibility pause ====================
+// A clock/city wallpaper looks fine at 30fps and cuts GPU/CPU work in half.
+const TARGET_FPS = 30;
+const FRAME_MS = 1000 / TARGET_FPS;
+let lastFrameTs = 0;
+let loopRunning = true; // paused when tab hidden
+
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && !loopRunning) {
+    loopRunning = true;
+    lastFrameTs = 0; // allow immediate repaint on return
+    requestAnimationFrame(loop);
+  } else if (document.hidden) {
+    loopRunning = false;
+  }
+});
+
+function loop(timestamp: number = 0) {
+  if (!loopRunning) return; // tab hidden — stop scheduling frames
+
+  // Throttle to TARGET_FPS
+  if (timestamp - lastFrameTs < FRAME_MS) {
+    requestAnimationFrame(loop);
+    return;
+  }
+  lastFrameTs = timestamp;
+
   const time = Date.now() / 1000;
   const nightAlpha = dayNight.getNightAlpha();
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -664,18 +591,8 @@ function loop() {
   ctx.fillStyle = dayNight.getSkyColor(nightAlpha);
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  // Applying zoom + pan + DPR transform
+  // Apply zoom + pan + DPR transform
   ctx.setTransform(dpr * zoom, 0, 0, dpr * zoom, panX * dpr, panY * dpr);
-
-  // --- Follow Mode Camera Lerp ---
-  if (selectedPedestrian && !isDragging) {
-    const targetPanX = w / 2 - selectedPedestrian.x * zoom;
-    const targetPanY = h / 2 - selectedPedestrian.y * zoom;
-    panX += (targetPanX - panX) * 0.1;
-    panY += (targetPanY - panY) * 0.1;
-    clampPan(w, h); // Keep within world bounds
-    updateFollowHUD();
-  }
 
   // Draw cached static city
   if (staticCanvas) {
@@ -783,7 +700,7 @@ function loop() {
       h,
       cars
     );
-    p.draw(ctx, nightAlpha, weather.intensity, isDancing, selectedPedestrian === p);
+    p.draw(ctx, nightAlpha, weather.intensity, isDancing);
   }
 
   // Trees on top (canopies)
@@ -794,14 +711,11 @@ function loop() {
   layout.drawPlazaLampGlows(ctx, nightAlpha);
 
   // Update and draw dynamic events (in world space, underneath weather/UI)
-  // Dynamic events (musicians/protests) — disabled for "Total Silence" mode
-  /* 
   if (nightAlpha < 0.3 && !layout.activeEvent && Math.random() < 0.0005) {
     layout.startEvent(Math.random() < 0.5 ? 'musician' : 'protest');
   }
-  */
-  // layout.updateEvent();
-  // layout.drawEvent(ctx, nightAlpha);
+  layout.updateEvent();
+  layout.drawEvent(ctx, nightAlpha);
 
   // Traffic lights
   layout.drawTrafficLights(ctx, nightAlpha, trafficPhase);
@@ -823,7 +737,7 @@ window.addEventListener('resize', () => {
   resize();
 });
 
+
 createOptionsUI();
-createFollowHUD();
 resize();
-loop();
+requestAnimationFrame(loop);

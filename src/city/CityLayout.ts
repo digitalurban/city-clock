@@ -80,8 +80,9 @@ export interface PlazaEntrance {
 
 export interface DeliveryLane {
   side: 'top' | 'bottom';
-  laneX: number;    // center x of lane
-  outerY: number;   // y-center of the outer road (entry/exit point)
+  laneX: number;    // center x of lane — aligned with a real vertical road column
+  outerY: number;   // y on the approach road (navigation target while on road grid)
+  entryY: number;   // y at the plaza boundary (where off-road entry begins)
   innerY: number;   // y inside plaza, past the venue band
   stripX: number;   // left edge of the road strip (for rendering)
   stripY: number;   // top edge of the road strip
@@ -113,7 +114,6 @@ export interface VenueDef {
   facingPlaza: 'top' | 'bottom' | 'left' | 'right';
   seatingPositions: { x: number; y: number }[];
   queuePositions: { x: number; y: number }[];
-  venueName?: string;
 }
 
 export interface CityEvent {
@@ -200,28 +200,34 @@ export class CityLayout {
     // Walkable plaza area
     this.walkableRects.push({ x: px, y: py, w: pw, h: ph, type: 'plaza' });
 
-    // Delivery lanes
-    const laneW = 16;
-    const laneX = px + pw * 0.25;
+    // Delivery lanes — laneX must align with actual vertical road column centers so
+    // trucks can navigate there on the road grid (column roads are clipped around the
+    // plaza, leaving stubs above and below that trucks can drive along).
+    // validPlazaCols[0]+1 = centerCol-1, validPlazaCols[0]+3 = centerCol+1
+    const laneW = 18;
     const deliveryStopDepth = 45;
+    const topLaneX = (validPlazaCols[0] + 1) * cellSize;   // col centerCol-1 road center
+    const botLaneX = (validPlazaCols[0] + 3) * cellSize;   // col centerCol+1 road center
 
     this.deliveryLanes.push({
       side: 'top',
-      laneX,
-      outerY: py - ROAD_WIDTH / 2,
+      laneX: topLaneX,
+      outerY: py - ROAD_WIDTH,          // a point ON the vertical road above the plaza
+      entryY: py,                        // plaza top boundary — where off-road travel starts
       innerY: py + deliveryStopDepth,
-      stripX: laneX - laneW / 2,
+      stripX: topLaneX - laneW / 2,
       stripY: py - ROAD_WIDTH,
       stripW: laneW,
       stripH: ROAD_WIDTH + deliveryStopDepth,
     });
     this.deliveryLanes.push({
       side: 'bottom',
-      laneX: px + pw * 0.75,
-      outerY: this.plazaBounds.y + this.plazaBounds.h + ROAD_WIDTH / 2,
-      innerY: this.plazaBounds.y + this.plazaBounds.h - deliveryStopDepth,
-      stripX: laneX - laneW / 2,
-      stripY: this.plazaBounds.y + this.plazaBounds.h - deliveryStopDepth,
+      laneX: botLaneX,
+      outerY: py + ph + ROAD_WIDTH,     // a point ON the vertical road below the plaza
+      entryY: py + ph,                   // plaza bottom boundary
+      innerY: py + ph - deliveryStopDepth,
+      stripX: botLaneX - laneW / 2,
+      stripY: py + ph - deliveryStopDepth,
       stripW: laneW,
       stripH: ROAD_WIDTH + deliveryStopDepth,
     });
@@ -660,7 +666,6 @@ export class CityLayout {
         type: v.type, name: v.name, color: v.color, awningColor: v.awning,
         seed: vi * 31 + 7, facingPlaza: 'bottom', seatingPositions: seats,
         queuePositions: queue,
-        venueName: this.generateVenueName(v.type, vi * 31 + 7),
       });
       vi++;
     }
@@ -681,7 +686,6 @@ export class CityLayout {
         type: v.type, name: v.name, color: v.color, awningColor: v.awning,
         seed: vi * 31 + 7, facingPlaza: 'top', seatingPositions: seats,
         queuePositions: queue,
-        venueName: this.generateVenueName(v.type, vi * 31 + 7),
       });
       vi++;
     }
@@ -701,7 +705,6 @@ export class CityLayout {
         type: v.type, name: v.name, color: v.color, awningColor: v.awning,
         seed: vi * 31 + 7, facingPlaza: 'right', seatingPositions: seats,
         queuePositions: queue,
-        venueName: this.generateVenueName(v.type, vi * 31 + 7),
       });
       vi++;
     }
@@ -721,7 +724,6 @@ export class CityLayout {
         type: v.type, name: v.name, color: v.color, awningColor: v.awning,
         seed: vi * 31 + 7, facingPlaza: 'left', seatingPositions: seats,
         queuePositions: queue,
-        venueName: this.generateVenueName(v.type, vi * 31 + 7),
       });
       vi++;
     }
@@ -1667,32 +1669,6 @@ export class CityLayout {
         y >= h.y - margin && y <= h.y + h.h + margin) return true;
     }
     return false;
-  }
-
-  private generateVenueName(type: VenueType, seed: number): string {
-    const cafePrefixes = ['Blue', 'Golden', 'Morning', 'Lazy', 'Urban', 'Velvet', 'Sunrise', 'Cozy', 'Wild', 'Little'];
-    const cafeSuffixes = ['Bean', 'Cup', 'Brew', 'Mug', 'Roast', 'Latte', 'Cafe', 'Corner', 'Nook', 'Parlor'];
-
-    const barPrefixes = ['Rusty', 'Neon', 'Dirty', 'Silver', 'Copper', 'Glass', 'Oaken', 'Drunken', 'Blind', 'Lucky'];
-    const barSuffixes = ['Tap', 'Bottle', 'Lounge', 'Key', 'Anchor', 'Raven', 'Whale', 'Pig', 'Fox', 'Rabbit'];
-
-    const bookPrefixes = ['Ink', 'Paper', 'Dusty', 'Lost', 'Found', 'Ancient', 'Novel', 'Chapter', 'Word', 'Wise'];
-    const bookSuffixes = ['Books', 'Tales', 'Shelf', 'Binding', 'Pages', 'Library', 'Corner', 'Press', 'Scribe', 'Well'];
-
-    const restaurantPrefixes = ['Grand', 'Petite', 'Rustic', 'Modern', 'Spicy', 'Sweet', 'Golden', 'Royal', 'Simple', 'Fresh'];
-    const restaurantSuffixes = ['Bistro', 'Kitchen', 'Grill', 'Garden', 'Table', 'Plate', 'Cuisine', 'Feast', 'Bite', 'Savor'];
-
-    let prefixes = cafePrefixes;
-    let suffixes = cafeSuffixes;
-
-    if (type === 'bar') { prefixes = barPrefixes; suffixes = barSuffixes; }
-    else if (type === 'bookshop') { prefixes = bookPrefixes; suffixes = bookSuffixes; }
-    else if (type === 'restaurant') { prefixes = restaurantPrefixes; suffixes = restaurantSuffixes; }
-    else if (type === 'shop') { prefixes = restaurantPrefixes; suffixes = bookSuffixes; } // Mixed
-
-    const p = prefixes[Math.floor(seededRandom(seed) * prefixes.length)];
-    const s = suffixes[Math.floor(seededRandom(seed + 1) * suffixes.length)];
-    return `${p} ${s}`;
   }
 }
 

@@ -33,6 +33,10 @@ interface Cloud {
   opacity: number;
   seed: number;
   layer: number; // 0 = far background, 1 = mid, 2 = near foreground
+  // Cached offscreen render — rebuilt when cloud moves >4px or grey changes
+  cachedCanvas?: HTMLCanvasElement;
+  cachedGrey?: number;
+  cachedX?: number; // x when cache was last built
 }
 
 interface Puddle {
@@ -329,19 +333,22 @@ export class Weather {
       }
     }
 
-    // Animate rain drops
+    // Animate rain drops — skip entirely when weather is clear (saves iterating 2000 objects)
     const isSnowingStatus = this.current === 'snow' || this.current === 'heavy_snow';
     const isHailingStatus = this.current === 'hail';
-    for (const drop of this.rainDrops) {
-      if (drop.isSnow !== isSnowingStatus || drop.isHail !== isHailingStatus) {
-        // Re-roll drop to match current weather type if it changed
-        Object.assign(drop, this.newDrop());
-      }
-      drop.y += drop.speed;
-      drop.x += isSnowingStatus ? Math.sin(Date.now() / 1000 + drop.y * 0.05) * 1.5 + 0.5 : 0.5; // snow drifts
-      if (drop.y > this.worldH) {
-        drop.y = -drop.length;
-        drop.x = Math.random() * this.worldW;
+    const needsDrops = this.current !== 'clear' && this.alpha > 0.01;
+    if (needsDrops) {
+      const t = Date.now() / 1000; // compute once, not per-particle
+      for (const drop of this.rainDrops) {
+        if (drop.isSnow !== isSnowingStatus || drop.isHail !== isHailingStatus) {
+          Object.assign(drop, this.newDrop());
+        }
+        drop.y += drop.speed;
+        drop.x += isSnowingStatus ? Math.sin(t + drop.y * 0.05) * 1.5 + 0.5 : 0.5;
+        if (drop.y > this.worldH) {
+          drop.y = -drop.length;
+          drop.x = Math.random() * this.worldW;
+        }
       }
     }
 
@@ -496,107 +503,122 @@ export class Weather {
       }
     }
     // --- Parallax clouds ---
-    // Background layer clouds are ALWAYS visible (ambient depth).
-    // Mid and near layers become more visible with weather intensity.
+    // Each cloud is rendered once to an offscreen canvas and cached.
+    // The cache is only rebuilt when the cloud's colour (grey) changes by >3
+    // (i.e. storm intensity shifts), not every frame — eliminating ~200
+    // createRadialGradient calls per frame.
     for (const cloud of this.clouds) {
       let layerAlpha: number;
       if (cloud.layer === 0) {
-        // Far layer: always clearly visible — big fluffy background clouds
         layerAlpha = cloud.opacity * (0.8 + this.alpha * 0.2);
       } else if (cloud.layer === 1) {
-        // Mid layer: visible in clear, fuller in cloudy
         layerAlpha = cloud.opacity * (0.6 + this.alpha * 0.4);
       } else {
-        // Near layer: visible in clear, prominent in cloudy/rain
         layerAlpha = cloud.opacity * (0.35 + this.alpha * 0.65);
       }
-
-      // Reduce at night
       layerAlpha *= (1 - nightAlpha * 0.5);
       if (layerAlpha < 0.01) continue;
 
-      // Cloud color shifts slightly by layer for depth. Darken them during rain!
       const stormDarkness = this.alpha * 80;
       const baseGrey = cloud.layer === 0 ? 200 : cloud.layer === 1 ? 185 : 170;
       const grey = Math.max(70, baseGrey - stormDarkness);
 
-      const cx = cloud.x;
-      const cy = cloud.y;
+      // Rebuild offscreen cache when grey shifts enough or first time
+      if (!cloud.cachedCanvas || cloud.cachedGrey === undefined || Math.abs(grey - cloud.cachedGrey) > 3) {
+        const hw = cloud.w / 2;
+        const hh = cloud.h / 2;
+        const pad = 4;
+        const cw = cloud.w + pad * 2;
+        const ch = cloud.h + pad * 2;
+
+        // Seeded PRNG — same seed → same puff layout every rebuild
+        let rngState = cloud.seed * 9301 + 49297;
+        const seededRandom = (): number => {
+          rngState = (rngState * 9301 + 49297) % 233280;
+          return rngState / 233280;
+        };
+
+        const puffCount = 5 + Math.floor(seededRandom() * 5);
+        const puffs: Array<{ px: number; py: number; r: number }> = [];
+        for (let i = 0; i < puffCount; i++) {
+          const angle = seededRandom() * Math.PI * 2;
+          const dist = seededRandom() * (hw * 0.5);
+          // coords relative to cloud centre
+          const px = Math.cos(angle) * dist;
+          const py = Math.sin(angle) * dist * (hh / hw);
+          const r = (hh * 0.4) + seededRandom() * (hh * 0.6);
+          puffs.push({ px, py, r });
+        }
+
+        if (!cloud.cachedCanvas) cloud.cachedCanvas = document.createElement('canvas');
+        cloud.cachedCanvas.width = cw;
+        cloud.cachedCanvas.height = ch;
+        const oc = cloud.cachedCanvas.getContext('2d')!;
+        oc.clearRect(0, 0, cw, ch);
+
+        const ox = hw + pad; // offset so cloud centre → canvas centre
+        const oy = hh + pad;
+
+        const drawPath = () => {
+          oc.beginPath();
+          for (const p of puffs) {
+            oc.moveTo(ox + p.px + p.r, oy + p.py);
+            oc.arc(ox + p.px, oy + p.py, p.r, 0, Math.PI * 2);
+          }
+        };
+
+        // Base body (full opacity on offscreen — alpha applied at blit time)
+        oc.fillStyle = `rgb(${grey + 10}, ${grey + 12}, ${grey + 15})`;
+        drawPath();
+        oc.fill();
+
+        // Volume shading — one gradient per puff (only when rebuilding, not every frame)
+        const hiGrey = Math.min(255, grey + 40);
+        for (const p of puffs) {
+          const grad = oc.createRadialGradient(
+            ox + p.px - p.r * 0.2, oy + p.py - p.r * 0.2, p.r * 0.1,
+            ox + p.px, oy + p.py, p.r * 1.2
+          );
+          grad.addColorStop(0, `rgba(${hiGrey}, ${hiGrey + 2}, ${hiGrey + 5}, 0.7)`);
+          grad.addColorStop(0.5, `rgba(${hiGrey}, ${hiGrey + 2}, ${hiGrey + 5}, 0.2)`);
+          grad.addColorStop(1, `rgba(${grey}, ${grey}, ${grey}, 0)`);
+          oc.fillStyle = grad;
+          oc.beginPath();
+          oc.arc(ox + p.px, oy + p.py, p.r * 0.95, 0, Math.PI * 2);
+          oc.fill();
+        }
+
+        // Outline
+        oc.strokeStyle = `rgba(${Math.max(0, grey - 30)}, ${Math.max(0, grey - 25)}, ${Math.max(0, grey - 20)}, 0.2)`;
+        oc.lineWidth = 1;
+        drawPath();
+        oc.stroke();
+
+        cloud.cachedGrey = grey;
+        cloud.cachedX = cloud.x; // record x at build time (unused but useful for debug)
+      }
+
       const hw = cloud.w / 2;
       const hh = cloud.h / 2;
+      const pad = 4;
 
-      // --- Seeded PRNG for deterministic cloud shapes ---
-      let rngState = cloud.seed * 9301 + 49297;
-      const seededRandom = (): number => {
-        rngState = (rngState * 9301 + 49297) % 233280;
-        return rngState / 233280;
-      };
-
-      // --- Top-down fluffy cloud ---
-      // Build an organic blob of overlapping circles around the center
-      const puffCount = 5 + Math.floor(seededRandom() * 5); // 5-9 puffs
-      interface Puff {
-        px: number; py: number; r: number;
-      }
-      const puffs: Puff[] = [];
-
-      for (let i = 0; i < puffCount; i++) {
-        const angle = seededRandom() * Math.PI * 2;
-        const dist = seededRandom() * (hw * 0.5);
-        const px = cx + Math.cos(angle) * dist;
-        const py = cy + Math.sin(angle) * dist * (hh / hw); // squash to fit aspect ratio
-        const r = (hh * 0.4) + seededRandom() * (hh * 0.6);
-        puffs.push({ px, py, r });
-      }
-
-      // --- Build the cloud silhouette path ---
-      const drawCloudPath = () => {
-        ctx.beginPath();
-        for (const p of puffs) {
-          ctx.moveTo(p.px + p.r, p.py);
-          ctx.arc(p.px, p.py, p.r, 0, Math.PI * 2);
-        }
-      };
-
-      // --- Cloud shadow on ground ---
+      // Optional ground shadow (cheap — just blit the cache darkened)
       if (cloud.layer <= 1 && layerAlpha > 0.03) {
-        ctx.save();
-        const shadowOffsetY = (cloud.layer === 0 ? 80 : 40);
+        const shadowOffsetY = cloud.layer === 0 ? 80 : 40;
         const shadowAlpha = layerAlpha * (cloud.layer === 0 ? 0.06 : 0.08);
-        ctx.fillStyle = `rgba(0, 0, 0, ${shadowAlpha})`;
-        // Translate shadow cast diagonally down/right
-        ctx.translate(hw * 0.1, shadowOffsetY);
-        drawCloudPath();
-        ctx.fill();
+        ctx.save();
+        ctx.globalAlpha = shadowAlpha;
+        ctx.filter = 'brightness(0)'; // silhouette
+        ctx.drawImage(cloud.cachedCanvas!, cloud.x - hw - pad + hw * 0.1, cloud.y - hh - pad + shadowOffsetY);
+        ctx.filter = 'none';
         ctx.restore();
       }
 
-      // --- Main cloud body ---
-      ctx.fillStyle = `rgba(${grey + 10}, ${grey + 12}, ${grey + 15}, ${layerAlpha})`;
-      drawCloudPath();
-      ctx.fill();
-
-      // --- Cloud shading (top-down volume) ---
-      for (const p of puffs) {
-        const hiGrey = Math.min(255, grey + 40);
-        const grad = ctx.createRadialGradient(
-          p.px - p.r * 0.2, p.py - p.r * 0.2, p.r * 0.1,
-          p.px, p.py, p.r * 1.2
-        );
-        grad.addColorStop(0, `rgba(${hiGrey}, ${hiGrey + 2}, ${hiGrey + 5}, ${layerAlpha * 0.7})`);
-        grad.addColorStop(0.5, `rgba(${hiGrey}, ${hiGrey + 2}, ${hiGrey + 5}, ${layerAlpha * 0.2})`);
-        grad.addColorStop(1, `rgba(${grey}, ${grey}, ${grey}, 0)`);
-        ctx.fillStyle = grad;
-        ctx.beginPath();
-        ctx.arc(p.px, p.py, p.r * 0.95, 0, Math.PI * 2);
-        ctx.fill();
-      }
-
-      // --- Outline to define the shape crisply ---
-      ctx.strokeStyle = `rgba(${Math.max(0, grey - 30)}, ${Math.max(0, grey - 25)}, ${Math.max(0, grey - 20)}, ${layerAlpha * 0.2})`;
-      ctx.lineWidth = 1;
-      drawCloudPath();
-      ctx.stroke();
+      // Blit cached cloud — just one drawImage call per cloud per frame
+      ctx.save();
+      ctx.globalAlpha = layerAlpha;
+      ctx.drawImage(cloud.cachedCanvas!, cloud.x - hw - pad, cloud.y - hh - pad);
+      ctx.restore();
     }
 
   }

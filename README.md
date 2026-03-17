@@ -21,7 +21,7 @@ A procedurally generated top-down city where pedestrians form a digital clock in
 - **Dynamic City Events** - street musicians and protests occasionally spawn in the plaza, drawing nearby crowds of pedestrians to watch and interact.
 - **Service & Delivery Vehicles** - orange delivery vans enter the plaza, park outside a venue to drop off packages. City buses (red/blue) and garbage trucks (green) navigate the road network with unique behaviours.
 - **Emergency vehicles** - police cars, ambulances and fire trucks with flashing sirens.
-- **Traffic system** - cars navigate the road network with traffic lights, braking for pedestrians and each other, smooth turning at junctions, and anti-gridlock logic.
+- **Traffic system** - cars navigate the road network with traffic lights, braking for pedestrians and each other, smooth arc turns at junctions (position glides to the new lane over ~20 frames rather than snapping), and anti-gridlock logic.
 - **Day/night cycle** - real-time lighting based on system clock; street lights, lamp posts, building windows outlaid by granular business/residential schedules, and headlights glow at night.
 - **Weather** - procedural clouds with realistic multi-lobe shapes, 3D shading, and ground shadows drifting across the city.
 - **Zoom and pan** - scroll-wheel zoom, click-drag pan, touch pinch and drag on mobile
@@ -67,7 +67,7 @@ The city world is 2x the viewport in each dimension, so zooming out reveals the 
 Configurable from 10 to 300 vehicles including delivery vans and emergency services:
 
 - **Normal cars** - scan ahead for pedestrians and other cars, brake proportionally; smooth arc turns at junctions; headlight beams at night
-- **Delivery vans** - navigate to the plaza via road network, enter through plaza entrances, deliver packages to venue fronts, then exit and rejoin traffic
+- **Delivery vans** - navigate to the plaza via a dedicated delivery entrance road, drive into the square, drop packages at venue fronts, then exit and rejoin the main road network
 - **Specialized Service Vehicles** - city buses that pause at intersections to simulate pickups, and garbage trucks that slowly traverse the city.
 - **Emergency vehicles** - police, ambulance and fire trucks with flashing light bars and sirens
 - **Traffic lights** - alternating red/green phases at intersections; cars clear intersections before stopping
@@ -101,6 +101,16 @@ Dynamic live weather powered by the Open-Meteo API:
 1. **Static canvas** - roads, sidewalks, crosswalks, plaza, buildings, houses, venues and parks pre-rendered to an offscreen canvas; rebuilt only when the lighting level changes
 2. **Dynamic layer** - cars, pedestrians, dropped packages and animated tree sway drawn fresh each frame
 3. **DPR-aware** - canvas resolution scales with devicePixelRatio (capped at 2x) for crisp rendering on Retina displays
+
+### Battery & Performance
+
+City Clock is designed to run efficiently as a always-on wallpaper or bedside clock:
+
+- **30fps cap** - the render loop is throttled to 30fps rather than running uncapped; halves sustained CPU and GPU load with no visible quality difference for a slow-moving city scene
+- **Visibility pause** - the loop stops entirely when the tab is hidden or the screen is off (via the Page Visibility API), dropping power draw to near zero when no one is watching
+- **Cloud caching** - each cloud is pre-rendered to an offscreen canvas and cached; only rebuilt when storm intensity changes the cloud colour. Eliminates ~200 `createRadialGradient` calls per frame
+- **Idle particle skip** - the 2000-particle rain pool is only iterated during active precipitation; clear weather skips the loop entirely
+- **Single `Date.now()` per frame** - shared time value computed once before the particle loop rather than per-particle
 
 ## Tech Stack
 

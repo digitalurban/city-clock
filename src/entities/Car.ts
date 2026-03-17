@@ -1,5 +1,5 @@
 import { CAR_SPEED, ROAD_WIDTH } from '../utils/constants';
-import type { CityLayout, RoadSegment, VenueDef, PlazaEntrance, IntersectionDef } from '../city/CityLayout';
+import type { CityLayout, RoadSegment, VenueDef, PlazaEntrance, IntersectionDef, DeliveryLane } from '../city/CityLayout';
 import type { Pedestrian } from './Pedestrian';
 
 const CAR_COLORS = [
@@ -32,7 +32,7 @@ type CarType = 'normal' | 'delivery' | 'police' | 'ambulance' | 'firetruck' | 'b
  * - 'to_exit': driving back toward a plaza entrance
  * - 'rejoin_road': steering from entrance back onto a nearby road
  */
-type DeliveryState = 'road' | 'seeking_plaza' | 'to_entrance' | 'to_venue' | 'delivering' | 'to_exit' | 'rejoin_road';
+type DeliveryState = 'road' | 'seeking_plaza' | 'to_venue' | 'delivering' | 'to_exit' | 'rejoin_road';
 
 export class Car {
   x: number = 0;
@@ -62,15 +62,24 @@ export class Car {
   targetX: number = 0;
   targetY: number = 0;
 
-  // Plaza interior waypoints (to avoid cutting through venue buildings)
+  // Plaza interior waypoints (lane entry → lateral move → delivery point)
   plazaWaypoints: { x: number; y: number }[] = [];
   plazaWaypointIdx: number = 0;
+
+  // Delivery lane selected for this delivery run
+  selectedLane: DeliveryLane | null = null;
+  // Frames spent seeking the lane entry (timeout safety)
+  seekingLaneTimer: number = 0;
 
   // Smooth angle interpolation (no bezier, just lerp the visual heading)
   private angleTarget: number = 0;
   private stuckTimer: number = 0;
   // Cooldown after a road transition to prevent re-triggering for several frames
   private transitionCooldown: number = 0;
+
+  // Smooth lane drift after a turn — avoids hard positional snap
+  private laneTargetX: number = NaN;
+  private laneTargetY: number = NaN;
 
   // Traffic light: stopped at red
   stoppedAtLight: boolean = false;
@@ -317,22 +326,21 @@ export class Car {
     this.road = road;
 
     if (road.horizontal) {
-      // Keep moving in whichever horizontal direction gets us further into this road
-      // (pick direction based on which end of the road we entered from)
       const dirX = this.dirX !== 0 ? Math.sign(this.dirX) :
         (this.x < road.x + road.w / 2 ? 1 : -1);
       this.dirX = dirX;
       this.dirY = 0;
-      // Snap to the correct lane (right-hand traffic)
-      this.y = road.y + (dirX > 0 ? road.h * 0.75 : road.h * 0.25);
+      // Set target lane — position drifts smoothly instead of hard snap
+      this.laneTargetY = road.y + (dirX > 0 ? road.h * 0.75 : road.h * 0.25);
+      this.laneTargetX = NaN;
       this.angleTarget = dirX > 0 ? 0 : Math.PI;
     } else {
       const dirY = this.dirY !== 0 ? Math.sign(this.dirY) :
         (this.y < road.y + road.h / 2 ? 1 : -1);
       this.dirX = 0;
       this.dirY = dirY;
-      // Snap to the correct lane
-      this.x = road.x + (dirY > 0 ? road.w * 0.25 : road.w * 0.75);
+      this.laneTargetX = road.x + (dirY > 0 ? road.w * 0.25 : road.w * 0.75);
+      this.laneTargetY = NaN;
       this.angleTarget = dirY > 0 ? Math.PI / 2 : -Math.PI / 2;
     }
     this.vx = this.dirX * this.currentSpeed;
@@ -426,6 +434,18 @@ export class Car {
     else if (v.facingPlaza === 'right') { px = v.x + v.w + stopDist; }
     else { px = v.x - stopDist; }
     return { x: px, y: py };
+  }
+
+  /** Pick the delivery lane to use for a given venue.
+   *  Top venues (facing down) → top lane. Everything else → nearest lane by y. */
+  private pickDeliveryLane(venue: VenueDef, layout: CityLayout): DeliveryLane | null {
+    if (layout.deliveryLanes.length === 0) return null;
+    if (layout.deliveryLanes.length === 1) return layout.deliveryLanes[0];
+    const midY = layout.plazaBounds.y + layout.plazaBounds.h / 2;
+    if (venue.facingPlaza === 'bottom' || venue.y + venue.h / 2 < midY) {
+      return layout.deliveryLanes[0]; // top lane
+    }
+    return layout.deliveryLanes[1]; // bottom lane
   }
 
   /** Build a path through the plaza interior to avoid cutting through venue buildings.
@@ -576,7 +596,7 @@ export class Car {
     let da = this.angleTarget - this.angle;
     while (da > Math.PI) da -= Math.PI * 2;
     while (da < -Math.PI) da += Math.PI * 2;
-    this.angle += da * 0.18; // ~20 frame lerp
+    this.angle += da * 0.22; // ~15 frame lerp — snappier turns
 
     // Calculate red light status once per frame
     const isEmergency = this.carType === 'police' || this.carType === 'ambulance' || this.carType === 'firetruck';
@@ -607,6 +627,21 @@ export class Car {
       this.updateNormal(layout, pedestrians, cars, trafficPhase, stoppedAtRedLight);
     }
 
+    // Smooth lane drift after a road transition — replaces hard positional snap.
+    // Position glides to the correct lane over ~20 frames; the existing angle
+    // lerp handles rotation cleanly without any extra manipulation.
+    const LANE_RATE = 0.14;
+    if (!isNaN(this.laneTargetY)) {
+      const dy = this.laneTargetY - this.y;
+      this.y += dy * LANE_RATE;
+      if (Math.abs(dy) < 0.3) { this.y = this.laneTargetY; this.laneTargetY = NaN; }
+    }
+    if (!isNaN(this.laneTargetX)) {
+      const dx = this.laneTargetX - this.x;
+      this.x += dx * LANE_RATE;
+      if (Math.abs(dx) < 0.3) { this.x = this.laneTargetX; this.laneTargetX = NaN; }
+    }
+
     // Update siren phase for emergency vehicles
     if (this.carType === 'police' || this.carType === 'ambulance' || this.carType === 'firetruck') {
       this.sirenPhase += 0.15;
@@ -626,46 +661,29 @@ export class Car {
       targetSpeed = 0;
     }
 
-    // Pedestrian avoidance — scaled by vehicle length
-    const pedScanDist = this.length * 1.5 + 15;
-    const pedScanWidth = this.width * 0.8 + 4;
+    // Pedestrian avoidance
     for (const p of pedestrians) {
       const dx = p.x - frontX;
       const dy = p.y - frontY;
       const along = dx * this.dirX + dy * this.dirY;
       const perp = Math.abs(dx * this.dirY - dy * this.dirX);
-      if (along > 0 && along < pedScanDist && perp < pedScanWidth) {
-        targetSpeed = Math.min(targetSpeed, this.baseSpeed * (along / pedScanDist) * 0.5);
+      if (along > 0 && along < 40 && perp < 12) {
+        targetSpeed = Math.min(targetSpeed, this.baseSpeed * (along / 40) * 0.5);
       }
     }
 
-    // Car-to-car avoidance — scaled by vehicle length and width
-    const isEmergency = this.carType === 'police' || this.carType === 'ambulance' || this.carType === 'firetruck';
+    // Car-to-car avoidance: Centralized logic for all vehicle types
     for (const other of cars) {
       if (other === this) continue;
-
-      // Emergency vehicle yielding: other cars brake for nearby emergency vehicles
-      const otherIsEmergency = other.carType === 'police' || other.carType === 'ambulance' || other.carType === 'firetruck';
-      if (otherIsEmergency && !isEmergency) {
-        const emergDist = Math.hypot(other.x - this.x, other.y - this.y);
-        if (emergDist < 80) {
-          // Check if emergency vehicle is approaching us from behind or ahead
-          const toEmerg = (other.x - this.x) * this.dirX + (other.y - this.y) * this.dirY;
-          if (toEmerg > -20) {
-            targetSpeed = Math.min(targetSpeed, this.baseSpeed * 0.2);
-          }
-        }
-      }
-
       const dx = other.x - frontX;
       const dy = other.y - frontY;
       const along = dx * this.dirX + dy * this.dirY;
       const perp = Math.abs(dx * this.dirY - dy * this.dirX);
 
-      // Scale detection zone by vehicle dimensions
-      const safetyDist = this.length * 1.5 + 15;
-      const safetyWidth = this.width * 0.8;
-      const hardStopDist = (this.length + other.length) * 0.45;
+      // Wider detection for non-horizontal/vertical overlaps (e.g. slight nudges)
+      const safetyWidth = (this.carType === 'delivery' || this.carType === 'bus') ? 16 : 12;
+      const safetyDist = (this.carType === 'delivery' || this.carType === 'bus') ? 50 : 35;
+      const hardStopDist = 18; // Complete stop if very close
 
       if (along > 0 && along < safetyDist && perp < safetyWidth) {
         const dotDir = this.dirX * other.dirX + this.dirY * other.dirY;
@@ -680,25 +698,12 @@ export class Car {
           }
         }
       }
-
-      // Hard overlap push: if cars are literally overlapping, force separation
-      const centerDist = Math.hypot(other.x - this.x, other.y - this.y);
-      const minSep = (this.length + other.length) * 0.4;
-      if (centerDist < minSep && centerDist > 0.1) {
-        targetSpeed = 0;
-        // Nudge slightly apart
-        const pushScale = 0.3;
-        const pushX = (this.x - other.x) / centerDist * pushScale;
-        const pushY = (this.y - other.y) / centerDist * pushScale;
-        this.x += pushX;
-        this.y += pushY;
-      }
     }
 
     // Track stopped duration
     if (this.currentSpeed < 0.1) {
       this.stoppedFrames++;
-      this.stuckTimer++;
+      this.stuckTimer++; // Also increment stuckTimer for off-road checks
     } else {
       this.stoppedFrames = 0;
       this.stuckTimer = 0;
@@ -706,12 +711,21 @@ export class Car {
 
     this.currentSpeed += (targetSpeed - this.currentSpeed) * 0.12;
 
-    // Gridlock resolution: if stopped too long (>4 seconds = ~240 frames), teleport
-    if (this.stoppedFrames > 240 && !stoppedAtRedLight) {
-      this.road = this.pickRandomRoad(layout);
-      this.placeOnRoad(this.road);
+    // Gridlock resolution: if stopped too long (>6 seconds = ~360 frames), try to reverse or nudge
+    // ONLY if not stopped at a red light. This prevents cars from turning around at traffic signals.
+    if (this.stoppedFrames > 360 && !stoppedAtRedLight) {
+      if (Math.random() < 0.2 && this.deliveryState === 'road') {
+        this.reverseDirection();
+      } else {
+        // Nudge: slightly shift position to break local overlap jams
+        // Prefer lateral nudges to slip past obstacles
+        if (this.road.horizontal) {
+          this.y += (Math.random() - 0.5) * 6;
+        } else {
+          this.x += (Math.random() - 0.5) * 6;
+        }
+      }
       this.stoppedFrames = 0;
-      this.currentSpeed = this.baseSpeed;
       return;
     }
 
@@ -791,208 +805,175 @@ export class Car {
   }
 
   /**
-   * Delivery truck state machine: drives on roads toward the plaza,
-   * then enters through an entrance to deliver packages to venue fronts.
+   * Delivery truck state machine.
+   *
+   * Trucks use the dedicated delivery lanes (vertical road strips entering the plaza
+   * from the top/bottom bordering roads). This gives a deterministic, reliable path:
+   *   road → seeking_plaza → to_venue (lane entry → inside lane → lateral → venue front)
+   *       → delivering → to_exit (reverse through lane) → rejoin_road → road
    */
   private updateDelivery(layout: CityLayout, pedestrians: Pedestrian[], cars: Car[], trafficPhase: number, stoppedAtRedLight: boolean) {
-    const plazaSpeed = this.baseSpeed * 0.6; // slow inside plaza
+    const laneSpeed = this.baseSpeed * 0.55;
 
     switch (this.deliveryState) {
       case 'road': {
-        // Normal road driving, count down to next delivery
         this.updateNormal(layout, pedestrians, cars, trafficPhase, stoppedAtRedLight);
         this.deliveryTimer--;
         if (this.deliveryTimer <= 0 && layout.venues.length > 0) {
-          // Pick a random venue that no other truck is targeting
           const available = layout.venues.filter(v =>
             !cars.some(c => c !== this && c.carType === 'delivery' &&
               c.deliveryState !== 'road' && c.targetVenue === v)
           );
-          if (available.length === 0) {
-            this.deliveryTimer = 60;
-            return;
-          }
+          if (available.length === 0) { this.deliveryTimer = 60; return; }
+
           const venue = available[Math.floor(Math.random() * available.length)];
           this.targetVenue = venue;
+          this.selectedLane = this.pickDeliveryLane(venue, layout);
+          if (!this.selectedLane) { this.deliveryTimer = 60; this.targetVenue = null; return; }
 
-          // Find entrance nearest to the delivery point
-          const deliveryPt = this.getVenueDeliveryPoint(venue);
-          this.targetEntrance = this.findNearestEntrance(layout, deliveryPt.x, deliveryPt.y);
-          if (!this.targetEntrance) {
-            this.deliveryTimer = 60;
-            this.targetVenue = null;
-            return;
-          }
-
-          // Switch to seeking_plaza — keep driving on roads but bias toward entrance
+          this.seekingLaneTimer = 0;
           this.deliveryState = 'seeking_plaza';
         }
         break;
       }
 
       case 'seeking_plaza': {
-        // Drive on roads normally, but when reaching a junction pick
-        // the road closest to the target entrance. Once close enough
-        // to the entrance, switch to direct movement into the plaza.
-        if (!this.targetEntrance) { this.deliveryState = 'road'; break; }
+        // Drive on roads toward the delivery lane entry point, biasing turns at junctions.
+        // Once within range of the lane entry, build the full waypoint path and start driving in.
+        if (!this.selectedLane || !this.targetVenue) { this.deliveryState = 'road'; break; }
 
-        // Check if we're close enough to the entrance to leave the road
-        if (this.isNearEntrance(this.targetEntrance)) {
-          this.targetX = this.targetEntrance.x;
-          this.targetY = this.targetEntrance.y;
-          this.deliveryState = 'to_entrance';
+        this.seekingLaneTimer++;
+        if (this.seekingLaneTimer > 2000) {
+          // Timeout — give up and retry after a short pause
+          this.deliveryState = 'road';
+          this.deliveryTimer = 150 + Math.floor(Math.random() * 200);
+          this.targetVenue = null;
+          this.selectedLane = null;
           break;
         }
 
-        // Drive on road with pedestrian/car avoidance + traffic lights
-        let targetSpeed = this.baseSpeed;
+        const lane = this.selectedLane;
+        const distToEntry = Math.hypot(this.x - lane.laneX, this.y - lane.outerY);
 
-        // Traffic light check for delivery trucks
+        if (distToEntry < 100) {
+          // Close enough — truck is on or very near the approach road stub.
+          // Build the full off-road path into the plaza:
+          //   WP0: lane entryY (plaza boundary)
+          //   WP1: lane innerY (past the venue band)
+          //   WP2: lateral move to delivery x at innerY
+          //   WP3: delivery point (in front of venue face)
+          const dp = this.getVenueDeliveryPoint(this.targetVenue);
+          this.plazaWaypoints = [
+            { x: lane.laneX, y: lane.entryY },
+            { x: lane.laneX, y: lane.innerY },
+            { x: dp.x, y: lane.innerY },
+            dp,
+          ];
+          this.plazaWaypointIdx = 0;
+          this.targetX = this.plazaWaypoints[0].x;
+          this.targetY = this.plazaWaypoints[0].y;
+          this.deliveryState = 'to_venue';
+          // Clear any pending lane drift — moveToward handles its own positioning
+          this.laneTargetX = NaN;
+          this.laneTargetY = NaN;
+          break;
+        }
+
+        // Still on roads — drive with traffic awareness, biasing turns toward lane entry
+        let targetSpeed = this.baseSpeed;
         const signal = this.getTrafficSignal(layout, trafficPhase);
         if (signal === 'red') {
           targetSpeed = 0;
         } else if (signal === 'yellow') {
           for (const inter of layout.intersections) {
-            const dist = Math.hypot(inter.x - this.x, inter.y - this.y);
-            if (dist > 50) continue;
-            const dotAlong = (inter.x - this.x) * this.dirX + (inter.y - this.y) * this.dirY;
-            if (dotAlong > 20) targetSpeed = 0;
-            break;
+            if (Math.hypot(inter.x - this.x, inter.y - this.y) > 50) continue;
+            const dot = (inter.x - this.x) * this.dirX + (inter.y - this.y) * this.dirY;
+            if (dot > 20) { targetSpeed = 0; break; }
           }
         }
 
         const frontX = this.x + this.dirX * this.length * 0.5;
         const frontY = this.y + this.dirY * this.length * 0.5;
         for (const p of pedestrians) {
-          const dx = p.x - frontX;
-          const dy = p.y - frontY;
+          const dx = p.x - frontX, dy = p.y - frontY;
           const along = dx * this.dirX + dy * this.dirY;
           const perp = Math.abs(dx * this.dirY - dy * this.dirX);
-          if (along > 0 && along < 40 && perp < 12) {
+          if (along > 0 && along < 40 && perp < 12)
             targetSpeed = Math.min(targetSpeed, this.baseSpeed * (along / 40) * 0.5);
-          }
         }
-        const safetyDist = (this.carType === 'delivery' || this.carType === 'bus') ? 45 : 35;
-        const safetyWidth = (this.carType === 'delivery' || this.carType === 'bus') ? 14 : 10;
-
         for (const other of cars) {
           if (other === this) continue;
-          const dx = other.x - frontX;
-          const dy = other.y - frontY;
+          const dx = other.x - frontX, dy = other.y - frontY;
           const along = dx * this.dirX + dy * this.dirY;
           const perp = Math.abs(dx * this.dirY - dy * this.dirX);
-          if (along > 0 && along < safetyDist && perp < safetyWidth) {
-            const dotDir = this.dirX * other.dirX + this.dirY * other.dirY;
-            if (dotDir > -0.3) {
-              targetSpeed = Math.min(targetSpeed, this.baseSpeed * (along / safetyDist) * 0.3);
-            }
+          if (along > 0 && along < 50 && perp < 14) {
+            if (this.dirX * other.dirX + this.dirY * other.dirY > -0.3)
+              targetSpeed = Math.min(targetSpeed, this.baseSpeed * (along / 50) * 0.3);
           }
         }
+
         this.currentSpeed += (targetSpeed - this.currentSpeed) * 0.1;
         if (this.currentSpeed < 0.02) {
           this.currentSpeed = 0;
-          // Only increment stuck timer if NOT at a red light
-          if (!stoppedAtRedLight) {
-            this.stuckTimer++;
-          }
+          if (!stoppedAtRedLight) this.stuckTimer++;
         } else {
           this.stuckTimer = 0;
         }
         this.vx = this.dirX * this.currentSpeed;
         this.vy = this.dirY * this.currentSpeed;
+        this.x += this.vx;
+        this.y += this.vy;
 
-        let nextX = this.x + this.vx;
-        let nextY = this.y + this.vy;
-
-        // Plaza seeking building avoidance
-        const obstacle = this.checkObstacles(layout, nextX, nextY);
-        if (obstacle) {
-          const dot = this.dirX * obstacle.nx + this.dirY * obstacle.ny;
-          if (dot < 0) {
-            this.vx = (this.dirX - obstacle.nx * dot) * this.currentSpeed;
-            this.vy = (this.dirY - obstacle.ny * dot) * this.currentSpeed;
-            nextX = this.x + this.vx;
-            nextY = this.y + this.vy;
-          }
-        }
-
-        this.x = nextX;
-        this.y = nextY;
-
-        // When leaving current road, bias toward a road closer to the entrance
+        // At road ends / junctions: pick road that brings us closest to lane entry
         if (this.isOutsideRoad()) {
-          const biased = this.findConnectingRoadToward(
-            layout, this.targetEntrance.x, this.targetEntrance.y
-          );
+          const biased = this.findConnectingRoadToward(layout, lane.laneX, lane.outerY);
           if (biased) {
             this.transitionToRoad(biased);
           } else {
-            // Fallback: pick any connecting road
-            const connecting = this.findConnectingRoad(layout);
-            if (connecting) {
-              this.transitionToRoad(connecting);
-            } else {
-              if (this.currentSpeed < 0.1 && this.stuckTimer > 360) {
-                this.reverseDirection();
-                this.stuckTimer = 0;
-              }
+            const fallback = this.findConnectingRoad(layout);
+            if (fallback) {
+              this.transitionToRoad(fallback);
+            } else if (!stoppedAtRedLight && this.stuckTimer > 180) {
+              this.reverseDirection();
+              this.stuckTimer = 0;
             }
           }
         }
         break;
       }
 
-      case 'to_entrance': {
-        // Short direct drive from the plaza-bordering road into the entrance
-        // Ensure we use a slightly larger "arrived" threshold to avoid getting stuck
-        const arrived = this.moveToward(this.targetX, this.targetY, plazaSpeed, layout);
-        if (arrived && this.targetVenue) {
-          const dp = this.getVenueDeliveryPoint(this.targetVenue);
-          this.plazaWaypoints = this.buildPlazaPath({ x: this.x, y: this.y }, dp, layout);
-          this.plazaWaypointIdx = 0;
-          this.targetX = this.plazaWaypoints[0].x;
-          this.targetY = this.plazaWaypoints[0].y;
-          this.deliveryState = 'to_venue';
-        }
-        break;
-      }
-
       case 'to_venue': {
-        // Follow plaza waypoints to the venue front
-        const arrived = this.moveToward(this.targetX, this.targetY, plazaSpeed * 0.7, layout);
+        // Follow waypoints: lane entry → inside lane → lateral → delivery point
+        const arrived = this.moveToward(this.targetX, this.targetY, laneSpeed);
         if (arrived) {
           this.plazaWaypointIdx++;
           if (this.plazaWaypointIdx < this.plazaWaypoints.length) {
-            const wp = this.plazaWaypoints[this.plazaWaypointIdx];
-            this.targetX = wp.x;
-            this.targetY = wp.y;
-            break;
+            this.targetX = this.plazaWaypoints[this.plazaWaypointIdx].x;
+            this.targetY = this.plazaWaypoints[this.plazaWaypointIdx].y;
+          } else {
+            this.deliveryState = 'delivering';
+            this.deliveryPauseTimer = 0;
+            this.packageDropped = false;
+            this.currentSpeed = 0;
+            this.vx = 0;
+            this.vy = 0;
           }
-          this.deliveryState = 'delivering';
-          this.deliveryPauseTimer = 0;
-          this.packageDropped = false;
-          this.currentSpeed = 0;
-          this.vx = 0;
-          this.vy = 0;
         }
         break;
       }
 
       case 'delivering': {
-        // Parked at venue, drop package
         this.vx = 0;
         this.vy = 0;
         this.deliveryPauseTimer++;
 
         if (!this.packageDropped && this.deliveryPauseTimer >= 50 && this.targetVenue) {
           const v = this.targetVenue;
-          let px = v.x + v.w / 2;
-          let py = v.y + v.h / 2;
+          let px = v.x + v.w / 2, py = v.y + v.h / 2;
           if (v.facingPlaza === 'bottom') py = v.y + v.h + 8;
           else if (v.facingPlaza === 'top') py = v.y - 8;
           else if (v.facingPlaza === 'right') px = v.x + v.w + 8;
           else px = v.x - 8;
-
           Car.droppedPackages.push({
             x: px, y: py,
             timer: 400 + Math.floor(Math.random() * 200),
@@ -1001,59 +982,58 @@ export class Car {
           this.packageDropped = true;
         }
 
-        if (this.deliveryPauseTimer >= 120) {
-          // Done — head back out to an exit entrance
-          this.exitEntrance = this.findNearestEntrance(layout, this.x, this.y);
-          if (this.exitEntrance) {
-            this.plazaWaypoints = this.buildPlazaPath(
-              { x: this.x, y: this.y },
-              { x: this.exitEntrance.x, y: this.exitEntrance.y },
-              layout
-            );
-            this.plazaWaypointIdx = 0;
-            const wp = this.plazaWaypoints[0];
-            this.targetX = wp.x;
-            this.targetY = wp.y;
-          }
+        if (this.deliveryPauseTimer >= 120 && this.selectedLane) {
+          // Exit: drive back through the lane, across the plaza boundary, onto the road
+          const lane = this.selectedLane;
+          this.plazaWaypoints = [
+            { x: lane.laneX, y: lane.innerY },
+            { x: lane.laneX, y: lane.entryY },
+            { x: lane.laneX, y: lane.outerY },
+          ];
+          this.plazaWaypointIdx = 0;
+          this.targetX = this.plazaWaypoints[0].x;
+          this.targetY = this.plazaWaypoints[0].y;
           this.deliveryState = 'to_exit';
         }
         break;
       }
 
       case 'to_exit': {
-        // Follow plaza waypoints back toward an entrance
-        const arrived = this.moveToward(this.targetX, this.targetY, plazaSpeed, layout);
+        // Drive back through the lane and out onto the bordering road
+        const arrived = this.moveToward(this.targetX, this.targetY, laneSpeed);
         if (arrived) {
           this.plazaWaypointIdx++;
           if (this.plazaWaypointIdx < this.plazaWaypoints.length) {
-            const wp = this.plazaWaypoints[this.plazaWaypointIdx];
-            this.targetX = wp.x;
-            this.targetY = wp.y;
-            break;
+            this.targetX = this.plazaWaypoints[this.plazaWaypointIdx].x;
+            this.targetY = this.plazaWaypoints[this.plazaWaypointIdx].y;
+          } else {
+            // Now on the approach road — find the vertical road stub at this column
+            const nearRoad = this.findNearestRoadToPoint(layout, this.x, this.y);
+            if (nearRoad) {
+              this.road = nearRoad;
+              // Drive further along the road away from the plaza so we rejoin cleanly
+              const lane = this.selectedLane!;
+              const awayY = lane.side === 'top'
+                ? nearRoad.y + nearRoad.h / 4   // upper part of road segment above plaza
+                : nearRoad.y + nearRoad.h * 3 / 4; // lower part of road segment below
+              this.targetX = nearRoad.x + nearRoad.w / 2;
+              this.targetY = awayY;
+            }
+            this.deliveryState = 'rejoin_road';
           }
-          // Find nearest road to rejoin
-          const nearRoad = this.findNearestRoadToPoint(layout, this.x, this.y);
-          if (nearRoad) {
-            this.targetX = nearRoad.x + nearRoad.w / 2;
-            this.targetY = nearRoad.y + nearRoad.h / 2;
-            this.road = nearRoad;
-          }
-          this.deliveryState = 'rejoin_road';
         }
         break;
       }
 
       case 'rejoin_road': {
-        // Drive from entrance to the nearest road
-        const arrived = this.moveToward(this.targetX, this.targetY, plazaSpeed, layout);
+        const arrived = this.moveToward(this.targetX, this.targetY, laneSpeed);
         if (arrived) {
-          // Snap onto road — bias direction away from plaza
-          const roadCenter = { x: this.road.x + this.road.w / 2, y: this.road.y + this.road.h / 2 };
           this.transitionToRoad(this.road);
           this.deliveryState = 'road';
           this.targetVenue = null;
           this.targetEntrance = null;
           this.exitEntrance = null;
+          this.selectedLane = null;
           this.deliveryTimer = 200 + Math.random() * 300;
           this.currentSpeed = this.baseSpeed;
         }
@@ -1175,50 +1155,21 @@ export class Car {
 
     switch (this.carType) {
       case 'delivery': {
-        // White/cream cargo box on back — clearly distinguishable
-        const boxW = this.length * 0.55;
-        ctx.fillStyle = `rgb(${Math.floor(240 * darkFactor)}, ${Math.floor(235 * darkFactor)}, ${Math.floor(220 * darkFactor)})`;
-        ctx.fillRect(-hw + 1, -hh + 1.5, boxW, this.width - 3);
-        ctx.strokeStyle = `rgba(0,0,0,0.3)`;
-        ctx.lineWidth = 0.6;
-        ctx.strokeRect(-hw + 1, -hh + 1.5, boxW, this.width - 3);
+        // Cargo box on back
+        ctx.fillStyle = `rgb(${Math.floor(r * darkFactor * 0.75)}, ${Math.floor(g * darkFactor * 0.75)}, ${Math.floor(b * darkFactor * 0.75)})`;
+        ctx.fillRect(-hw + 1, -hh + 1.5, this.length * 0.42, this.width - 3);
+        ctx.strokeStyle = `rgba(0,0,0,0.25)`;
+        ctx.lineWidth = 0.5;
+        ctx.strokeRect(-hw + 1, -hh + 1.5, this.length * 0.42, this.width - 3);
 
-        // Roll-door lines on cargo box rear
-        ctx.strokeStyle = `rgba(0,0,0,0.15)`;
-        ctx.lineWidth = 0.4;
-        ctx.beginPath();
-        ctx.moveTo(-hw + 1, -hh + 3.5);
-        ctx.lineTo(-hw + 1, hh - 2);
-        ctx.stroke();
-        // Horizontal slat lines on cargo box
-        for (let sy = -hh + 3; sy < hh - 2; sy += 2.5) {
-          ctx.beginPath();
-          ctx.moveTo(-hw + 2, sy);
-          ctx.lineTo(-hw + 2 + boxW - 2, sy);
-          ctx.stroke();
-        }
-
-        // Orange stripe on sides of cargo box
-        ctx.fillStyle = `rgba(${Math.floor(r * darkFactor)}, ${Math.floor(g * darkFactor)}, ${Math.floor(b * darkFactor * 0.7)}, 0.8)`;
-        ctx.fillRect(-hw + 1, -hh + 1.5, boxW, 1.5);
-        ctx.fillRect(-hw + 1, hh - 3, boxW, 1.5);
-
-        // Hazard flashers when in the plaza (not on roads) — larger with glow
+        // Hazard flashers when in the plaza (not on roads)
         if (this.deliveryState !== 'road' && this.deliveryState !== 'seeking_plaza') {
           if (flash) {
-            ctx.fillStyle = `rgba(255, 160, 0, 0.95)`;
-            ctx.fillRect(-hw - 0.5, -hh - 0.5, 3, 3);
-            ctx.fillRect(-hw - 0.5, hh - 2.5, 3, 3);
-            ctx.fillRect(hw - 2.5, -hh - 0.5, 3, 3);
-            ctx.fillRect(hw - 2.5, hh - 2.5, 3, 3);
-            // Glow effect
-            ctx.fillStyle = `rgba(255, 180, 0, 0.2)`;
-            ctx.beginPath();
-            ctx.arc(-hw, -hh, 6, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.beginPath();
-            ctx.arc(hw, hh, 6, 0, Math.PI * 2);
-            ctx.fill();
+            ctx.fillStyle = `rgba(255, 160, 0, 0.9)`;
+            ctx.fillRect(-hw, -hh, 2, 2);
+            ctx.fillRect(-hw, hh - 2, 2, 2);
+            ctx.fillRect(hw - 2, -hh, 2, 2);
+            ctx.fillRect(hw - 2, hh - 2, 2, 2);
           }
         }
         break;

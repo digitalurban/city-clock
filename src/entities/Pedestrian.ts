@@ -125,27 +125,17 @@ export class Pedestrian {
   // Crosswalk routing intermediate waypoint
   intermediateWaypoint: { x: number; y: number } | null = null;
 
-  // Home and Work assignment
+  // Home assignment
   assignedHome: number = -1; // index into layout.houses
-  assignedWorkplace: { type: 'building' | 'venue'; index: number } | null = null;
   isGoingHome: boolean = false;
   isAtHome: boolean = false;
-  isGoingToWork: boolean = false;
-  isAtWork: boolean = false;
-  isGardening: boolean = false;
-  gardenTimer: number = 0;
   homeTimer: number = 0;
   homeDuration: number = 0;
-  workTimer: number = 0;
 
   // Needs
   energy: number = 100;
   hunger: number = 100;
   social: number = 100;
-
-  // Intelligence Refinement
-  targetVenue: VenueDef | null = null;
-  isSeekingVenue: boolean = false;
 
   // Bicycle
   hasBicycle: boolean = false;
@@ -155,26 +145,44 @@ export class Pedestrian {
   currentWeatherType: string = 'clear';
   bicycleSpeed: number = 0;
 
-  name: string;
-  activityState: 'home' | 'work' | 'social' | 'commuting' | 'clock' = 'social';
-  personality: 'hurried' | 'relaxed' | 'socialite' | 'homebody';
-
-  private static FIRST_NAMES = ['Aiden', 'Alice', 'Ben', 'Bella', 'Charles', 'Chloe', 'Daniel', 'Daisy', 'Ethan', 'Emma', 'Finn', 'Fiona', 'George', 'Grace', 'Henry', 'Hazel', 'Isaac', 'Iris', 'Jack', 'Jade', 'Kai', 'Kira', 'Liam', 'Luna', 'Max', 'Maya', 'Noah', 'Nora', 'Oliver', 'Olive', 'Peter', 'Piper', 'Quinn', 'Rose', 'Sam', 'Sophie', 'Thomas', 'Thea', 'Umar', 'Una', 'Victor', 'Vera', 'Will', 'Willa', 'Xander', 'Xena', 'Yusuf', 'Yara', 'Zane', 'Zoe'];
-  private static LAST_NAMES = ['Smith', 'Johnson', 'Williams', 'Brown', 'Jones', 'Garcia', 'Miller', 'Davis', 'Rodriguez', 'Martinez', 'Hernandez', 'Lopez', 'Gonzalez', 'Wilson', 'Anderson', 'Thomas', 'Taylor', 'Moore', 'Jackson', 'Martin', 'Lee', 'Perez', 'Thompson', 'White', 'Harris', 'Sanchez', 'Clark', 'Ramirez', 'Lewis', 'Robinson', 'Walker', 'Young', 'Allen', 'King', 'Wright', 'Scott', 'Torres', 'Nguyen', 'Hill', 'Flores', 'Green', 'Adams', 'Nelson', 'Baker', 'Hall', 'Rivera', 'Campbell', 'Mitchell', 'Carter', 'Roberts'];
-
   constructor(layout: CityLayout, index: number, clockEligibleCount: number) {
     this.isClockEligible = index < clockEligibleCount;
     this.idOffset = Math.random() * 1000;
-    this.name = `${Pedestrian.FIRST_NAMES[Math.floor(Math.random() * Pedestrian.FIRST_NAMES.length)]} ${Pedestrian.LAST_NAMES[Math.floor(Math.random() * Pedestrian.LAST_NAMES.length)]}`;
+    this.size = 0.8 + Math.random() * 0.4;
+    this.baseSpeed = PEDESTRIAN_BASE_SPEED * (0.7 + Math.random() * 0.6);
+    this.maxSpeed = this.baseSpeed;
+    this.maxForce = PEDESTRIAN_MAX_FORCE * (0.8 + Math.random() * 0.4);
+    this.color = PEDESTRIAN_COLORS[Math.floor(Math.random() * PEDESTRIAN_COLORS.length)];
 
-    // Assign personality
-    const pRoll = Math.random();
-    if (pRoll < 0.25) this.personality = 'hurried';
-    else if (pRoll < 0.5) this.personality = 'homebody';
-    else if (pRoll < 0.75) this.personality = 'socialite';
-    else this.personality = 'relaxed';
+    // Varied skin tones
+    this.skinTone = SKIN_TONES[Math.floor(Math.random() * SKIN_TONES.length)];
 
-    // Default spawn in plaza for clock or random for others
+    // Hair style
+    const hairRoll = Math.random();
+    if (hairRoll < 0.12) this.hairStyle = 'bald';
+    else if (hairRoll < 0.42) this.hairStyle = 'short';
+    else if (hairRoll < 0.72) this.hairStyle = 'long';
+    else this.hairStyle = 'hat';
+    this.hairColor = HAIR_COLORS[Math.floor(Math.random() * HAIR_COLORS.length)];
+    this.hatColor = HAT_COLORS[Math.floor(Math.random() * HAT_COLORS.length)];
+
+    // ~28% of non-clock pedestrians carry a shopping bag
+    this.hasBag = !this.isClockEligible && Math.random() < 0.28;
+    this.bagColor = BAG_COLORS[Math.floor(Math.random() * BAG_COLORS.length)];
+
+    this.hasUmbrella = Math.random() < 0.6; // 60% of people have umbrellas
+    this.umbrellaColor = UMBRELLA_COLORS[Math.floor(Math.random() * UMBRELLA_COLORS.length)];
+
+    // ~15% of non-clock pedestrians have a bicycle
+    this.hasBicycle = !this.isClockEligible && Math.random() < 0.15;
+    this.bicycleSpeed = PEDESTRIAN_BASE_SPEED * 3;
+
+    // Assign each non-clock pedestrian a home
+    if (!this.isClockEligible) {
+      this.assignedHome = Math.floor(Math.random() * Math.max(1, layout.houses.length));
+    }
+
+    // Spawn position
     if (this.isClockEligible) {
       const p = layout.plazaBounds;
       this.x = p.x + Math.random() * p.w;
@@ -185,52 +193,10 @@ export class Pedestrian {
       this.y = pos.y;
     }
 
-    // Assign home
-    if (layout.houses.length > 0) {
-      this.assignedHome = Math.floor(Math.random() * layout.houses.length);
-      // Staggered logic: some start at home
-      if (Math.random() < 0.4 && !this.isClockEligible) {
-        this.spawnAtHome(layout);
-        this.isAtHome = true;
-      }
-    }
-
-    // Assign workplace
-    if (!this.isClockEligible) {
-      // Commercial buildings or Utility buildings or Venues
-      const roll = Math.random();
-      if (roll < 0.4 && layout.buildings.length > 0) {
-        this.assignedWorkplace = { type: 'building', index: Math.floor(Math.random() * layout.buildings.length) };
-      } else if (layout.venues.length > 0) {
-        this.assignedWorkplace = { type: 'venue', index: Math.floor(Math.random() * layout.venues.length) };
-      }
-    }
-
-    this.size = 0.8 + Math.random() * 0.4;
-    this.baseSpeed = PEDESTRIAN_BASE_SPEED * (0.7 + Math.random() * 0.6);
-    this.maxSpeed = this.baseSpeed;
-    this.maxForce = PEDESTRIAN_MAX_FORCE * (0.8 + Math.random() * 0.4);
-    this.color = PEDESTRIAN_COLORS[Math.floor(Math.random() * PEDESTRIAN_COLORS.length)];
-    this.skinTone = SKIN_TONES[Math.floor(Math.random() * SKIN_TONES.length)];
-
-    const hairRoll = Math.random();
-    if (hairRoll < 0.12) this.hairStyle = 'bald';
-    else if (hairRoll < 0.42) this.hairStyle = 'short';
-    else if (hairRoll < 0.72) this.hairStyle = 'long';
-    else this.hairStyle = 'hat';
-    this.hairColor = HAIR_COLORS[Math.floor(Math.random() * HAIR_COLORS.length)];
-    this.hatColor = HAT_COLORS[Math.floor(Math.random() * HAT_COLORS.length)];
-
-    this.hasBag = !this.isClockEligible && Math.random() < 0.28;
-    this.bagColor = BAG_COLORS[Math.floor(Math.random() * BAG_COLORS.length)];
-    this.hasUmbrella = Math.random() < 0.6;
-    this.umbrellaColor = UMBRELLA_COLORS[Math.floor(Math.random() * UMBRELLA_COLORS.length)];
-    this.hasBicycle = !this.isClockEligible && Math.random() < 0.15;
-    this.bicycleSpeed = PEDESTRIAN_BASE_SPEED * 3;
-
-    this.energy = 40 + Math.random() * 60;
-    this.hunger = 40 + Math.random() * 60;
-    this.social = 40 + Math.random() * 60;
+    // Varied starting needs so they don't all act at once
+    this.energy = 30 + Math.random() * 70;
+    this.hunger = 30 + Math.random() * 70;
+    this.social = 30 + Math.random() * 70;
 
     this.angle = Math.random() * Math.PI * 2;
     this.vx = Math.cos(this.angle) * this.baseSpeed * 0.5;
@@ -241,46 +207,6 @@ export class Pedestrian {
     this.waypointY = wp.y;
     this.waypointTimer = 0;
     this.walkPhase = Math.random() * Math.PI * 2;
-  }
-
-  private spawnAtHome(layout: CityLayout) {
-    if (this.assignedHome >= 0 && this.assignedHome < layout.houses.length) {
-      const home = layout.houses[this.assignedHome];
-      this.x = home.x + home.w / 2;
-      this.y = home.y + home.h + 5;
-    }
-  }
-
-  private goToHome(layout: CityLayout) {
-    if (this.assignedHome >= 0 && this.assignedHome < layout.houses.length) {
-      const home = layout.houses[this.assignedHome];
-      const pathEnd = home.gardenPathEnd;
-      if (pathEnd) {
-        this.setWaypointWithCrosswalkRouting(layout, pathEnd.x, pathEnd.y);
-      } else {
-        this.waypointX = home.x + home.w / 2;
-        this.waypointY = home.y + home.h;
-        this.waypointTimer = 0;
-      }
-      if (this.hasBicycle) this.isRidingBicycle = true;
-      this.thoughtBubble = 'home';
-      this.thoughtTimer = 50;
-    }
-  }
-
-  private goToWork(layout: CityLayout) {
-    if (this.assignedWorkplace) {
-      if (this.assignedWorkplace.type === 'building') {
-        const b = layout.buildings[this.assignedWorkplace.index];
-        if (b) this.setWaypointWithCrosswalkRouting(layout, b.x + b.w / 2, b.y + b.h + 5);
-      } else {
-        const v = layout.venues[this.assignedWorkplace.index];
-        if (v) this.setWaypointWithCrosswalkRouting(layout, v.x + v.w / 2, v.y + v.h + 5);
-      }
-      if (this.hasBicycle) this.isRidingBicycle = true;
-      this.thoughtBubble = 'idea';
-      this.thoughtTimer = 50;
-    }
   }
 
   private setWaypointWithCrosswalkRouting(layout: CityLayout, wx: number, wy: number) {
@@ -312,59 +238,8 @@ export class Pedestrian {
     let ay = 0;
     const time = Date.now() * 0.001;
 
-    // --- Needs Decay & Recovery ---
-    if (this.isAtHome) {
-      this.energy = Math.min(100, this.energy + 0.15);
-      this.hunger -= 0.005;
-      this.social -= 0.005;
-    } else if (this.isAtWork) {
-      this.energy -= 0.005;
-      this.hunger -= 0.01;
-      this.social = Math.min(100, this.social + 0.03);
-    } else if (this.isSitting) {
-      this.energy = Math.min(100, this.energy + 0.02);
-      this.hunger = Math.min(100, this.hunger + 0.25);
-      this.social = Math.min(100, this.social + 0.01);
-    } else if (this.socialMode) {
-      this.social = Math.min(100, this.social + 0.1);
-      this.energy -= 0.005;
-      this.hunger -= 0.008;
-    } else {
-      // Normal walking/standing
-      this.energy -= 0.01;
-      this.hunger -= 0.012;
-      this.social -= 0.008;
-    }
-
-    // Personality modifiers for decay
-    if (this.personality === 'hurried') this.energy -= 0.005;
-    if (this.personality === 'homebody') this.social -= 0.005;
-
-    // Trigger thought bubbles based on needs
-    if (this.thoughtTimer <= 0) {
-      if (this.energy < 20 && Math.random() < 0.002) { this.thoughtBubble = 'home'; this.thoughtTimer = 60; }
-      else if (this.hunger < 25 && Math.random() < 0.002) { this.thoughtBubble = 'food'; this.thoughtTimer = 60; }
-      else if (this.social < 20 && Math.random() < 0.002) { this.thoughtBubble = 'chat'; this.thoughtTimer = 60; }
-    }
-
     if (this.clockTarget) {
       // === CLOCK MODE ===
-      // Force out of "busy" states to ensure visibility and movement
-      this.isAtHome = false;
-      this.isAtWork = false;
-      this.isSitting = false;
-      this.isQueuing = false;
-      this.isBenchSitting = false;
-      this.isGardening = false;
-      this.socialMode = false;
-      this.isCheckingPhone = false;
-      this.isTakingPhoto = false;
-      this.isSeekingVenue = false;
-      this.targetVenue = null;
-      if (this.thoughtTimer > 0) {
-        this.thoughtTimer = 0;
-        this.thoughtBubble = null;
-      }
       const dx = this.clockTarget.x - this.x;
       const dy = this.clockTarget.y - this.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
@@ -413,36 +288,17 @@ export class Pedestrian {
       // Update thought bubble timer
       if (this.thoughtTimer > 0) {
         this.thoughtTimer--;
-        if (this.thoughtTimer <= 0 || this.clockTarget) {
-          this.thoughtBubble = null;
-          this.thoughtTimer = 0;
-        }
+        if (this.thoughtTimer <= 0) this.thoughtBubble = null;
       }
 
-      // Trigger critical thought bubbles (Intelligence refinement) - ONLY show for followed or critical
-      const isSelected = this === (window as any).selectedPedestrian;
-      if (this.thoughtTimer <= 0 && !this.clockTarget) {
-        if (isSelected || this.energy < 10 || this.hunger < 10) {
-          if (this.energy < 15 && Math.random() < 0.01) { this.thoughtBubble = 'home'; this.thoughtTimer = 120; }
-          else if (this.hunger < 15 && Math.random() < 0.01) { this.thoughtBubble = 'food'; this.thoughtTimer = 120; }
-          else if (this.social < 10 && Math.random() < 0.01) { this.thoughtBubble = 'chat'; this.thoughtTimer = 120; }
-        }
-      }
-
-      // Decrease needs gradually over time (Single source of truth)
+      // Decrease needs gradually over time
       this.energy = Math.max(0, this.energy - 0.005);
       this.hunger = Math.max(0, this.hunger - 0.01);
       this.social = Math.max(0, this.social - 0.015);
 
-      // --- Needs Recovery Modifiers (Apply on top of decay) ---
-      if (this.isAtHome) this.energy = Math.min(100, this.energy + 0.16); // Net gain of ~0.155
-      if (this.isSitting) this.hunger = Math.min(100, this.hunger + 0.25);
-      if (this.socialMode) this.social = Math.min(100, this.social + 0.12);
-      if (this.isAtWork) this.social = Math.min(100, this.social + 0.05);
-
       const isBusy = this.isSitting || this.isBenchSitting || this.socialMode
         || this.isQueuing || this.isWindowShopping || this.isCheckingPhone || this.isTakingPhoto
-        || this.isGoingHome || this.isAtHome || this.isSeekingVenue || this.isGoingToWork;
+        || this.isGoingHome || this.isAtHome;
 
       // --- Social chat mode ---
       if (this.socialMode) {
@@ -690,29 +546,6 @@ export class Pedestrian {
             this.waypointY = this.intermediateWaypoint.y;
             this.intermediateWaypoint = null;
             this.waypointTimer = 0;
-          } else if (this.isSeekingVenue && this.targetVenue) {
-            // ARRIVAL AT VENUE
-            this.isSeekingVenue = false;
-            if (this.targetVenue.type === 'cafe' || this.targetVenue.type === 'restaurant') {
-              this.isSitting = true;
-              this.sitX = this.waypointX;
-              this.sitY = this.waypointY;
-              this.sitTimer = 0;
-              this.sitDuration = 300 + Math.random() * 300;
-              // Face toward plaza center
-              const pb = layout.plazaBounds;
-              this.angle = Math.atan2((pb.y + pb.h / 2) - this.y, (pb.x + pb.w / 2) - this.x);
-            } else if (this.targetVenue.queuePositions.length > 0) {
-              const queue = venueQueues.get(this.targetVenue) || [];
-              if (queue.length < 4) {
-                queue.push(this);
-                venueQueues.set(this.targetVenue, queue);
-                this.isQueuing = true;
-                this.queueVenue = this.targetVenue;
-                this.queueTimer = 0;
-              }
-            }
-            this.targetVenue = null;
           } else {
             // Dissolve group followers at waypoint
             if (this.groupFollowers.length > 0) {
@@ -724,12 +557,15 @@ export class Pedestrian {
 
             // Override roll based on needs if not clock eligible
             if (!this.isClockEligible) {
-              if (this.energy < 15 && this.assignedHome >= 0) {
+              if (this.energy < 20 && this.assignedHome >= 0) {
                 roll = 0.82; // Force -> Go home
+                this.energy = 100; // Reset need
               } else if (this.hunger < 25) {
                 roll = 0.05; // Force -> Venue sitting (Cafe/Restaurant)
+                this.hunger = 100; // Reset need
               } else if (this.social < 20) {
                 roll = 0.50; // Force -> Social chat
+                this.social = 100; // Reset need
               }
             }
 
@@ -739,12 +575,23 @@ export class Pedestrian {
               const pool = cafeVenues.length > 0 ? cafeVenues : layout.venues;
               const venue = pool[Math.floor(Math.random() * pool.length)];
               if (venue.seatingPositions.length > 0) {
-                this.isSeekingVenue = true;
-                this.targetVenue = venue;
-                const seat = venue.seatingPositions[0]; // Targeted approach
-                this.setWaypointWithCrosswalkRouting(layout, seat.x, seat.y);
+                const seat = venue.seatingPositions[Math.floor(Math.random() * venue.seatingPositions.length)];
+                this.isSitting = true;
+                this.sitX = seat.x;
+                this.sitY = seat.y;
+                this.sitTimer = 0;
+                this.sitDuration = 300 + Math.random() * 300;
+                this.waypointX = seat.x;
+                this.waypointY = seat.y;
+                this.waypointTimer = 0;
+                // Face toward plaza center
+                const pb = layout.plazaBounds;
+                this.angle = Math.atan2(
+                  (pb.y + pb.h / 2) - seat.y,
+                  (pb.x + pb.w / 2) - seat.x
+                );
                 this.thoughtBubble = 'food';
-                this.thoughtTimer = 60;
+                this.thoughtTimer = 50;
               }
             }
 
@@ -868,139 +715,64 @@ export class Pedestrian {
               }
             }
 
-            // --- Autonomous Lifecycle & Schedules ---
-            const d = new Date();
-            const hour = d.getHours() + d.getMinutes() / 60;
-            const isNight = hour >= 22 || hour < 7;
-            const isWorkHours = hour >= 9 && hour < 17;
-            const isComingHomeTime = hour >= 21 || (this.personality === 'homebody' && hour >= 18);
-            const shouldStayForClock = this.isClockEligible && (hour >= 8 && hour < 20);
-
-            // 1. Handle "At Home" or "At Work" (Inside buildings)
-            if (this.isAtHome || this.isAtWork) {
-              if (this.isAtHome) {
-                this.homeTimer++;
-                // Emergence logic: Ready to leave home if energy is high and it's morning/day
-                const energyReady = this.energy > 95;
-                const timeToLeave = !isNight && (hour >= 7 || this.personality === 'hurried');
-
-                if ((energyReady && timeToLeave) || this.homeTimer > 2000) {
-                  this.isAtHome = false;
-                  this.homeTimer = 0;
-                  const home = layout.houses[this.assignedHome];
-                  if (home) {
-                    this.x = home.x + home.w / 2;
-                    this.y = home.y + home.h + 10;
-                    const wp = layout.getRandomSidewalkWaypoint();
-                    this.setWaypointWithCrosswalkRouting(layout, wp.x, wp.y);
-                  }
-                }
-              } else if (this.isAtWork) {
-                this.workTimer++;
-                // Work shift ends
-                if (!isWorkHours || this.workTimer > 3000) {
-                  this.isAtWork = false;
-                  this.workTimer = 0;
-                  // Spawn outside workplace
-                  if (this.assignedWorkplace) {
-                    const b = this.assignedWorkplace.type === 'building'
-                      ? layout.buildings[this.assignedWorkplace.index]
-                      : layout.venues[this.assignedWorkplace.index];
-                    if (b) {
-                      this.x = b.x + b.w / 2;
-                      this.y = b.y + b.h + 10;
-                      const wp = layout.getRandomSidewalkWaypoint();
-                      this.setWaypointWithCrosswalkRouting(layout, wp.x, wp.y);
-                    }
-                  }
-                }
-              }
-              return; // Inside building, skip physics
-            }
-
-            // 2. State-Specific Progressions (Commuting/Tasks)
-            if (this.isGoingHome || this.isGoingToWork) {
-              const dx = this.waypointX - this.x;
-              const dy = this.waypointY - this.y;
-              const dist = Math.sqrt(dx * dx + dy * dy);
-              if (dist < 12) {
-                if (this.isGoingHome) { this.isGoingHome = false; this.isAtHome = true; this.homeTimer = 0; }
-                if (this.isGoingToWork) { this.isGoingToWork = false; this.isAtWork = true; this.workTimer = 0; }
-                this.isRidingBicycle = false;
-                this.vx = 0; this.vy = 0;
-                return;
-              }
-            }
-
-            if (this.isGardening) {
-              this.gardenTimer--;
-              if (this.gardenTimer <= 0) {
-                this.isGardening = false;
-                const wp = layout.getRandomSidewalkWaypoint();
-                this.setWaypointWithCrosswalkRouting(layout, wp.x, wp.y);
-              }
-              // Small wander in garden
-              if (Math.random() < 0.05) {
-                this.vx += (Math.random() - 0.5) * 0.5;
-                this.vy += (Math.random() - 0.5) * 0.5;
-              }
-            }
-
-            // 3. Need-Based State Transitions (Highest Priority)
-            const canTransition = !this.isSitting && !this.isBenchSitting && !this.isQueuing && !this.isGoingHome && !this.isGoingToWork && !this.isGardening && !shouldStayForClock;
-
-            if (canTransition) {
-              // Priority 1: Tiredness (Go Home)
-              if (this.energy < 15 || (isNight && !shouldStayForClock)) {
-                this.isGoingHome = true;
-                this.goToHome(layout);
-              }
-              // Priority 2: Work Shift
-              else if (isWorkHours && this.assignedWorkplace && !shouldStayForClock) {
-                this.isGoingToWork = true;
-                this.goToWork(layout);
-              }
-              // Priority 3: Hunger (Find Food)
-              else if (this.hunger < 30 && roll < 0.2) {
-                const cafes = layout.venues.filter(v => v.type === 'cafe' || v.type === 'restaurant');
-                if (cafes.length > 0) {
-                  const cafe = cafes[Math.floor(Math.random() * cafes.length)];
-                  this.setWaypointWithCrosswalkRouting(layout, cafe.x + cafe.w / 2, cafe.y + cafe.h + 8);
-                  this.thoughtBubble = 'food'; this.thoughtTimer = 60;
-                }
-              }
-              // Priority 4: Homebody leisure (Gardening)
-              else if ((this.personality === 'homebody' || this.personality === 'relaxed') && roll < 0.05) {
+            // Go home
+            if (!this.isSitting && !this.isBenchSitting && !this.isQueuing && !this.isWindowShopping && !this.socialMode && !this.isCheckingPhone && !this.isTakingPhoto && !this.isGoingHome && !this.isAtHome && !this.isClockEligible && roll >= 0.78 && roll < 0.88) {
+              if (this.assignedHome >= 0 && this.assignedHome < layout.houses.length) {
                 const home = layout.houses[this.assignedHome];
-                if (home && home.hasGarden && home.gardenPathEnd) {
-                  this.isGardening = true;
-                  this.gardenTimer = 300 + Math.random() * 600;
-                  this.setWaypointWithCrosswalkRouting(layout, home.gardenPathEnd.x, home.gardenPathEnd.y);
-                  this.thoughtBubble = 'flowers'; this.thoughtTimer = 80;
+                this.isGoingHome = true;
+                this.homeTimer = 0;
+                this.homeDuration = 400 + Math.floor(Math.random() * 400); // stay home 400-800 frames
+
+                // Walk to garden path end first, then to front door
+                const pathEnd = home.gardenPathEnd;
+                if (pathEnd) {
+                  this.setWaypointWithCrosswalkRouting(layout, pathEnd.x, pathEnd.y);
+                } else {
+                  this.waypointX = home.x + home.w / 2;
+                  this.waypointY = home.y + home.h;
+                  this.waypointTimer = 0;
                 }
+
+                // If has bicycle, ride it
+                if (this.hasBicycle) {
+                  this.isRidingBicycle = true;
+                }
+
+                this.thoughtBubble = 'home';
+                this.thoughtTimer = 50;
               }
             }
 
-            // 4. Default Wander / Event Logic
-            if (canTransition && !this.isGoingHome && !this.isGoingToWork && !this.isGardening) {
+            // Otherwise pick a new waypoint
+            // If stuck (timer expired without reaching target), skip activities and just move
+            if (!this.isSitting && !this.isBenchSitting && !this.isQueuing && !this.isWindowShopping && !this.socialMode && !this.isCheckingPhone && !this.isTakingPhoto && !this.isGoingHome && !this.isAtHome) {
+
               if (!forceNewWaypoint && layout.activeEvent && !this.isClockEligible && roll < 0.3) {
-                // Watch event... (Keep existing logic or similar)
+                // Route to event
                 const ev = layout.activeEvent;
-                if (Math.hypot(ev.x - this.x, ev.y - this.y) < 600) {
+                const d = Math.hypot(ev.x - this.x, ev.y - this.y);
+                if (d < 600) { // If within reasonable distance
                   this.waypointX = ev.x + (Math.random() - 0.5) * ev.radius;
                   this.waypointY = ev.y + (Math.random() - 0.5) * ev.radius;
+                  this.waypointTimer = 0;
+
+                  // Watch the event when they arrive
                   this.socialMode = true;
-                  this.socialTimer = 200 + Math.random() * 400;
+                  this.socialTimer = 200 + Math.random() * 400; // Watch for a while
+
+                  // Face the event
                   this.angle = Math.atan2(ev.y - this.waypointY, ev.x - this.waypointX);
+
                   this.thoughtBubble = ev.type === 'musician' ? 'music' : 'idea';
                   this.thoughtTimer = 60;
                 }
               }
 
-              if (!this.socialMode && !this.isCheckingPhone && !this.isTakingPhoto) {
-                if (Math.random() < 0.3) this.hasFood = false;
+              if (!this.socialMode) {
+                if (Math.random() < 0.3) this.hasFood = false; // might finish food
                 const wp = layout.getRandomSidewalkWaypoint();
                 this.setWaypointWithCrosswalkRouting(layout, wp.x, wp.y);
+                // Stagger timer when forced to prevent all stuck peds refreshing at once
                 if (forceNewWaypoint) this.waypointTimer = Math.floor(Math.random() * 60);
               }
             }
@@ -1013,7 +785,7 @@ export class Pedestrian {
         }
 
         // Random thought while walking (Sims-style idle thoughts) — ~1 visible every 30s
-        if (!isBusy && !this.groupLeader && !this.thoughtBubble && !this.clockTarget && Math.random() < 0.00008) {
+        if (!isBusy && !this.groupLeader && !this.thoughtBubble && Math.random() < 0.00008) {
           const thoughts = ['music', 'happy', 'idea'];
           this.thoughtBubble = thoughts[Math.floor(Math.random() * thoughts.length)];
           this.thoughtTimer = 40 + Math.floor(Math.random() * 40);
@@ -1223,17 +995,15 @@ export class Pedestrian {
     ctx: CanvasRenderingContext2D,
     nightAlpha: number,
     weatherIntensity: number,
-    isDancing: boolean,
-    isSelected: boolean = false
+    isDancing: boolean
   ) {
-    // FORCE SILENCE: Clock participants never show icons, and unselected citizens are clean.
-    if (this.clockTarget) isSelected = false;
-    // Skip drawing if inside a building (at home or at work)
-    if (this.isAtHome || this.isAtWork) return;
-
     ctx.save();
     ctx.translate(this.x, this.y);
     ctx.rotate(this.angle);
+
+    if (this.isAtHome) {
+      ctx.globalAlpha = 0.15;
+    }
 
     const s = this.size * 5.5;
     const speed = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
@@ -1307,8 +1077,8 @@ export class Pedestrian {
     ctx.ellipse(0, 0, s * 0.7, s * 0.5, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // Coffee cup when sitting at a venue — purely decorative, hide for unselected
-    if (this.isSitting && isSelected) {
+    // Coffee cup when sitting at a venue
+    if (this.isSitting) {
       const cf = 1 - nightAlpha * 0.25;
       ctx.fillStyle = `rgb(${Math.floor(240 * cf)},${Math.floor(232 * cf)},${Math.floor(210 * cf)})`;
       ctx.fillRect(s * 0.62, -s * 0.18, s * 0.3, s * 0.36);
@@ -1318,24 +1088,24 @@ export class Pedestrian {
       ctx.fillRect(s * 0.56, s * 0.17, s * 0.42, s * 0.07);
     }
 
-    // Phone in hand when checking phone — hide for unselected
-    if (this.isCheckingPhone && isSelected) {
+    // Phone in hand when checking phone — fixed pixel sizes
+    if (this.isCheckingPhone) {
       ctx.fillStyle = `rgba(25, 25, 30, 0.9)`;
       ctx.fillRect(3, -1.5, 2.5, 3.5);
       ctx.fillStyle = `rgba(170, 200, 255, 0.6)`;
       ctx.fillRect(3.3, -1.2, 1.9, 2.9);
     }
 
-    // Phone held up when taking photo — hide for unselected
-    if (this.isTakingPhoto && isSelected) {
+    // Phone held up when taking photo — fixed pixel sizes
+    if (this.isTakingPhoto) {
       ctx.fillStyle = `rgba(25, 25, 30, 0.9)`;
       ctx.fillRect(4, -2, 3, 4);
       ctx.fillStyle = `rgba(170, 200, 255, 0.5)`;
       ctx.fillRect(4.3, -1.7, 2.4, 3.4);
     }
 
-    // Takeaway food/drink while walking — hide for unselected
-    if (this.hasFood && !this.isSitting && !this.isBenchSitting && isSelected) {
+    // Takeaway food/drink while walking — fixed pixel sizes
+    if (this.hasFood && !this.isSitting && !this.isBenchSitting) {
       const cf = 1 - nightAlpha * 0.25;
       ctx.fillStyle = `rgb(${Math.floor(240 * cf)},${Math.floor(232 * cf)},${Math.floor(210 * cf)})`;
       ctx.fillRect(3, 1.5, 2.2, 3);
@@ -1343,8 +1113,8 @@ export class Pedestrian {
       ctx.fillRect(3.1, 1.8, 2, 0.8);
     }
 
-    // Chat speech bubble (three dots) when socially paused — hide for unselected
-    if (this.socialMode && isSelected) {
+    // Chat speech bubble (three dots) when socially paused
+    if (this.socialMode) {
       const ba = 0.72 - nightAlpha * 0.25;
       ctx.fillStyle = `rgba(255,255,255,${ba})`;
       ctx.beginPath();
@@ -1398,9 +1168,9 @@ export class Pedestrian {
       }
     }
 
-    // Umbrella when raining/snowing — restricted to selectedPedestrian
+    // Umbrella when raining/snowing (pedestrians only, cyclists keep both hands on bars)
     const isPrecipitation = ['rain', 'heavy_rain', 'drizzle', 'snow', 'heavy_snow', 'thunderstorm', 'hail'].includes(this.currentWeatherType);
-    if (weatherIntensity > 0.3 && isPrecipitation && !this.isAtHome && !this.isSitting && !this.isRidingBicycle && !this.clockTarget && isSelected) {
+    if (weatherIntensity > 0.3 && isPrecipitation && !this.isAtHome && !this.isSitting && !this.isRidingBicycle) {
       const wobble = Math.sin(this.walkPhase * 2) * 0.1 * s;
       const ur = s * 1.5;
 
@@ -1428,8 +1198,8 @@ export class Pedestrian {
       ctx.fill();
     }
 
-    // Thought bubble (Sims-style) — only show for the selected pedestrian to reduce noise
-    if (this.thoughtBubble && this.thoughtTimer > 0 && !this.clockTarget && isSelected) {
+    // Thought bubble (Sims-style) — drawn in fixed pixel sizes so visible at any zoom
+    if (this.thoughtBubble && this.thoughtTimer > 0) {
       const alpha = Math.min(1, this.thoughtTimer / 15);
       const bx = 2;
       const by = -10;
