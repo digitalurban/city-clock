@@ -387,6 +387,11 @@ function createOptionsUI() {
         alarmBtn.textContent = 'Clear';
         alarmBtn.style.background = '#ff4a4a';
         alarmStatusLabel.textContent = alarmTime;
+        // Unlock audio for later playback (browsers require user gesture)
+        alarmAudio.play().then(() => {
+          alarmAudio.pause();
+          alarmAudio.currentTime = 0;
+        }).catch(() => {});
       }
     }
   });
