@@ -354,10 +354,16 @@ export class CityLayout {
         const ix = offsetX + c * cellSize;
         const iy = offsetY + r * cellSize;
         if (ix > pb.x && ix < pb.x + pb.w && iy > pb.y && iy < pb.y + pb.h) continue;
-        this.walkableRects.push({
-          x: ix - ROAD_WIDTH / 2 - 4, y: iy - ROAD_WIDTH / 2 - 4,
-          w: ROAD_WIDTH + 8, h: ROAD_WIDTH + 8, type: 'crosswalk',
-        });
+        // Skip crosswalk at delivery lane entry to keep the stub clean
+        const isDeliveryEntry = this.deliveryLanes.some(lane =>
+          Math.abs(ix - lane.laneX) < ROAD_WIDTH && Math.abs(iy - lane.entryY) < ROAD_WIDTH
+        );
+        if (!isDeliveryEntry) {
+          this.walkableRects.push({
+            x: ix - ROAD_WIDTH / 2 - 4, y: iy - ROAD_WIDTH / 2 - 4,
+            w: ROAD_WIDTH + 8, h: ROAD_WIDTH + 8, type: 'crosswalk',
+          });
+        }
         const hasRoadAt = (x: number, y: number) =>
           this.roads.some(rd =>
             x >= rd.x - 2 && x <= rd.x + rd.w + 2 &&
@@ -860,8 +866,8 @@ export class CityLayout {
 
     for (const lane of this.deliveryLanes) {
       // Short road stub from city road into the plaza
-      const stubTop = lane.entryY - ROAD_WIDTH; // extend up into city road for seamless join
-      const stubBot = lane.innerY + hw;          // end at perimeter path
+      const stubTop = lane.entryY - ROAD_WIDTH * 1.5; // extend well into city road, covering crosswalk area
+      const stubBot = lane.innerY + hw;                // end at perimeter path
       ctx.fillRect(lane.laneX - hw, stubTop, ROAD_WIDTH, stubBot - stubTop);
     }
 

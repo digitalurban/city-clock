@@ -1089,8 +1089,14 @@ export class Car {
         const distToLane = Math.hypot(this.x - lane.laneX, this.y - lane.outerY);
         if (distToLane < 60) {
           const venue = this.targetVenue!;
-          // Build waypoints: entry stub → perimeter path → venue front
-          this.plazaWaypoints = this.buildPerimeterToVenue(venue, lane, layout);
+          // Build waypoints: align x → straight down entry stub → perimeter path → venue front
+          const perimWaypoints = this.buildPerimeterToVenue(venue, lane, layout);
+          this.plazaWaypoints = [
+            // First align horizontally on the current road, then go straight down
+            { x: lane.laneX, y: this.y },
+            { x: lane.laneX, y: lane.outerY },
+            ...perimWaypoints,
+          ];
           this.plazaWaypointIdx = 0;
           this.targetX = this.plazaWaypoints[0].x;
           this.targetY = this.plazaWaypoints[0].y;
