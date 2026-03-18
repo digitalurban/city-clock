@@ -865,10 +865,13 @@ export class CityLayout {
     ctx.fillStyle = `hsl(220, 5%, ${roadLight}%)`;
 
     for (const lane of this.deliveryLanes) {
-      // Short road stub from city road into the plaza
-      const stubTop = lane.entryY - ROAD_WIDTH * 1.5; // extend well into city road, covering crosswalk area
-      const stubBot = lane.innerY + hw;                // end at perimeter path
-      ctx.fillRect(lane.laneX - hw, stubTop, ROAD_WIDTH, stubBot - stubTop);
+      // Short road stub from city road into the plaza — extend 2× road width above entry
+      // to fully cover the crosswalk area at the grid intersection
+      const stubTop = lane.entryY - ROAD_WIDTH * 2;
+      const stubBot = lane.innerY + hw;
+      // Draw slightly wider than road to cover crosswalk stripes (which are ROAD_WIDTH + 8)
+      const stubW = ROAD_WIDTH + 10;
+      ctx.fillRect(lane.laneX - stubW / 2, stubTop, stubW, stubBot - stubTop);
     }
 
     // Dashed center line on stub
@@ -1620,11 +1623,11 @@ export class CityLayout {
     return x >= p.x && x <= p.x + p.w && y >= p.y && y <= p.y + p.h;
   }
 
-  isOnCrosswalk(x: number, y: number): boolean {
+  isOnCrosswalk(x: number, y: number, padding: number = 0): boolean {
     for (const wr of this.walkableRects) {
       if (wr.type === 'crosswalk' &&
-        x >= wr.x && x <= wr.x + wr.w &&
-        y >= wr.y && y <= wr.y + wr.h) {
+        x >= wr.x - padding && x <= wr.x + wr.w + padding &&
+        y >= wr.y - padding && y <= wr.y + wr.h + padding) {
         return true;
       }
     }

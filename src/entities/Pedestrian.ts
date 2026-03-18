@@ -536,10 +536,10 @@ export class Pedestrian {
         const wpDy = this.waypointY - this.y;
         const wpDist = Math.sqrt(wpDx * wpDx + wpDy * wpDy);
 
-        if (wpDist < 18 || this.waypointTimer > 600) {
+        if (wpDist < 18 || this.waypointTimer > 360) {
           // Detect stuck — if timer expired but we barely moved, force a brand new waypoint
           // far away to break the oscillation
-          const forceNewWaypoint = this.waypointTimer > 600;
+          const forceNewWaypoint = this.waypointTimer > 360;
           // If we have an intermediate waypoint (crosswalk routing), go to final destination
           if (this.intermediateWaypoint) {
             this.waypointX = this.intermediateWaypoint.x;
@@ -913,26 +913,34 @@ export class Pedestrian {
       }
 
       // 7. Road repulsion — keep pedestrians on sidewalks (skip plaza, crosswalks, clock mode)
+      // Use distance-proportional force to prevent harsh wobble at road edges
       if (!this.clockTarget && !this.clockDismissTarget &&
         !layout.isInPlaza(nextX, nextY) && !layout.isOnCrosswalk(nextX, nextY)) {
-        for (const road of layout.roads) {
-          const rm = 4;
-          if (nextX >= road.x - rm && nextX <= road.x + road.w + rm &&
-            nextY >= road.y - rm && nextY <= road.y + road.h + rm) {
-            const rdx = this.x - (road.x + road.w / 2);
-            const rdy = this.y - (road.y + road.h / 2);
-            const rd = Math.sqrt(rdx * rdx + rdy * rdy) || 1;
-            ax += (rdx / rd) * this.maxForce * 10;
-            ay += (rdy / rd) * this.maxForce * 10;
-            break;
+        // Also skip if near a crosswalk (within 20px) — they're trying to cross
+        const nearCrosswalk = layout.isOnCrosswalk(this.x, this.y, 20);
+        if (!nearCrosswalk) {
+          for (const road of layout.roads) {
+            const rm = 4;
+            if (nextX >= road.x - rm && nextX <= road.x + road.w + rm &&
+              nextY >= road.y - rm && nextY <= road.y + road.h + rm) {
+              const rdx = this.x - (road.x + road.w / 2);
+              const rdy = this.y - (road.y + road.h / 2);
+              const rd = Math.sqrt(rdx * rdx + rdy * rdy) || 1;
+              // Softer, distance-proportional push — stronger the deeper into the road
+              const halfW = road.horizontal ? road.h / 2 : road.w / 2;
+              const penetration = Math.max(0, halfW + rm - rd) / (halfW + rm);
+              ax += (rdx / rd) * this.maxForce * 6 * penetration;
+              ay += (rdy / rd) * this.maxForce * 6 * penetration;
+              break;
+            }
           }
         }
       }
     }
 
-    // Apply acceleration
-    this.vx += ax;
-    this.vy += ay;
+    // Apply acceleration with velocity damping to prevent oscillation/wobble
+    this.vx = this.vx * 0.85 + ax;
+    this.vy = this.vy * 0.85 + ay;
 
     // Speed limits
     const speed = Math.sqrt(this.vx * this.vx + this.vy * this.vy);

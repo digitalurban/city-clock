@@ -21,12 +21,12 @@ A procedurally generated top-down city where pedestrians form a digital clock in
 - **Dynamic City Events** - street musicians and protests occasionally spawn in the plaza, drawing nearby crowds of pedestrians to watch and interact.
 - **Service & Delivery Vehicles** - orange delivery vans enter the plaza, park outside a venue to drop off packages. City buses (red/blue) and garbage trucks (green) navigate the road network with unique behaviours.
 - **Emergency vehicles** - police cars, ambulances and fire trucks with flashing sirens.
-- **Traffic system** - cars navigate the road network with traffic lights, braking for pedestrians and each other, smooth arc turns at junctions (position glides to the new lane over ~20 frames rather than snapping), and anti-gridlock logic.
+- **Traffic system** - cars navigate the road network with traffic lights, braking for pedestrians and each other, smooth quadratic Bézier arc turns at junctions, and anti-gridlock logic.
 - **Day/night cycle** - real-time lighting based on system clock; street lights, lamp posts, building windows outlaid by granular business/residential schedules, and headlights glow at night.
 - **Weather** - procedural clouds with realistic multi-lobe shapes, 3D shading, and ground shadows drifting across the city.
 - **Zoom and pan** - scroll-wheel zoom, click-drag pan, touch pinch and drag on mobile
 - **Adjustable population** - settings panel to control traffic (10-300) and people (112-500) counts live
-- **iOS PWA** - add to home screen on Safari for fullscreen standalone experience
+- **iOS PWA** - add to home screen on Safari for fullscreen standalone experience; handles orientation changes and visualViewport resizing
 
 ## How It Works
 
@@ -49,13 +49,13 @@ Pedestrians use a steering-behaviours model with multiple activity types:
 - **Venue visits** - queue outside cafes and shops, sit at outdoor seating
 - **Going home** - each pedestrian has an assigned house; they walk to the garden path, enter through the front door, stay inside, then leave
 - **Bicycle riding** - ~15% of pedestrians ride bicycles at 2.5x walking speed
-- **Building and venue avoidance** - steering forces keep pedestrians on sidewalks and paths
+- **Building and venue avoidance** - steering forces keep pedestrians on sidewalks and paths with velocity damping to prevent oscillation at road edges
 
 ### City Generation
 
 The city world is 2x the viewport in each dimension, so zooming out reveals the wider city while the plaza stays centred.
 
-- **Grid layout**: cells of 120px blocks + 36px roads, sized to fill the world
+- **Grid layout**: 12×7 grid of 120px blocks + 36px roads
 - **Central plaza**: rectangular plaza occupying the central grid area with venues on all sides
 - **Residential areas**: houses with gardens and garden paths connecting to sidewalks
 - **Parks**: green spaces with trees scattered through the city
@@ -66,8 +66,8 @@ The city world is 2x the viewport in each dimension, so zooming out reveals the 
 
 Configurable from 10 to 300 vehicles including delivery vans and emergency services:
 
-- **Normal cars** - scan ahead for pedestrians and other cars, brake proportionally; smooth arc turns at junctions; headlight beams at night
-- **Delivery vans** - navigate to the plaza via a dedicated delivery entrance road, drive into the square, drop packages at venue fronts, then exit and rejoin the main road network
+- **Normal cars** - scan ahead for pedestrians and other cars, brake proportionally; smooth Bézier curve turns at junctions; headlight beams at night
+- **Delivery vans** - navigate to the plaza via a dedicated entry stub road, drive around the plaza perimeter in front of shops, drop visible packages at venue fronts, then exit and rejoin the main road network. Pedestrians flee from delivery trucks inside the plaza.
 - **Specialized Service Vehicles** - city buses that pause at intersections to simulate pickups, and garbage trucks that slowly traverse the city.
 - **Emergency vehicles** - police, ambulance and fire trucks with flashing light bars and sirens
 - **Traffic lights** - alternating red/green phases at intersections; cars clear intersections before stopping
@@ -106,7 +106,7 @@ Dynamic live weather powered by the Open-Meteo API:
 
 City Clock is designed to run efficiently as a always-on wallpaper or bedside clock:
 
-- **30fps cap** - the render loop is throttled to 30fps rather than running uncapped; halves sustained CPU and GPU load with no visible quality difference for a slow-moving city scene
+- **Native 60fps** - the render loop runs at the display's native refresh rate for smooth animation; all timers and speeds are tuned for 60fps
 - **Visibility pause** - the loop stops entirely when the tab is hidden or the screen is off (via the Page Visibility API), dropping power draw to near zero when no one is watching
 - **Cloud caching** - each cloud is pre-rendered to an offscreen canvas and cached; only rebuilt when storm intensity changes the cloud colour. Eliminates ~200 `createRadialGradient` calls per frame
 - **Idle particle skip** - the 2000-particle rain pool is only iterated during active precipitation; clear weather skips the loop entirely

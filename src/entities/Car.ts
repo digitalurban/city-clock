@@ -77,12 +77,14 @@ export class Car {
   // Cooldown after a road transition to prevent re-triggering
   private transitionCooldown: number = 0;
 
-  // Smooth turning: interpolate position from old lane to new lane
+  // Smooth turning: quadratic Bezier curve through intersection corner
   private turnLerping: boolean = false;
   private turnFromX: number = 0;
   private turnFromY: number = 0;
   private turnToX: number = 0;
   private turnToY: number = 0;
+  private turnControlX: number = 0; // Bezier control point (intersection corner)
+  private turnControlY: number = 0;
   private turnProgress: number = 0;
   private turnDuration: number = 16; // frames at 60fps (~0.27s)
 
@@ -258,22 +260,37 @@ export class Car {
   }
 
   private findConnectingRoad(layout: CityLayout, perpOnly: boolean = false): RoadSegment | null {
-    const snap = ROAD_WIDTH * 2.0;
+    const perpSnap = ROAD_WIDTH * 2.0;  // generous snap for perpendicular turns
+    const parallelSnap = ROAD_WIDTH * 0.8; // tight snap for parallel continuations
     let fallback: RoadSegment | null = null;
+    let fallbackDist = Infinity;
 
     for (const road of layout.roads) {
       if (road === this.road) continue;
       // Only delivery trucks actively seeking a delivery may use plaza-bordering stubs
       if (road.plazaBordering && !(this.carType === 'delivery' && this.deliveryState === 'seeking_plaza')) continue;
 
+      const isPerp = road.horizontal !== this.road.horizontal;
+      const snap = isPerp ? perpSnap : parallelSnap;
+
       if (this.x >= road.x - snap && this.x <= road.x + road.w + snap &&
         this.y >= road.y - snap && this.y <= road.y + road.h + snap) {
 
         // Prefer perpendicular roads (turns at intersections)
-        if (road.horizontal !== this.road.horizontal) {
+        if (isPerp) {
           return road;
         }
-        if (!perpOnly) fallback = road;
+        // For parallel: only accept if we're actually near the end/start of the other road
+        // (i.e. it's a continuation of our road, not a distant parallel road)
+        if (!perpOnly) {
+          const cx = road.x + road.w / 2;
+          const cy = road.y + road.h / 2;
+          const d = Math.hypot(this.x - cx, this.y - cy);
+          if (d < fallbackDist) {
+            fallbackDist = d;
+            fallback = road;
+          }
+        }
       }
     }
     return fallback;
@@ -354,35 +371,55 @@ export class Car {
   private transitionToRoad(road: RoadSegment, inter?: IntersectionDef) {
     this.stuckTimer = 0;
 
-    // Store old position for smooth interpolation
+    // Store old position and direction for Bezier curve
     const oldX = this.x;
     const oldY = this.y;
+    const wasHorizontal = this.road.horizontal;
+    const isTurn = road.horizontal !== this.road.horizontal; // perpendicular = real turn
 
     this.road = road;
 
     if (road.horizontal) {
-      const dirX = Math.random() > 0.5 ? 1 : -1;
+      // For same-direction continuation, keep current direction; only randomize for turns
+      const dirX = isTurn ? (Math.random() > 0.5 ? 1 : -1) : this.dirX || (Math.random() > 0.5 ? 1 : -1);
       this.dirX = dirX;
       this.dirY = 0;
       this.y = road.y + (dirX > 0 ? road.h * 0.75 : road.h * 0.25);
       if (inter) this.x = inter.x;
     } else {
-      const dirY = Math.random() > 0.5 ? 1 : -1;
+      const dirY = isTurn ? (Math.random() > 0.5 ? 1 : -1) : this.dirY || (Math.random() > 0.5 ? 1 : -1);
       this.dirX = 0;
       this.dirY = dirY;
       this.x = road.x + (dirY > 0 ? road.w * 0.25 : road.w * 0.75);
       if (inter) this.y = inter.y;
     }
 
-    // Set up smooth position interpolation from old to new lane
+    // Set up smooth interpolation from old position to new lane
     this.turnFromX = oldX;
     this.turnFromY = oldY;
     this.turnToX = this.x;
     this.turnToY = this.y;
+
+    if (isTurn) {
+      // Quadratic Bezier: control point = intersection corner for a natural arc
+      if (wasHorizontal) {
+        this.turnControlX = this.turnToX;
+        this.turnControlY = this.turnFromY;
+      } else {
+        this.turnControlX = this.turnFromX;
+        this.turnControlY = this.turnToY;
+      }
+    } else {
+      // Same-direction continuation (parallel road segments): linear interpolation
+      // Control point = midpoint makes Bezier degenerate to a straight line
+      this.turnControlX = (this.turnFromX + this.turnToX) / 2;
+      this.turnControlY = (this.turnFromY + this.turnToY) / 2;
+    }
+
     this.turnProgress = 0;
     this.turnLerping = true;
-    this.turnDuration = 16;
-    // Start visually at old position — the lerp will glide us to the new one
+    this.turnDuration = isTurn ? 32 : 24; // ~0.5s turn at 60fps
+    // Start visually at old position — the Bezier will curve us to the new one
     this.x = oldX;
     this.y = oldY;
 
@@ -760,14 +797,22 @@ export class Car {
       }
     }
 
-    // Smooth turn position interpolation (lerp from old lane to new lane)
+    // Smooth turn: quadratic Bezier curve through intersection corner
     if (this.turnLerping) {
       this.turnProgress++;
       const t = Math.min(1, this.turnProgress / this.turnDuration);
       // Ease-in-out for smooth motion
       const ease = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
-      this.x = this.turnFromX + (this.turnToX - this.turnFromX) * ease;
-      this.y = this.turnFromY + (this.turnToY - this.turnFromY) * ease;
+      // Quadratic Bezier: P = (1-t)²·from + 2(1-t)t·control + t²·to
+      const inv = 1 - ease;
+      this.x = inv * inv * this.turnFromX + 2 * inv * ease * this.turnControlX + ease * ease * this.turnToX;
+      this.y = inv * inv * this.turnFromY + 2 * inv * ease * this.turnControlY + ease * ease * this.turnToY;
+      // Bezier tangent for smooth angle: P' = 2(1-t)(control-from) + 2t(to-control)
+      const tx = 2 * inv * (this.turnControlX - this.turnFromX) + 2 * ease * (this.turnToX - this.turnControlX);
+      const ty = 2 * inv * (this.turnControlY - this.turnFromY) + 2 * ease * (this.turnToY - this.turnControlY);
+      if (Math.abs(tx) > 0.001 || Math.abs(ty) > 0.001) {
+        this.angle = Math.atan2(ty, tx);
+      }
       if (t >= 1) {
         this.turnLerping = false;
         this.x = this.turnToX;

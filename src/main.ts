@@ -38,8 +38,24 @@ let currentPedCount = TOTAL_PEDESTRIANS;
 let alarmTime: string | null = null;
 let isAlarmActive = false;
 let isDancing = false;
-const alarmAudio = new Audio('./alarm.mp3'); // Using the alarm.mp3 from the public directory
+const alarmAudio = new Audio('./alarm.mp3');
 alarmAudio.loop = true;
+alarmAudio.preload = 'auto';
+
+// iOS audio unlock: keep the audio element "warm" on every user gesture
+// so play() works when the alarm fires (not from a gesture context)
+let audioCtx: AudioContext | null = null;
+function ensureAudioUnlocked() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    // Connect the alarm audio element to the AudioContext
+    const source = audioCtx.createMediaElementSource(alarmAudio);
+    source.connect(audioCtx.destination);
+  }
+  if (audioCtx.state === 'suspended') {
+    audioCtx.resume();
+  }
+}
 
 function clampPan(w: number, h: number) {
   const worldW = layout.width;
@@ -89,6 +105,7 @@ let dragStartPanX = 0;
 let dragStartPanY = 0;
 
 canvas.addEventListener('mousedown', (e) => {
+  ensureAudioUnlocked();
   isDragging = true;
   dragStartX = e.clientX;
   dragStartY = e.clientY;
@@ -130,6 +147,7 @@ canvas.addEventListener('dblclick', () => {
 });
 // Separate touchstart to record tap position for distance check
 canvas.addEventListener('touchstart', (e) => {
+  ensureAudioUnlocked();
   if (e.touches.length === 1) {
     const t = e.touches[0];
     const now = Date.now();
@@ -370,6 +388,7 @@ function createOptionsUI() {
   const alarmStatusLabel = panel.querySelector('#alarm-status-label') as HTMLSpanElement;
 
   alarmBtn.addEventListener('click', () => {
+    ensureAudioUnlocked(); // Unlock AudioContext from user gesture
     if (alarmTime) {
       // Clear alarm
       alarmTime = null;
@@ -378,6 +397,7 @@ function createOptionsUI() {
       isAlarmActive = false;
       isDancing = false;
       alarmAudio.pause();
+      alarmAudio.currentTime = 0;
       const snoozeBtn = document.getElementById('snooze-btn');
       if (snoozeBtn) snoozeBtn.style.display = 'none';
       alarmBtn.style.background = '#4a9eff';
@@ -387,11 +407,6 @@ function createOptionsUI() {
         alarmBtn.textContent = 'Clear';
         alarmBtn.style.background = '#ff4a4a';
         alarmStatusLabel.textContent = alarmTime;
-        // Unlock audio for later playback (browsers require user gesture)
-        alarmAudio.play().then(() => {
-          alarmAudio.pause();
-          alarmAudio.currentTime = 0;
-        }).catch(() => {});
       }
     }
   });
@@ -731,9 +746,13 @@ window.addEventListener('resize', () => {
 });
 
 // iOS: viewport dimensions may not update immediately on rotation
+// Multiple delayed calls ensure we catch the final settled dimensions
 window.addEventListener('orientationchange', () => {
-  setTimeout(resize, 100);
-  setTimeout(resize, 300);
+  resize();
+  setTimeout(resize, 50);
+  setTimeout(resize, 150);
+  setTimeout(resize, 350);
+  setTimeout(resize, 700);
 });
 
 // visualViewport fires reliably on iOS when toolbar shows/hides or rotation settles
