@@ -81,15 +81,11 @@ export interface PlazaEntrance {
 }
 
 export interface DeliveryLane {
-  side: 'top' | 'bottom';
-  laneX: number;    // center x of lane — aligned with a real vertical road column
+  laneX: number;    // center x of entry road stub
   outerY: number;   // y on the approach road (navigation target while on road grid)
-  entryY: number;   // y at the plaza boundary (where off-road entry begins)
-  innerY: number;   // y inside plaza, past the venue band
-  stripX: number;   // left edge of the road strip (for rendering)
-  stripY: number;   // top edge of the road strip
-  stripW: number;
-  stripH: number;
+  entryY: number;   // y at the plaza boundary
+  innerY: number;   // y at end of stub inside plaza (on the perimeter path)
+  roadWidth: number;
 }
 
 export interface IntersectionDef {
@@ -144,6 +140,7 @@ export class CityLayout {
   venues: VenueDef[] = [];
   entrances: PlazaEntrance[] = [];
   deliveryLanes: DeliveryLane[] = [];
+  deliveryPerimeter: { topY: number; bottomY: number; leftX: number; rightX: number } = { topY: 0, bottomY: 0, leftX: 0, rightX: 0 };
   intersections: IntersectionDef[] = [];
   plazaLamps: PlazaLampDef[] = [];
   plazaBenches: PlazaBenchDef[] = [];
@@ -202,36 +199,30 @@ export class CityLayout {
     // Walkable plaza area
     this.walkableRects.push({ x: px, y: py, w: pw, h: ph, type: 'plaza' });
 
-    // Delivery lanes — laneX must align with actual vertical road column centers so
-    // trucks can navigate there on the road grid (column roads are clipped around the
-    // plaza, leaving stubs above and below that trucks can drive along).
-    // validPlazaCols[0]+1 = centerCol-1, validPlazaCols[0]+3 = centerCol+1
-    const laneW = 18;
-    const deliveryStopDepth = 45;
-    const topLaneX = (validPlazaCols[0] + 1) * cellSize;   // col centerCol-1 road center
-    const botLaneX = (validPlazaCols[0] + 3) * cellSize;   // col centerCol+1 road center
+    // Delivery lane — one short road stub from the top city road into the plaza.
+    // Once inside, trucks drive around the perimeter in front of the shops.
+    const venueH = 30;
+    const edgeInset = 6;
+    const awningDepth = 14;
+    const perimGap = 4; // gap between awning edge and truck path
+    const perimInset = edgeInset + venueH + awningDepth + perimGap; // ~54px from plaza edge
 
+    // Perimeter rectangle (truck driving path in front of shops)
+    this.deliveryPerimeter = {
+      topY: py + perimInset,
+      bottomY: py + ph - perimInset,
+      leftX: px + perimInset,
+      rightX: px + pw - perimInset,
+    };
+
+    // Entry stub aligned with a grid road column
+    const topLaneX = (validPlazaCols[0] + 1) * cellSize;
     this.deliveryLanes.push({
-      side: 'top',
       laneX: topLaneX,
-      outerY: py - ROAD_WIDTH,          // a point ON the vertical road above the plaza
-      entryY: py,                        // plaza top boundary — where off-road travel starts
-      innerY: py + deliveryStopDepth,
-      stripX: topLaneX - laneW / 2,
-      stripY: py - ROAD_WIDTH,
-      stripW: laneW,
-      stripH: ROAD_WIDTH + deliveryStopDepth,
-    });
-    this.deliveryLanes.push({
-      side: 'bottom',
-      laneX: px + pw * 0.75,
-      outerY: this.plazaBounds.y + this.plazaBounds.h + ROAD_WIDTH / 2,
-      entryY: this.plazaBounds.y + this.plazaBounds.h,
-      innerY: this.plazaBounds.y + this.plazaBounds.h - deliveryStopDepth,
-      stripX: px + pw * 0.75 - laneW / 2,
-      stripY: this.plazaBounds.y + this.plazaBounds.h - deliveryStopDepth,
-      stripW: laneW,
-      stripH: ROAD_WIDTH + deliveryStopDepth,
+      outerY: py - ROAD_WIDTH / 2,          // on the city road above plaza
+      entryY: py,                             // plaza top boundary
+      innerY: py + perimInset,                // end of stub at perimeter path
+      roadWidth: ROAD_WIDTH,
     });
 
     // Assign block types for non-plaza blocks
@@ -649,7 +640,6 @@ export class CityLayout {
     const seatingGap = 8;
 
     const topLane = this.deliveryLanes[0];
-    const botLane = this.deliveryLanes[1];
     const laneGap = ROAD_WIDTH + 10;
 
     // Top edge
@@ -674,7 +664,6 @@ export class CityLayout {
 
     // Bottom edge
     for (let x = pb.x + 45; x < pb.x + pb.w - venueW; x += venueW + 30) {
-      if (x < botLane.laneX + laneGap / 2 && x + venueW > botLane.laneX - laneGap / 2) continue;
       const v = venueTypes[vi % venueTypes.length];
       const bx = x;
       const by = pb.y + pb.h - edgeInset - venueH;
@@ -866,17 +855,26 @@ export class CityLayout {
 
   drawDeliveryLanes(ctx: CanvasRenderingContext2D, nightAlpha: number) {
     const roadLight = Math.max(0, 45 - nightAlpha * 25);
+    const hw = ROAD_WIDTH / 2;
     ctx.fillStyle = `hsl(220, 5%, ${roadLight}%)`;
+
     for (const lane of this.deliveryLanes) {
-      ctx.fillRect(lane.stripX, lane.stripY, lane.stripW, lane.stripH);
+      // Short road stub from city road into the plaza
+      const stubTop = lane.entryY - ROAD_WIDTH; // extend up into city road for seamless join
+      const stubBot = lane.innerY + hw;          // end at perimeter path
+      ctx.fillRect(lane.laneX - hw, stubTop, ROAD_WIDTH, stubBot - stubTop);
     }
-    ctx.strokeStyle = `rgba(255, 255, 200, ${0.4 - nightAlpha * 0.1})`;
+
+    // Dashed center line on stub
+    ctx.strokeStyle = `rgba(255, 255, 200, ${0.3 - nightAlpha * 0.1})`;
     ctx.lineWidth = 1.5;
     ctx.setLineDash([6, 8]);
     for (const lane of this.deliveryLanes) {
+      const stubTop = lane.entryY - ROAD_WIDTH;
+      const stubBot = lane.innerY + hw;
       ctx.beginPath();
-      ctx.moveTo(lane.laneX, lane.stripY);
-      ctx.lineTo(lane.laneX, lane.stripY + lane.stripH);
+      ctx.moveTo(lane.laneX, stubTop);
+      ctx.lineTo(lane.laneX, stubBot);
       ctx.stroke();
     }
     ctx.setLineDash([]);

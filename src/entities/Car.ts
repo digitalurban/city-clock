@@ -483,14 +483,106 @@ export class Car {
 
   /** Pick the delivery lane to use for a given venue.
    *  Top venues (facing down) → top lane. Everything else → nearest lane by y. */
-  private pickDeliveryLane(venue: VenueDef, layout: CityLayout): DeliveryLane | null {
-    if (layout.deliveryLanes.length === 0) return null;
-    if (layout.deliveryLanes.length === 1) return layout.deliveryLanes[0];
-    const midY = layout.plazaBounds.y + layout.plazaBounds.h / 2;
-    if (venue.facingPlaza === 'bottom' || venue.y + venue.h / 2 < midY) {
-      return layout.deliveryLanes[0]; // top lane
+  private pickDeliveryLane(_venue: VenueDef, layout: CityLayout): DeliveryLane | null {
+    return layout.deliveryLanes.length > 0 ? layout.deliveryLanes[0] : null;
+  }
+
+  /** Build perimeter waypoints from the entry stub to the venue's front.
+   *  Trucks enter from the top, then drive around the plaza edge in front of shops. */
+  private buildPerimeterToVenue(venue: VenueDef, lane: DeliveryLane, layout: CityLayout): { x: number; y: number }[] {
+    const p = layout.deliveryPerimeter;
+    const entryX = lane.laneX;
+    const entryY = p.topY;
+
+    // Determine venue delivery position on the perimeter
+    let vx: number, vy: number;
+    if (venue.facingPlaza === 'bottom') {
+      vx = venue.x + venue.w / 2; vy = p.topY;
+    } else if (venue.facingPlaza === 'top') {
+      vx = venue.x + venue.w / 2; vy = p.bottomY;
+    } else if (venue.facingPlaza === 'right') {
+      vx = p.leftX; vy = venue.y + venue.h / 2;
+    } else {
+      vx = p.rightX; vy = venue.y + venue.h / 2;
     }
-    return layout.deliveryLanes[1]; // bottom lane
+
+    const waypoints: { x: number; y: number }[] = [];
+    // Start: align at entry on the perimeter
+    waypoints.push({ x: entryX, y: entryY });
+
+    if (venue.facingPlaza === 'bottom') {
+      // Same top edge — go directly
+      waypoints.push({ x: vx, y: vy });
+    } else if (venue.facingPlaza === 'right') {
+      // Top → left: go left to top-left corner, then down
+      waypoints.push({ x: p.leftX, y: p.topY });
+      waypoints.push({ x: vx, y: vy });
+    } else if (venue.facingPlaza === 'left') {
+      // Top → right: go right to top-right corner, then down
+      waypoints.push({ x: p.rightX, y: p.topY });
+      waypoints.push({ x: vx, y: vy });
+    } else {
+      // Bottom edge: pick shorter route (via left or right)
+      const viaLeft = Math.abs(entryX - p.leftX) + (p.bottomY - p.topY) + Math.abs(vx - p.leftX);
+      const viaRight = Math.abs(entryX - p.rightX) + (p.bottomY - p.topY) + Math.abs(vx - p.rightX);
+      if (viaLeft < viaRight) {
+        waypoints.push({ x: p.leftX, y: p.topY });
+        waypoints.push({ x: p.leftX, y: p.bottomY });
+        waypoints.push({ x: vx, y: vy });
+      } else {
+        waypoints.push({ x: p.rightX, y: p.topY });
+        waypoints.push({ x: p.rightX, y: p.bottomY });
+        waypoints.push({ x: vx, y: vy });
+      }
+    }
+    return waypoints;
+  }
+
+  /** Build perimeter waypoints from the current position back to the entry stub. */
+  private buildPerimeterToExit(layout: CityLayout): { x: number; y: number }[] {
+    const p = layout.deliveryPerimeter;
+    const lane = this.selectedLane!;
+    const entryX = lane.laneX;
+    const waypoints: { x: number; y: number }[] = [];
+
+    // Determine which edge we're on
+    const onTop = Math.abs(this.y - p.topY) < 10;
+    const onBottom = Math.abs(this.y - p.bottomY) < 10;
+    const onLeft = Math.abs(this.x - p.leftX) < 10;
+    const onRight = Math.abs(this.x - p.rightX) < 10;
+
+    if (onTop) {
+      // Already on top edge, go to entry
+      waypoints.push({ x: entryX, y: p.topY });
+    } else if (onLeft) {
+      // Go up to top-left corner, then to entry
+      waypoints.push({ x: p.leftX, y: p.topY });
+      waypoints.push({ x: entryX, y: p.topY });
+    } else if (onRight) {
+      // Go up to top-right corner, then to entry
+      waypoints.push({ x: p.rightX, y: p.topY });
+      waypoints.push({ x: entryX, y: p.topY });
+    } else if (onBottom) {
+      // Pick shorter route back to top
+      const viaLeft = Math.abs(this.x - p.leftX) + (p.bottomY - p.topY) + Math.abs(entryX - p.leftX);
+      const viaRight = Math.abs(this.x - p.rightX) + (p.bottomY - p.topY) + Math.abs(entryX - p.rightX);
+      if (viaLeft < viaRight) {
+        waypoints.push({ x: p.leftX, y: p.bottomY });
+        waypoints.push({ x: p.leftX, y: p.topY });
+        waypoints.push({ x: entryX, y: p.topY });
+      } else {
+        waypoints.push({ x: p.rightX, y: p.bottomY });
+        waypoints.push({ x: p.rightX, y: p.topY });
+        waypoints.push({ x: entryX, y: p.topY });
+      }
+    } else {
+      // Fallback: go straight to entry
+      waypoints.push({ x: entryX, y: p.topY });
+    }
+
+    // Final waypoint: exit through stub
+    waypoints.push({ x: entryX, y: lane.outerY });
+    return waypoints;
   }
 
   /** Build a path through the plaza interior to avoid cutting through venue buildings.
@@ -997,15 +1089,8 @@ export class Car {
         const distToLane = Math.hypot(this.x - lane.laneX, this.y - lane.outerY);
         if (distToLane < 60) {
           const venue = this.targetVenue!;
-          const deliveryX = venue.x + venue.w / 2;
-          const deliveryY = lane.side === 'top' ? venue.y - 5 : venue.y + venue.h + 5;
-          this.plazaWaypoints = [
-            { x: lane.laneX, y: lane.outerY },
-            { x: lane.laneX, y: lane.entryY },
-            { x: lane.laneX, y: lane.innerY },
-            { x: deliveryX, y: lane.innerY },
-            { x: deliveryX, y: deliveryY },
-          ];
+          // Build waypoints: entry stub → perimeter path → venue front
+          this.plazaWaypoints = this.buildPerimeterToVenue(venue, lane, layout);
           this.plazaWaypointIdx = 0;
           this.targetX = this.plazaWaypoints[0].x;
           this.targetY = this.plazaWaypoints[0].y;
@@ -1106,11 +1191,13 @@ export class Car {
 
         if (!this.packageDropped && this.deliveryPauseTimer >= 100 && this.targetVenue) {
           const v = this.targetVenue;
+          // Drop package at venue front (plaza-facing side, past awning)
+          const awning = 14;
           let px = v.x + v.w / 2, py = v.y + v.h / 2;
-          if (v.facingPlaza === 'bottom') py = v.y + v.h + 8;
-          else if (v.facingPlaza === 'top') py = v.y - 8;
-          else if (v.facingPlaza === 'right') px = v.x + v.w + 8;
-          else px = v.x - 8;
+          if (v.facingPlaza === 'bottom') py = v.y + v.h + awning + 4;
+          else if (v.facingPlaza === 'top') py = v.y - awning - 4;
+          else if (v.facingPlaza === 'right') px = v.x + v.w + awning + 4;
+          else px = v.x - awning - 4;
           Car.droppedPackages.push({
             x: px, y: py,
             timer: 800 + Math.floor(Math.random() * 400),
@@ -1120,19 +1207,11 @@ export class Car {
         }
 
         if (this.deliveryPauseTimer >= 240) {
-          // Done — head back out to an exit entrance
-          this.exitEntrance = this.findNearestEntrance(layout, this.x, this.y);
-          if (this.exitEntrance) {
-            this.plazaWaypoints = this.buildPlazaPath(
-              { x: this.x, y: this.y },
-              { x: this.exitEntrance.x, y: this.exitEntrance.y },
-              layout
-            );
-            this.plazaWaypointIdx = 0;
-            const wp = this.plazaWaypoints[0];
-            this.targetX = wp.x;
-            this.targetY = wp.y;
-          }
+          // Done — drive around perimeter back to entry stub and out
+          this.plazaWaypoints = this.buildPerimeterToExit(layout);
+          this.plazaWaypointIdx = 0;
+          this.targetX = this.plazaWaypoints[0].x;
+          this.targetY = this.plazaWaypoints[0].y;
           this.deliveryState = 'to_exit';
         }
         break;

@@ -893,14 +893,20 @@ export class Pedestrian {
         }
       }
 
-      // 6. Vehicle repulsion — pedestrians flee from any car/truck in the plaza
+      // 6. Vehicle repulsion — pedestrians flee from any car/truck nearby
+      // Delivery trucks inside the plaza get a larger flee radius and stronger push
+      const pb = layout.plazaBounds;
       for (const car of cars) {
         const cdx = this.x - car.x;
         const cdy = this.y - car.y;
         const cdist = Math.hypot(cdx, cdy);
-        const FLEE_RADIUS = 45;
+        const inPlaza = car.x > pb.x && car.x < pb.x + pb.w &&
+                        car.y > pb.y && car.y < pb.y + pb.h;
+        const isDeliveryInPlaza = car.carType === 'delivery' && inPlaza;
+        const FLEE_RADIUS = isDeliveryInPlaza ? 65 : 45;
+        const fleeMult = isDeliveryInPlaza ? 40 : 20;
         if (cdist < FLEE_RADIUS && cdist > 0) {
-          const strength = ((FLEE_RADIUS - cdist) / FLEE_RADIUS) * this.maxForce * 20;
+          const strength = ((FLEE_RADIUS - cdist) / FLEE_RADIUS) * this.maxForce * fleeMult;
           ax += (cdx / cdist) * strength;
           ay += (cdy / cdist) * strength;
         }

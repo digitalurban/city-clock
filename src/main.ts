@@ -533,6 +533,7 @@ function buildStaticCanvas(nightAlpha: number) {
   layout.drawBuildings(sctx, nightAlpha);
   layout.drawHouses(sctx, nightAlpha);
   layout.drawVenues(sctx, nightAlpha);
+  layout.drawDeliveryLanes(sctx, nightAlpha); // on top of venues so stub is visible
   layout.drawPlazaLampPosts(sctx, nightAlpha);
 
   lastStaticNightAlpha = nightAlpha;
