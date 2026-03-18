@@ -538,17 +538,12 @@ function buildStaticCanvas(nightAlpha: number) {
   lastStaticNightAlpha = nightAlpha;
 }
 
-// ==================== Frame-rate cap + visibility pause ====================
-// A clock/city wallpaper looks fine at 30fps and cuts GPU/CPU work in half.
-const TARGET_FPS = 30;
-const FRAME_MS = 1000 / TARGET_FPS;
-let lastFrameTs = 0;
+// ==================== Visibility pause ====================
 let loopRunning = true; // paused when tab hidden
 
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && !loopRunning) {
     loopRunning = true;
-    lastFrameTs = 0; // allow immediate repaint on return
     requestAnimationFrame(loop);
   } else if (document.hidden) {
     loopRunning = false;
@@ -558,21 +553,14 @@ document.addEventListener('visibilitychange', () => {
 function loop(timestamp: number = 0) {
   if (!loopRunning) return; // tab hidden — stop scheduling frames
 
-  // Throttle to TARGET_FPS
-  if (timestamp - lastFrameTs < FRAME_MS) {
-    requestAnimationFrame(loop);
-    return;
-  }
-  lastFrameTs = timestamp;
-
   const time = Date.now() / 1000;
   const nightAlpha = dayNight.getNightAlpha();
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const w = window.innerWidth;
   const h = window.innerHeight;
 
-  // Update traffic light phase (~8 second cycle)
-  trafficPhase = (trafficPhase + 1 / 480) % 1;
+  // Update traffic light phase (~16 second cycle, time-based so frame-rate independent)
+  trafficPhase = (time / 16) % 1;
 
   // Update weather
   weather.update();
@@ -708,7 +696,7 @@ function loop(timestamp: number = 0) {
   layout.drawPlazaLampGlows(ctx, nightAlpha);
 
   // Update and draw dynamic events (in world space, underneath weather/UI)
-  if (nightAlpha < 0.3 && !layout.activeEvent && Math.random() < 0.0005) {
+  if (nightAlpha < 0.3 && !layout.activeEvent && Math.random() < 0.00025) {
     layout.startEvent(Math.random() < 0.5 ? 'musician' : 'protest');
   }
   layout.updateEvent();

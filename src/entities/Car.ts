@@ -74,20 +74,17 @@ export class Car {
   // Smooth angle interpolation
   private angleTarget: number = 0;
   private stuckTimer: number = 0;
+  // Cooldown after a road transition to prevent re-triggering
+  private transitionCooldown: number = 0;
 
-  // Bezier arc turning
-  private drivingPhase: 'road' | 'turning' = 'road';
-  private arcP0 = { x: 0, y: 0 };
-  private arcP1 = { x: 0, y: 0 };
-  private arcP2 = { x: 0, y: 0 };
-  private arcT: number = 0;
-  private arcLength: number = 1;
-  private arcExitRoad: RoadSegment | null = null;
-  private arcExitDirX: number = 0;
-  private arcExitDirY: number = 0;
-  // Pre-resolved turn for red-light stops (eliminates stop-then-jump)
-  private pendingTurnRoad: RoadSegment | null = null;
-  private pendingTurnInter: IntersectionDef | null = null;
+  // Smooth turning: interpolate position from old lane to new lane
+  private turnLerping: boolean = false;
+  private turnFromX: number = 0;
+  private turnFromY: number = 0;
+  private turnToX: number = 0;
+  private turnToY: number = 0;
+  private turnProgress: number = 0;
+  private turnDuration: number = 16; // frames at 60fps (~0.27s)
 
   // Bus stop FSM
   private busState: 'road' | 'stopping' | 'dwell' | 'departing' = 'road';
@@ -177,13 +174,13 @@ export class Car {
     this.placeOnRoad(this.road);
 
     if (carType === 'delivery') {
-      this.deliveryTimer = 150 + Math.random() * 250;
+      this.deliveryTimer = 300 + Math.random() * 500;
     }
     if (carType === 'bus') {
-      this.busStopTimer = 200 + Math.floor(Math.random() * 200);
+      this.busStopTimer = 400 + Math.floor(Math.random() * 400);
     }
     if (carType === 'garbage') {
-      this.garbageStopTimer = 50 + Math.floor(Math.random() * 100);
+      this.garbageStopTimer = 100 + Math.floor(Math.random() * 200);
     }
 
     this.sirenPhase = Math.random() * Math.PI * 2;
@@ -207,38 +204,6 @@ export class Car {
       this.x = midX - offset;
     }
     this.currentSpeed *= 0.5; // slow down after reversing
-  }
-
-  // ── Bezier helpers ─────────────────────────────────────────────────────────
-
-  private bezierPoint(
-    p0: { x: number; y: number }, p1: { x: number; y: number }, p2: { x: number; y: number }, t: number
-  ) {
-    const u = 1 - t;
-    return { x: u * u * p0.x + 2 * u * t * p1.x + t * t * p2.x,
-             y: u * u * p0.y + 2 * u * t * p1.y + t * t * p2.y };
-  }
-
-  private bezierTangent(
-    p0: { x: number; y: number }, p1: { x: number; y: number }, p2: { x: number; y: number }, t: number
-  ) {
-    const tx = 2 * (1 - t) * (p1.x - p0.x) + 2 * t * (p2.x - p1.x);
-    const ty = 2 * (1 - t) * (p1.y - p0.y) + 2 * t * (p2.y - p1.y);
-    const len = Math.hypot(tx, ty) || 1;
-    return { x: tx / len, y: ty / len };
-  }
-
-  private computeArcLength(
-    p0: { x: number; y: number }, p1: { x: number; y: number }, p2: { x: number; y: number }
-  ): number {
-    let sum = 0;
-    let prev = p0;
-    for (let i = 1; i <= 10; i++) {
-      const pt = this.bezierPoint(p0, p1, p2, i / 10);
-      sum += Math.hypot(pt.x - prev.x, pt.y - prev.y);
-      prev = pt;
-    }
-    return sum || 1;
   }
 
   private pickRandomRoad(layout: CityLayout): RoadSegment {
@@ -298,6 +263,8 @@ export class Car {
 
     for (const road of layout.roads) {
       if (road === this.road) continue;
+      // Only delivery trucks actively seeking a delivery may use plaza-bordering stubs
+      if (road.plazaBordering && !(this.carType === 'delivery' && this.deliveryState === 'seeking_plaza')) continue;
 
       if (this.x >= road.x - snap && this.x <= road.x + road.w + snap &&
         this.y >= road.y - snap && this.y <= road.y + road.h + snap) {
@@ -349,105 +316,14 @@ export class Car {
     for (const road of layout.roads) {
       if (road === this.road) continue;
       if (road.horizontal === this.road.horizontal) continue; // must be perpendicular
+      // Only delivery trucks actively seeking a delivery may use plaza-bordering stubs
+      if (road.plazaBordering && !(this.carType === 'delivery' && this.deliveryState === 'seeking_plaza')) continue;
       if (ix >= road.x - snap && ix <= road.x + road.w + snap &&
         iy >= road.y - snap && iy <= road.y + road.h + snap) {
         return road;
       }
     }
     return null;
-  }
-
-  /**
-   * Begin a Bezier arc turn through an intersection.
-   * Sets drivingPhase='turning' and stores arc control points P0/P1/P2.
-   */
-  private beginTurningArc(inter: IntersectionDef, exitRoad: RoadSegment, _layout: CityLayout) {
-    // Determine exit direction from exitRoad + car position relative to intersection
-    let newDirX = 0;
-    let newDirY = 0;
-    if (exitRoad.horizontal) {
-      newDirX = this.x < inter.x ? 1 : -1;
-      newDirY = 0;
-    } else {
-      newDirX = 0;
-      newDirY = this.y < inter.y ? 1 : -1;
-    }
-
-    // Straight-through: skip arc, call transitionToRoad directly
-    if (newDirX === this.dirX && newDirY === this.dirY) {
-      this.transitionToRoad(exitRoad);
-      return;
-    }
-    // U-turn: reverse direction
-    if (newDirX === -this.dirX && newDirY === -this.dirY) {
-      this.reverseDirection();
-      return;
-    }
-
-    // Entry lane position on current road
-    let entryLaneX = this.x;
-    let entryLaneY = this.y;
-    if (this.road.horizontal) {
-      entryLaneY = this.road.y + (this.dirX > 0 ? this.road.h * 0.75 : this.road.h * 0.25);
-    } else {
-      entryLaneX = this.road.x + (this.dirY > 0 ? this.road.w * 0.25 : this.road.w * 0.75);
-    }
-
-    // Exit lane position on exit road
-    let exitLaneX = inter.x;
-    let exitLaneY = inter.y;
-    if (exitRoad.horizontal) {
-      exitLaneY = exitRoad.y + (newDirX > 0 ? exitRoad.h * 0.75 : exitRoad.h * 0.25);
-    } else {
-      exitLaneX = exitRoad.x + (newDirY > 0 ? exitRoad.w * 0.25 : exitRoad.w * 0.75);
-    }
-
-    // P0: intersection entry, snapped to entry lane
-    let P0: { x: number; y: number };
-    if (this.road.horizontal) {
-      P0 = { x: inter.x - this.dirX * 18, y: entryLaneY };
-    } else {
-      P0 = { x: entryLaneX, y: inter.y - this.dirY * 18 };
-    }
-
-    // P2: intersection exit, snapped to exit lane
-    let P2: { x: number; y: number };
-    if (exitRoad.horizontal) {
-      P2 = { x: inter.x + newDirX * 18, y: exitLaneY };
-    } else {
-      P2 = { x: exitLaneX, y: inter.y + newDirY * 18 };
-    }
-
-    // P1 depends on turn type
-    // Cross product: dirX*newDirY - dirY*newDirX > 0 → right turn (tight)
-    let P1: { x: number; y: number };
-    const cross = this.dirX * newDirY - this.dirY * newDirX;
-    if (cross > 0) {
-      // Right turn — tight corner: P1 at corner of lane centre-lines
-      if (this.road.horizontal) {
-        P1 = { x: P2.x, y: P0.y };
-      } else {
-        P1 = { x: P0.x, y: P2.y };
-      }
-    } else {
-      // Left turn — wide sweep through intersection centre
-      P1 = { x: inter.x, y: inter.y };
-    }
-
-    // Snap car to P0
-    this.x = P0.x;
-    this.y = P0.y;
-
-    this.arcP0 = P0;
-    this.arcP1 = P1;
-    this.arcP2 = P2;
-    this.arcT = 0;
-    this.arcLength = this.computeArcLength(P0, P1, P2);
-    this.arcExitRoad = exitRoad;
-    this.arcExitDirX = newDirX;
-    this.arcExitDirY = newDirY;
-    this.drivingPhase = 'turning';
-    this.stuckTimer = 0;
   }
 
   /**
@@ -475,92 +351,45 @@ export class Car {
    * This avoids all the Bezier flickering problems.
    */
 
-  private updateTurningArc() {
-    // Advance t proportional to speed / arc length
-    this.arcT = Math.min(1, this.arcT + this.currentSpeed / this.arcLength);
-
-    const pt = this.bezierPoint(this.arcP0, this.arcP1, this.arcP2, this.arcT);
-    this.x = pt.x;
-    this.y = pt.y;
-
-    const tan = this.bezierTangent(this.arcP0, this.arcP1, this.arcP2, this.arcT);
-    this.angle = Math.atan2(tan.y, tan.x);
-    this.angleTarget = this.angle;
-
-    if (this.arcT >= 1) {
-      // Commit to exit road
-      this.road = this.arcExitRoad!;
-      this.dirX = this.arcExitDirX;
-      this.dirY = this.arcExitDirY;
-      // Snap angle to exact cardinal direction (no drift from curve tangent)
-      this.angle = Math.atan2(this.dirY, this.dirX);
-      this.angleTarget = this.angle;
-      // Snap to exact lane centre
-      if (this.road.horizontal) {
-        this.y = this.road.y + (this.dirX > 0 ? this.road.h * 0.75 : this.road.h * 0.25);
-      } else {
-        this.x = this.road.x + (this.dirY > 0 ? this.road.w * 0.25 : this.road.w * 0.75);
-      }
-      this.vx = this.dirX * this.currentSpeed;
-      this.vy = this.dirY * this.currentSpeed;
-      this.arcExitRoad = null;
-      this.drivingPhase = 'road';
-    }
-  }
-
-  private updateTurningAvoidance(pedestrians: Pedestrian[], cars: Car[]) {
-    // Check from current position AND a point slightly ahead on the arc
-    const cx = this.x;
-    const cy = this.y;
-    const aheadT = Math.min(1, this.arcT + 0.15);
-    const ahead = this.bezierPoint(this.arcP0, this.arcP1, this.arcP2, aheadT);
-    const SLOW_DIST = 22;
-    const STOP_DIST = 12;
-
-    for (const p of pedestrians) {
-      const d1 = Math.hypot(cx - p.x, cy - p.y);
-      const d2 = Math.hypot(ahead.x - p.x, ahead.y - p.y);
-      const d = Math.min(d1, d2);
-      if (d < STOP_DIST) { this.currentSpeed = 0; return; }
-      if (d < SLOW_DIST) { this.currentSpeed = Math.min(this.currentSpeed, this.baseSpeed * 0.3); return; }
-    }
-    for (const c of cars) {
-      if (c === this) continue;
-      const d1 = Math.hypot(cx - c.x, cy - c.y);
-      const d2 = Math.hypot(ahead.x - c.x, ahead.y - c.y);
-      const d = Math.min(d1, d2);
-      if (d < STOP_DIST + 8) { this.currentSpeed = 0; return; }
-      if (d < SLOW_DIST + 12) { this.currentSpeed = Math.min(this.currentSpeed, this.baseSpeed * 0.4); return; }
-    }
-    // Recover speed
-    if (this.currentSpeed < this.baseSpeed) {
-      this.currentSpeed = Math.min(this.baseSpeed, this.currentSpeed + this.baseSpeed * 0.05);
-    }
-  }
-
-  private transitionToRoad(road: RoadSegment) {
+  private transitionToRoad(road: RoadSegment, inter?: IntersectionDef) {
     this.stuckTimer = 0;
-    const oldDirX = this.dirX;
-    const oldDirY = this.dirY;
+
+    // Store old position for smooth interpolation
+    const oldX = this.x;
+    const oldY = this.y;
+
     this.road = road;
 
     if (road.horizontal) {
-      const dirX = this.dirX !== 0 ? Math.sign(this.dirX) :
-        (this.x < road.x + road.w / 2 ? 1 : -1);
+      const dirX = Math.random() > 0.5 ? 1 : -1;
       this.dirX = dirX;
       this.dirY = 0;
       this.y = road.y + (dirX > 0 ? road.h * 0.75 : road.h * 0.25);
-      this.angleTarget = dirX > 0 ? 0 : Math.PI;
+      if (inter) this.x = inter.x;
     } else {
-      const dirY = this.dirY !== 0 ? Math.sign(this.dirY) :
-        (this.y < road.y + road.h / 2 ? 1 : -1);
+      const dirY = Math.random() > 0.5 ? 1 : -1;
       this.dirX = 0;
       this.dirY = dirY;
       this.x = road.x + (dirY > 0 ? road.w * 0.25 : road.w * 0.75);
-      this.angleTarget = dirY > 0 ? Math.PI / 2 : -Math.PI / 2;
+      if (inter) this.y = inter.y;
     }
+
+    // Set up smooth position interpolation from old to new lane
+    this.turnFromX = oldX;
+    this.turnFromY = oldY;
+    this.turnToX = this.x;
+    this.turnToY = this.y;
+    this.turnProgress = 0;
+    this.turnLerping = true;
+    this.turnDuration = 16;
+    // Start visually at old position — the lerp will glide us to the new one
+    this.x = oldX;
+    this.y = oldY;
+
+    this.angleTarget = Math.atan2(this.dirY, this.dirX);
     this.vx = this.dirX * this.currentSpeed;
     this.vy = this.dirY * this.currentSpeed;
+    this.transitionCooldown = 120;
   }
 
   /**
@@ -808,18 +637,10 @@ export class Car {
   }
 
   update(layout: CityLayout, pedestrians: Pedestrian[], cars: Car[], trafficPhase: number = 0) {
-    // Angle lerp only when driving on a road (arc drives angle directly)
-    if (this.drivingPhase === 'road') {
-      let da = this.angleTarget - this.angle;
-      while (da > Math.PI) da -= Math.PI * 2;
-      while (da < -Math.PI) da += Math.PI * 2;
-      this.angle += da * 0.22;
-    }
-
     // Calculate red light status once per frame
     const isEmergency = this.carType === 'police' || this.carType === 'ambulance' || this.carType === 'firetruck';
     let stoppedAtRedLight = false;
-    if (!isEmergency && this.drivingPhase === 'road') {
+    if (!isEmergency) {
       const signal = this.getTrafficSignal(layout, trafficPhase);
       if (signal === 'red') {
         const inIntersection = this.isInsideIntersection(layout);
@@ -839,10 +660,37 @@ export class Car {
       }
     }
 
-    if (this.drivingPhase === 'turning') {
-      this.updateTurningAvoidance(pedestrians, cars);
-      this.updateTurningArc();
-    } else if (this.carType === 'delivery') {
+    // Smooth angle interpolation toward target
+    if (this.angleTarget !== this.angle) {
+      let da = this.angleTarget - this.angle;
+      while (da > Math.PI) da -= Math.PI * 2;
+      while (da < -Math.PI) da += Math.PI * 2;
+      if (Math.abs(da) < 0.05) {
+        this.angle = this.angleTarget;
+      } else {
+        this.angle += da * 0.3;
+      }
+    }
+
+    // Smooth turn position interpolation (lerp from old lane to new lane)
+    if (this.turnLerping) {
+      this.turnProgress++;
+      const t = Math.min(1, this.turnProgress / this.turnDuration);
+      // Ease-in-out for smooth motion
+      const ease = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+      this.x = this.turnFromX + (this.turnToX - this.turnFromX) * ease;
+      this.y = this.turnFromY + (this.turnToY - this.turnFromY) * ease;
+      if (t >= 1) {
+        this.turnLerping = false;
+        this.x = this.turnToX;
+        this.y = this.turnToY;
+      }
+      // During lerp, still update siren but skip normal movement
+      if (isEmergency) this.sirenPhase += 0.075;
+      return;
+    }
+
+    if (this.carType === 'delivery') {
       this.updateDelivery(layout, pedestrians, cars, trafficPhase, stoppedAtRedLight);
     } else if (this.carType === 'bus') {
       this.updateBus(layout, pedestrians, cars, trafficPhase, stoppedAtRedLight);
@@ -854,7 +702,7 @@ export class Car {
 
     // Update siren phase for emergency vehicles
     if (isEmergency) {
-      this.sirenPhase += 0.15;
+      this.sirenPhase += 0.075;
     }
   }
 
@@ -923,7 +771,7 @@ export class Car {
 
     // Gridlock resolution: if stopped too long (>6 seconds = ~360 frames), try to reverse or nudge
     // ONLY if not stopped at a red light. This prevents cars from turning around at traffic signals.
-    if (this.stoppedFrames > 360 && !stoppedAtRedLight) {
+    if (this.stoppedFrames > 720 && !stoppedAtRedLight) {
       if (Math.random() < 0.2 && this.deliveryState === 'road') {
         this.reverseDirection();
       } else {
@@ -950,47 +798,41 @@ export class Car {
     this.vy = this.dirY * this.currentSpeed;
 
     // ---- Junction turning ----
-    // Pre-resolve turn while stopped at red (prevents stop-then-jump on green)
-    if (stoppedAtRedLight && !this.pendingTurnRoad) {
-      const ni = this.findNextIntersection(layout);
-      if (ni && ni.dist < ROAD_WIDTH * 1.5) {
-        const perpRoad = this.findRoadAtIntersection(layout, ni.inter.x, ni.inter.y);
-        if (perpRoad) {
-          this.pendingTurnRoad = perpRoad;
-          this.pendingTurnInter = ni.inter;
-        }
-      }
-    }
-
-    // When light goes green, fire pending arc immediately
-    if (!stoppedAtRedLight && this.pendingTurnRoad && this.pendingTurnInter) {
-      this.beginTurningArc(this.pendingTurnInter, this.pendingTurnRoad, layout);
-      this.pendingTurnRoad = null;
-      this.pendingTurnInter = null;
-      return;
-    }
-
-    // Normal trigger (moving, not at red)
-    if (!stoppedAtRedLight) {
+    if (this.transitionCooldown > 0) {
+      this.transitionCooldown--;
+    } else {
       const TRIGGER_RADIUS = ROAD_WIDTH * 0.6;
       const nextInter = this.findNextIntersection(layout);
 
       if (nextInter && nextInter.dist < TRIGGER_RADIUS) {
-        const perpRoad = this.findRoadAtIntersection(layout, nextInter.inter.x, nextInter.inter.y);
-        if (perpRoad) {
-          this.beginTurningArc(nextInter.inter, perpRoad, layout);
-          return;
+        // 40% chance to turn at each intersection, 60% go straight
+        if (Math.random() < 0.4) {
+          const perpRoad = this.findRoadAtIntersection(layout, nextInter.inter.x, nextInter.inter.y);
+          if (perpRoad) {
+            this.transitionToRoad(perpRoad, nextInter.inter);
+            return;
+          }
         }
+        // Going straight — just set cooldown to avoid re-checking same intersection
+        this.transitionCooldown = 60;
       }
 
-      // Road-end fallback: if somehow past the road end, find any perp road
-      if (this.isApproachingRoadEnd(layout) && nextInter === null) {
+      // Road-end: MUST turn — no choice
+      if (this.isApproachingRoadEnd(layout)) {
+        const ni = this.findNextIntersection(layout);
+        if (ni) {
+          const perpRoad = this.findRoadAtIntersection(layout, ni.inter.x, ni.inter.y);
+          if (perpRoad) {
+            this.transitionToRoad(perpRoad, ni.inter);
+            return;
+          }
+        }
         const perpFallback = this.findConnectingRoad(layout, true);
         if (perpFallback) {
           this.transitionToRoad(perpFallback);
           return;
         }
-        if (this.stuckTimer > 30) {
+        if (this.stuckTimer > 60) {
           this.reverseDirection();
           this.stuckTimer = 0;
           return;
@@ -1009,7 +851,7 @@ export class Car {
       const connecting = this.findConnectingRoad(layout);
       if (connecting) {
         this.transitionToRoad(connecting);
-      } else if (this.currentSpeed < 0.1 && this.stuckTimer > 60) {
+      } else if (this.currentSpeed < 0.1 && this.stuckTimer > 120) {
         this.reverseDirection();
         this.stuckTimer = 0;
       }
@@ -1036,7 +878,7 @@ export class Car {
         if (!stoppedAtRedLight) this.busStopTimer--;
         if (this.busStopTimer <= 0 && this.currentSpeed > 0.2) {
           this.busState = 'stopping';
-          this.busDwellDuration = 90 + Math.floor(Math.random() * 60);
+          this.busDwellDuration = 180 + Math.floor(Math.random() * 120);
           this.busDwellTimer = 0;
           const count = 2 + Math.floor(Math.random() * 2);
           this.busPassengerDots = Array.from({ length: count }, () => ({
@@ -1048,7 +890,7 @@ export class Car {
         }
         break;
       case 'stopping':
-        this.currentSpeed = Math.max(0, this.currentSpeed - this.baseSpeed * 0.08);
+        this.currentSpeed = Math.max(0, this.currentSpeed - this.baseSpeed * 0.04);
         this.vx = this.dirX * this.currentSpeed;
         this.vy = this.dirY * this.currentSpeed;
         this.x += this.vx;
@@ -1063,8 +905,8 @@ export class Car {
         this.busDwellTimer++;
         for (const d of this.busPassengerDots) {
           d.alpha = d.appearing
-            ? Math.min(1, d.alpha + 0.05)
-            : Math.max(0, d.alpha - 0.04);
+            ? Math.min(1, d.alpha + 0.025)
+            : Math.max(0, d.alpha - 0.02);
         }
         if (this.busDwellTimer >= this.busDwellDuration) {
           this.busDoorsOpen = false;
@@ -1072,14 +914,14 @@ export class Car {
         }
         break;
       case 'departing':
-        this.currentSpeed = Math.min(this.baseSpeed, this.currentSpeed + this.baseSpeed * 0.06);
+        this.currentSpeed = Math.min(this.baseSpeed, this.currentSpeed + this.baseSpeed * 0.03);
         this.vx = this.dirX * this.currentSpeed;
         this.vy = this.dirY * this.currentSpeed;
         this.x += this.vx;
         this.y += this.vy;
         if (this.currentSpeed >= this.baseSpeed * 0.9) {
           this.busState = 'road';
-          this.busStopTimer = 200 + Math.floor(Math.random() * 200);
+          this.busStopTimer = 400 + Math.floor(Math.random() * 400);
         }
         break;
     }
@@ -1094,7 +936,7 @@ export class Car {
         if (!stoppedAtRedLight) this.garbageStopTimer--;
         if (this.garbageStopTimer <= 0 && this.currentSpeed > 0.1) {
           this.garbageState = 'collecting';
-          this.garbageDwellDuration = 90 + Math.floor(Math.random() * 30);
+          this.garbageDwellDuration = 180 + Math.floor(Math.random() * 60);
           this.garbageDwellTimer = 0;
           this.currentSpeed = 0;
           this.vx = 0;
@@ -1105,7 +947,7 @@ export class Car {
         this.garbageDwellTimer++;
         if (this.garbageDwellTimer >= this.garbageDwellDuration) {
           this.garbageState = 'road';
-          this.garbageStopTimer = 150 + Math.floor(Math.random() * 100);
+          this.garbageStopTimer = 300 + Math.floor(Math.random() * 200);
           this.currentSpeed = this.baseSpeed;
         }
         break;
@@ -1132,12 +974,12 @@ export class Car {
             !cars.some(c => c !== this && c.carType === 'delivery' &&
               c.deliveryState !== 'road' && c.targetVenue === v)
           );
-          if (available.length === 0) { this.deliveryTimer = 60; return; }
+          if (available.length === 0) { this.deliveryTimer = 120; return; }
 
           const venue = available[Math.floor(Math.random() * available.length)];
           this.targetVenue = venue;
           this.selectedLane = this.pickDeliveryLane(venue, layout);
-          if (!this.selectedLane) { this.deliveryTimer = 60; this.targetVenue = null; return; }
+          if (!this.selectedLane) { this.deliveryTimer = 120; this.targetVenue = null; return; }
 
           this.seekingLaneTimer = 0;
           this.deliveryState = 'seeking_plaza';
@@ -1167,7 +1009,7 @@ export class Car {
           this.plazaWaypointIdx = 0;
           this.targetX = this.plazaWaypoints[0].x;
           this.targetY = this.plazaWaypoints[0].y;
-          this.drivingPhase = 'road'; // ensure not in turning arc when entering plaza
+          this.transitionCooldown = 0;
           this.deliveryState = 'to_venue';
           break;
         }
@@ -1228,7 +1070,7 @@ export class Car {
             const fallback = this.findConnectingRoad(layout);
             if (fallback) {
               this.transitionToRoad(fallback);
-            } else if (!stoppedAtRedLight && this.stuckTimer > 180) {
+            } else if (!stoppedAtRedLight && this.stuckTimer > 360) {
               this.reverseDirection();
               this.stuckTimer = 0;
             }
@@ -1262,7 +1104,7 @@ export class Car {
         this.vy = 0;
         this.deliveryPauseTimer++;
 
-        if (!this.packageDropped && this.deliveryPauseTimer >= 50 && this.targetVenue) {
+        if (!this.packageDropped && this.deliveryPauseTimer >= 100 && this.targetVenue) {
           const v = this.targetVenue;
           let px = v.x + v.w / 2, py = v.y + v.h / 2;
           if (v.facingPlaza === 'bottom') py = v.y + v.h + 8;
@@ -1271,13 +1113,13 @@ export class Car {
           else px = v.x - 8;
           Car.droppedPackages.push({
             x: px, y: py,
-            timer: 400 + Math.floor(Math.random() * 200),
+            timer: 800 + Math.floor(Math.random() * 400),
             color: PKG_COLORS[Math.floor(Math.random() * PKG_COLORS.length)],
           });
           this.packageDropped = true;
         }
 
-        if (this.deliveryPauseTimer >= 120) {
+        if (this.deliveryPauseTimer >= 240) {
           // Done — head back out to an exit entrance
           this.exitEntrance = this.findNearestEntrance(layout, this.x, this.y);
           if (this.exitEntrance) {
@@ -1329,7 +1171,7 @@ export class Car {
           this.targetEntrance = null;
           this.exitEntrance = null;
           this.selectedLane = null;
-          this.deliveryTimer = 200 + Math.random() * 300;
+          this.deliveryTimer = 400 + Math.random() * 600;
         }
         break;
       }
@@ -1580,16 +1422,22 @@ export class Car {
           ctx.fillStyle = 'rgba(255,220,0,0.9)';
           ctx.fillRect(-hw + 6, hh - 2, this.length - 12, 3);
         }
-        // Passenger dots alongside bus
-        for (const d of this.busPassengerDots) {
-          if (d.alpha <= 0) continue;
-          ctx.globalAlpha = d.alpha;
-          ctx.fillStyle = '#f39c12';
-          ctx.beginPath();
-          ctx.arc(d.ox, d.oy + hh + 5, 2.5, 0, Math.PI * 2);
-          ctx.fill();
+        // Passenger dots rendered in world space (not rotated with bus)
+        if (this.busDoorsOpen) {
+          ctx.save();
+          // Undo the bus rotation so dots stay upright
+          ctx.rotate(-this.angle);
+          for (const d of this.busPassengerDots) {
+            if (d.alpha <= 0) continue;
+            ctx.globalAlpha = d.alpha;
+            ctx.fillStyle = '#f39c12';
+            ctx.beginPath();
+            ctx.arc(d.ox, d.oy + hh + 6, 2.5, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          ctx.globalAlpha = 1;
+          ctx.restore();
         }
-        ctx.globalAlpha = 1;
         break;
       }
 

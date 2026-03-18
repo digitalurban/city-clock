@@ -272,7 +272,7 @@ export class Pedestrian {
         const wp = layout.getRandomSidewalkWaypoint();
         this.waypointX = wp.x;
         this.waypointY = wp.y;
-        this.waypointTimer = Math.floor(Math.random() * 200); // stagger restarts
+        this.waypointTimer = Math.floor(Math.random() * 400); // stagger restarts
         this.vx *= 0.5;
         this.vy *= 0.5;
       } else {
@@ -335,7 +335,7 @@ export class Pedestrian {
           this.isSitting = false;
           this.hasFood = Math.random() < 0.4;
           this.thoughtBubble = 'heart';
-          this.thoughtTimer = 60;
+          this.thoughtTimer = 120;
           const wp = layout.getRandomSidewalkWaypoint();
           this.waypointX = wp.x;
           this.waypointY = wp.y;
@@ -390,7 +390,7 @@ export class Pedestrian {
             this.isQueuing = false;
             this.hasBag = true;
             this.thoughtBubble = 'happy';
-            this.thoughtTimer = 50;
+            this.thoughtTimer = 100;
             this.queueVenue = null;
             const wp = layout.getRandomSidewalkWaypoint();
             this.waypointX = wp.x;
@@ -433,7 +433,7 @@ export class Pedestrian {
           this.isCheckingPhone = false;
           if (Math.random() < 0.3) {
             this.thoughtBubble = Math.random() < 0.5 ? 'happy' : 'idea';
-            this.thoughtTimer = 60;
+            this.thoughtTimer = 120;
           }
           const wp = layout.getRandomSidewalkWaypoint();
           this.waypointX = wp.x;
@@ -451,7 +451,7 @@ export class Pedestrian {
         if (this.photoTimer <= 0) {
           this.isTakingPhoto = false;
           this.thoughtBubble = 'happy';
-          this.thoughtTimer = 50;
+          this.thoughtTimer = 100;
           const wp = layout.getRandomSidewalkWaypoint();
           this.waypointX = wp.x;
           this.waypointY = wp.y;
@@ -493,7 +493,7 @@ export class Pedestrian {
           this.isAtHome = false;
           this.isGoingHome = false;
           this.thoughtBubble = 'happy';
-          this.thoughtTimer = 50;
+          this.thoughtTimer = 100;
 
           // Walk back out to sidewalk via garden path
           const home = layout.houses[this.assignedHome];
@@ -536,10 +536,10 @@ export class Pedestrian {
         const wpDy = this.waypointY - this.y;
         const wpDist = Math.sqrt(wpDx * wpDx + wpDy * wpDy);
 
-        if (wpDist < 18 || this.waypointTimer > 300) {
+        if (wpDist < 18 || this.waypointTimer > 600) {
           // Detect stuck — if timer expired but we barely moved, force a brand new waypoint
           // far away to break the oscillation
-          const forceNewWaypoint = this.waypointTimer > 300;
+          const forceNewWaypoint = this.waypointTimer > 600;
           // If we have an intermediate waypoint (crosswalk routing), go to final destination
           if (this.intermediateWaypoint) {
             this.waypointX = this.intermediateWaypoint.x;
@@ -580,7 +580,7 @@ export class Pedestrian {
                 this.sitX = seat.x;
                 this.sitY = seat.y;
                 this.sitTimer = 0;
-                this.sitDuration = 300 + Math.random() * 300;
+                this.sitDuration = 600 + Math.random() * 600;
                 this.waypointX = seat.x;
                 this.waypointY = seat.y;
                 this.waypointTimer = 0;
@@ -591,7 +591,7 @@ export class Pedestrian {
                   (pb.x + pb.w / 2) - seat.x
                 );
                 this.thoughtBubble = 'food';
-                this.thoughtTimer = 50;
+                this.thoughtTimer = 100;
               }
             }
 
@@ -614,7 +614,7 @@ export class Pedestrian {
                 this.sitX = nearestBench.x;
                 this.sitY = nearestBench.y;
                 this.sitTimer = 0;
-                this.sitDuration = 300 + Math.random() * 300;
+                this.sitDuration = 600 + Math.random() * 600;
                 this.waypointX = nearestBench.x;
                 this.waypointY = nearestBench.y;
                 this.waypointTimer = 0;
@@ -653,7 +653,7 @@ export class Pedestrian {
                 else if (shop.facingPlaza === 'right') wx = shop.x + shop.w + 12;
                 else wx = shop.x - 12;
                 this.isWindowShopping = true;
-                this.windowShopTimer = 60 + Math.floor(Math.random() * 120);
+                this.windowShopTimer = 120 + Math.floor(Math.random() * 240);
                 this.waypointX = wx;
                 this.waypointY = wy;
                 this.waypointTimer = 0;
@@ -666,7 +666,7 @@ export class Pedestrian {
               this.socialTimer = 100 + Math.floor(Math.random() * 220);
               if (this.social < 50) {
                 this.thoughtBubble = 'chat';
-                this.thoughtTimer = 50;
+                this.thoughtTimer = 100;
               }
             }
 
@@ -739,7 +739,7 @@ export class Pedestrian {
                 }
 
                 this.thoughtBubble = 'home';
-                this.thoughtTimer = 50;
+                this.thoughtTimer = 100;
               }
             }
 
@@ -764,7 +764,7 @@ export class Pedestrian {
                   this.angle = Math.atan2(ev.y - this.waypointY, ev.x - this.waypointX);
 
                   this.thoughtBubble = ev.type === 'musician' ? 'music' : 'idea';
-                  this.thoughtTimer = 60;
+                  this.thoughtTimer = 120;
                 }
               }
 
@@ -773,7 +773,7 @@ export class Pedestrian {
                 const wp = layout.getRandomSidewalkWaypoint();
                 this.setWaypointWithCrosswalkRouting(layout, wp.x, wp.y);
                 // Stagger timer when forced to prevent all stuck peds refreshing at once
-                if (forceNewWaypoint) this.waypointTimer = Math.floor(Math.random() * 60);
+                if (forceNewWaypoint) this.waypointTimer = Math.floor(Math.random() * 120);
               }
             }
           } // close else for intermediate waypoint check
@@ -785,10 +785,10 @@ export class Pedestrian {
         }
 
         // Random thought while walking (Sims-style idle thoughts) — ~1 visible every 30s
-        if (!isBusy && !this.groupLeader && !this.thoughtBubble && Math.random() < 0.00008) {
+        if (!isBusy && !this.groupLeader && !this.thoughtBubble && Math.random() < 0.00004) {
           const thoughts = ['music', 'happy', 'idea'];
           this.thoughtBubble = thoughts[Math.floor(Math.random() * thoughts.length)];
-          this.thoughtTimer = 40 + Math.floor(Math.random() * 40);
+          this.thoughtTimer = 80 + Math.floor(Math.random() * 80);
         }
       }
 

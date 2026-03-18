@@ -108,7 +108,7 @@ export class Weather {
   private cloudCover: number = 0; // 0-100 from API
 
   constructor() {
-    this.transitionTimer = 600 + Math.random() * 1200;
+    this.transitionTimer = 1200 + Math.random() * 2400;
   }
 
   /** Set location via city name using Open-Meteo Geocoding */
@@ -170,10 +170,10 @@ export class Weather {
 
       this.realWeatherFetched = true;
       // Next fetch in 5 minutes (18000 frames at 60fps)
-      this.fetchTimer = 18000;
+      this.fetchTimer = 36000;
     } catch {
       // Network error — retry in 1 minute
-      this.fetchTimer = 3600;
+      this.fetchTimer = 7200;
     }
   }
 
@@ -189,9 +189,9 @@ export class Weather {
     // Layer 2 (near): smaller, faster — more prominent when cloudy/rain
     this.clouds = [];
     const layerConfigs = [
-      { count: 10, wMin: 180, wMax: 400, hMin: 55, hMax: 100, speedMin: 0.05, speedMax: 0.10, opMin: 0.35, opMax: 0.55 },
-      { count: 8, wMin: 120, wMax: 250, hMin: 40, hMax: 70, speedMin: 0.12, speedMax: 0.22, opMin: 0.30, opMax: 0.50 },
-      { count: 6, wMin: 80, wMax: 160, hMin: 28, hMax: 50, speedMin: 0.20, speedMax: 0.38, opMin: 0.25, opMax: 0.45 },
+      { count: 10, wMin: 180, wMax: 400, hMin: 55, hMax: 100, speedMin: 0.025, speedMax: 0.05, opMin: 0.35, opMax: 0.55 },
+      { count: 8, wMin: 120, wMax: 250, hMin: 40, hMax: 70, speedMin: 0.06, speedMax: 0.11, opMin: 0.30, opMax: 0.50 },
+      { count: 6, wMin: 80, wMax: 160, hMin: 28, hMax: 50, speedMin: 0.10, speedMax: 0.19, opMin: 0.25, opMax: 0.45 },
     ];
 
     for (let layer = 0; layer < layerConfigs.length; layer++) {
@@ -253,11 +253,11 @@ export class Weather {
 
     let speed, length, opacity;
     if (isSnow) {
-      speed = (isHeavy ? 2 : 1) + Math.random() * 2;
+      speed = ((isHeavy ? 2 : 1) + Math.random() * 2) * 0.5;
       length = (isHeavy ? 3 : 2) + Math.random() * 2;
       opacity = isHeavy ? 0.5 + Math.random() * 0.4 : 0.3 + Math.random() * 0.5;
     } else {
-      speed = isDrizzle ? 2 + Math.random() * 2 : (isHeavy ? 6 + Math.random() * 4 : 4 + Math.random() * 3);
+      speed = (isDrizzle ? 2 + Math.random() * 2 : (isHeavy ? 6 + Math.random() * 4 : 4 + Math.random() * 3)) * 0.5;
       length = isDrizzle ? 3 + Math.random() * 3 : (isHeavy ? 10 + Math.random() * 12 : 6 + Math.random() * 8);
       opacity = isDrizzle ? 0.1 + Math.random() * 0.15 : (isHeavy ? 0.2 + Math.random() * 0.3 : 0.15 + Math.random() * 0.25);
     }
@@ -275,8 +275,8 @@ export class Weather {
     return {
       x: Math.random() * this.worldW,
       y: -Math.random() * 100, // Start above the screen
-      vx: (Math.random() - 0.5) * 2,
-      vy: 8 + Math.random() * 6,
+      vx: (Math.random() - 0.5) * 1,
+      vy: 4 + Math.random() * 3,
       life: 1.0 // 1.0 = falling, < 1.0 = bouncing on ground
     };
   }
@@ -286,7 +286,7 @@ export class Weather {
     if (!this.initialised) return;
 
     // Smooth transition
-    this.alpha += (this.targetAlpha - this.alpha) * 0.005;
+    this.alpha += (this.targetAlpha - this.alpha) * 0.0025;
 
     // Dynamic puddle and snow level accumulators
     if (this.current === 'rain' || this.current === 'thunderstorm') {
@@ -344,7 +344,7 @@ export class Weather {
           Object.assign(drop, this.newDrop());
         }
         drop.y += drop.speed;
-        drop.x += isSnowingStatus ? Math.sin(t + drop.y * 0.05) * 1.5 + 0.5 : 0.5;
+        drop.x += isSnowingStatus ? Math.sin(t + drop.y * 0.05) * 0.75 + 0.25 : 0.25;
         if (drop.y > this.worldH) {
           drop.y = -drop.length;
           drop.x = Math.random() * this.worldW;
@@ -368,8 +368,8 @@ export class Weather {
           }
         } else {
           // Bouncing / Melting phase
-          hail.life -= 0.05; // Quick melt
-          hail.vy += 0.5; // Gravity pulls it back down fast
+          hail.life -= 0.025; // Quick melt
+          hail.vy += 0.25; // Gravity pulls it back down fast
           if (hail.life <= 0) {
             Object.assign(hail, this.newHailParticle());
           }
@@ -393,15 +393,15 @@ export class Weather {
     if (roll < 0.40) {
       this.current = 'clear';
       this.targetAlpha = 0;
-      this.transitionTimer = 900 + Math.random() * 1800; // 15-45 seconds of clear
+      this.transitionTimer = 1800 + Math.random() * 3600; // 15-45 seconds of clear
     } else if (roll < 0.75) {
       this.current = 'cloudy';
       this.targetAlpha = 0.5;
-      this.transitionTimer = 600 + Math.random() * 1200; // 10-30 seconds cloudy
+      this.transitionTimer = 1200 + Math.random() * 2400; // 10-30 seconds cloudy
     } else {
       this.current = 'rain';
       this.targetAlpha = 1.0;
-      this.transitionTimer = 400 + Math.random() * 800;  // 7-20 seconds of rain
+      this.transitionTimer = 800 + Math.random() * 1600;  // 7-20 seconds of rain
     }
   }
 

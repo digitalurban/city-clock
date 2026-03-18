@@ -17,12 +17,12 @@ export const BLOCK_SIZE = 120;
 export const ROAD_WIDTH = 36;
 export const SIDEWALK_WIDTH = 10;
 
-export const PEDESTRIAN_BASE_SPEED = 0.28;
-export const PEDESTRIAN_MAX_FORCE = 0.05;
+export const PEDESTRIAN_BASE_SPEED = 0.14;
+export const PEDESTRIAN_MAX_FORCE = 0.025;
 export const SEPARATION_RADIUS = 15;
-export const WANDER_STRENGTH = 0.4;
+export const WANDER_STRENGTH = 0.2;
 
-export const CAR_SPEED = 1.2;
+export const CAR_SPEED = 0.6;
 
 // Building color palettes (day)
 export const BUILDING_COLORS = [

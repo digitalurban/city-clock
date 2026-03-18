@@ -70,6 +70,8 @@ export interface RoadSegment {
   w: number;
   h: number;
   horizontal: boolean;
+  /** True if this road stub was created by clipping against the plaza */
+  plazaBordering?: boolean;
 }
 
 export interface PlazaEntrance {
@@ -158,7 +160,7 @@ export class CityLayout {
     // We now use a constant grid size for stability across all devices.
     // The plaza will always be at the geometric center of this fixed city.
     this.gridCols = 12;
-    this.gridRows = 8;
+    this.gridRows = 7;
 
     const cellSize = BLOCK_SIZE + ROAD_WIDTH;
     this.width = this.gridCols * cellSize;
@@ -283,24 +285,24 @@ export class CityLayout {
       if (road.y + road.h <= pb.y || road.y >= pb.y + pb.h) return [road];
       const segments: RoadSegment[] = [];
       if (road.x < pb.x) {
-        segments.push({ x: road.x, y: road.y, w: pb.x - road.x, h: road.h, horizontal: true });
+        segments.push({ x: road.x, y: road.y, w: pb.x - road.x, h: road.h, horizontal: true, plazaBordering: true });
       }
       const roadRight = road.x + road.w;
       const plazaRight = pb.x + pb.w;
       if (roadRight > plazaRight) {
-        segments.push({ x: plazaRight, y: road.y, w: roadRight - plazaRight, h: road.h, horizontal: true });
+        segments.push({ x: plazaRight, y: road.y, w: roadRight - plazaRight, h: road.h, horizontal: true, plazaBordering: true });
       }
       return segments;
     } else {
       if (road.x + road.w <= pb.x || road.x >= pb.x + pb.w) return [road];
       const segments: RoadSegment[] = [];
       if (road.y < pb.y) {
-        segments.push({ x: road.x, y: road.y, w: road.w, h: pb.y - road.y, horizontal: false });
+        segments.push({ x: road.x, y: road.y, w: road.w, h: pb.y - road.y, horizontal: false, plazaBordering: true });
       }
       const roadBottom = road.y + road.h;
       const plazaBottom = pb.y + pb.h;
       if (roadBottom > plazaBottom) {
-        segments.push({ x: road.x, y: plazaBottom, w: road.w, h: roadBottom - plazaBottom, horizontal: false });
+        segments.push({ x: road.x, y: plazaBottom, w: road.w, h: roadBottom - plazaBottom, horizontal: false, plazaBordering: true });
       }
       return segments;
     }
