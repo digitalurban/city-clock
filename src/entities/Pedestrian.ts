@@ -1175,24 +1175,24 @@ export class Pedestrian {
 
     this.walkPhase += currentSpeed * 0.5;
 
-    // Update dog position — trails behind owner on a loose leash with wander
+    // Update dog position — walks ahead of owner with gentle side wander
     if (this.hasDog && !this.isAtHome) {
-      this.dogWanderPhase += 0.03;
+      this.dogWanderPhase += 0.02;
       const leashLen = 14;
-      // Target: in front of the owner, pulling ahead with side-to-side sniffing
-      const wanderX = Math.sin(this.dogWanderPhase * 1.7 + this.idOffset) * 10;
-      const wanderY = Math.cos(this.dogWanderPhase * 1.3 + this.idOffset) * 6;
+      // Target: ahead of the owner with gentle sniffing side-to-side
+      const wanderX = Math.sin(this.dogWanderPhase * 1.3 + this.idOffset) * 5;
+      const wanderY = Math.cos(this.dogWanderPhase * 0.9 + this.idOffset) * 3;
       const targetDogX = this.x + Math.cos(this.angle) * leashLen + wanderX;
       const targetDogY = this.y + Math.sin(this.angle) * leashLen + wanderY;
-      // Smooth follow with springy feel
-      this.dogVx = (this.dogVx * 0.8) + (targetDogX - this.dogX) * 0.12;
-      this.dogVy = (this.dogVy * 0.8) + (targetDogY - this.dogY) * 0.12;
-      this.dogX += this.dogVx;
-      this.dogY += this.dogVy;
-      // Clamp leash length
+      // Stiff follow — lerp directly toward target, no velocity accumulation
+      this.dogX += (targetDogX - this.dogX) * 0.15;
+      this.dogY += (targetDogY - this.dogY) * 0.15;
+      this.dogVx = targetDogX - this.dogX; // for angle calculation only
+      this.dogVy = targetDogY - this.dogY;
+      // Hard clamp leash
       const dDist = Math.hypot(this.dogX - this.x, this.dogY - this.y);
-      if (dDist > leashLen * 1.8) {
-        const ratio = (leashLen * 1.8) / dDist;
+      if (dDist > leashLen * 1.5) {
+        const ratio = (leashLen * 1.5) / dDist;
         this.dogX = this.x + (this.dogX - this.x) * ratio;
         this.dogY = this.y + (this.dogY - this.y) * ratio;
       }
@@ -1485,8 +1485,8 @@ export class Pedestrian {
     if (this.hasDog && !this.isAtHome && ctx.globalAlpha > 0.2) {
       ctx.save();
       ctx.translate(this.dogX, this.dogY);
-      // Dog faces the direction it's moving (away from owner, pulling ahead)
-      const dogAngle = Math.atan2(this.dogVy, this.dogVx);
+      // Dog faces same direction as owner (walking ahead)
+      const dogAngle = this.angle;
       ctx.rotate(dogAngle);
       const ds = 0.8; // dog scale
 

@@ -1,7 +1,7 @@
 import { CityLayout } from './city/CityLayout';
 import { Pedestrian, clearPedestrianState } from './entities/Pedestrian';
 import { Car } from './entities/Car';
-import { Bird, updateBirdFeeder, birdFeederActive, birdFeederX, birdFeederY } from './entities/Bird';
+import { Bird, Flock, createFlock, updateBirdFeeder, birdFeederActive, birdFeederX, birdFeederY } from './entities/Bird';
 import { ClockManager } from './clock/ClockManager';
 import { DayNightCycle } from './rendering/DayNightCycle';
 import { Weather } from './rendering/Weather';
@@ -13,7 +13,7 @@ const ctx = canvas.getContext('2d', { alpha: false })!;
 let layout: CityLayout;
 let pedestrians: Pedestrian[] = [];
 let cars: Car[] = [];
-let birds: Bird[] = [];
+let flocks: Flock[] = [];
 const clockManager = new ClockManager();
 const dayNight = new DayNightCycle();
 const weather = new Weather();
@@ -518,14 +518,8 @@ function resize() {
     }
   }
 
-  // Spawn birds across the city
-  birds = [];
-  for (let i = 0; i < 22; i++) {
-    birds.push(new Bird(
-      100 + Math.random() * (layout.width - 200),
-      100 + Math.random() * (layout.height - 200)
-    ));
-  }
+  // Seagull flocks — start with one
+  flocks = [createFlock(layout)];
 
   // Init weather with world dimensions
   weather.init(worldW, worldH);
@@ -725,10 +719,9 @@ function loop(timestamp: number = 0) {
     p.draw(ctx, nightAlpha, weather.intensity, isDancing);
   }
 
-  // Bird feeder event — occasionally a person tosses crumbs in the plaza
+  // Bird feeder event — occasionally someone tosses crumbs in the plaza
   updateBirdFeeder(layout);
   if (birdFeederActive) {
-    // Draw small crumb dots on the ground
     ctx.fillStyle = `rgba(180, 160, 100, ${0.6 - nightAlpha * 0.3})`;
     for (let i = 0; i < 8; i++) {
       const cx = birdFeederX + Math.sin(i * 2.5 + time * 0.01) * 12;
@@ -739,11 +732,30 @@ function loop(timestamp: number = 0) {
     }
   }
 
-  // Bird shadows on ground (before trees)
-  for (const bird of birds) {
-    bird.update(birds, pedestrians, layout, time);
-    bird.drawShadow(ctx, nightAlpha);
+  // Spawn new flock occasionally (max 3 active flocks)
+  if (flocks.length < 3 && Math.random() < 0.0003) {
+    flocks.push(createFlock(layout));
   }
+
+  // Update flocks and draw shadows on ground
+  for (const flock of flocks) {
+    if (!flock.active) continue;
+    for (const bird of flock.birds) {
+      bird.update(flock.birds, flock.targetX, flock.targetY, time);
+      bird.drawShadow(ctx, nightAlpha);
+    }
+    // Check if flock has exited the map
+    flock.timer++;
+    if (flock.timer > 3000) { // ~50 seconds max
+      const allOut = flock.birds.every(b =>
+        b.x < -200 || b.x > layout.width + 200 ||
+        b.y < -200 || b.y > layout.height + 200
+      );
+      if (allOut || flock.timer > 5000) flock.active = false;
+    }
+  }
+  // Clean up inactive flocks
+  flocks = flocks.filter(f => f.active);
 
   // Trees on top (canopies)
   layout.drawTrees(ctx, time, nightAlpha);
@@ -765,9 +777,12 @@ function loop(timestamp: number = 0) {
   // Weather effects in world space
   weather.drawWorldEffects(ctx, nightAlpha);
 
-  // Birds — drawn above everything (parallax height effect)
-  for (const bird of birds) {
-    bird.draw(ctx, nightAlpha);
+  // Seagull flocks — drawn above everything (parallax height)
+  for (const flock of flocks) {
+    if (!flock.active) continue;
+    for (const bird of flock.birds) {
+      bird.draw(ctx, nightAlpha);
+    }
   }
 
   // Night overlay — drawn in screen space
