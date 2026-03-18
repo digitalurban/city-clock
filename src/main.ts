@@ -1,6 +1,7 @@
 import { CityLayout } from './city/CityLayout';
 import { Pedestrian, clearPedestrianState } from './entities/Pedestrian';
 import { Car } from './entities/Car';
+import { Bird, updateBirdFeeder, birdFeederActive, birdFeederX, birdFeederY } from './entities/Bird';
 import { ClockManager } from './clock/ClockManager';
 import { DayNightCycle } from './rendering/DayNightCycle';
 import { Weather } from './rendering/Weather';
@@ -12,6 +13,7 @@ const ctx = canvas.getContext('2d', { alpha: false })!;
 let layout: CityLayout;
 let pedestrians: Pedestrian[] = [];
 let cars: Car[] = [];
+let birds: Bird[] = [];
 const clockManager = new ClockManager();
 const dayNight = new DayNightCycle();
 const weather = new Weather();
@@ -516,6 +518,15 @@ function resize() {
     }
   }
 
+  // Spawn birds across the city
+  birds = [];
+  for (let i = 0; i < 22; i++) {
+    birds.push(new Bird(
+      100 + Math.random() * (layout.width - 200),
+      100 + Math.random() * (layout.height - 200)
+    ));
+  }
+
   // Init weather with world dimensions
   weather.init(worldW, worldH);
 
@@ -611,6 +622,9 @@ function loop(timestamp: number = 0) {
   const plazaCX = layout.plazaBounds.x + layout.plazaBounds.w / 2;
   const plazaCY = layout.plazaBounds.y + layout.plazaBounds.h / 2;
   clockManager.update(pedestrians, plazaCX, plazaCY, layout.plazaBounds);
+
+  // Construction site (animated crane)
+  layout.drawConstructionSite(ctx, nightAlpha, time);
 
   // Update and draw cars
   for (const car of cars) {
@@ -711,6 +725,26 @@ function loop(timestamp: number = 0) {
     p.draw(ctx, nightAlpha, weather.intensity, isDancing);
   }
 
+  // Bird feeder event — occasionally a person tosses crumbs in the plaza
+  updateBirdFeeder(layout);
+  if (birdFeederActive) {
+    // Draw small crumb dots on the ground
+    ctx.fillStyle = `rgba(180, 160, 100, ${0.6 - nightAlpha * 0.3})`;
+    for (let i = 0; i < 8; i++) {
+      const cx = birdFeederX + Math.sin(i * 2.5 + time * 0.01) * 12;
+      const cy = birdFeederY + Math.cos(i * 3.1 + time * 0.01) * 12;
+      ctx.beginPath();
+      ctx.arc(cx, cy, 1, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // Bird shadows on ground (before trees)
+  for (const bird of birds) {
+    bird.update(birds, pedestrians, layout, time);
+    bird.drawShadow(ctx, nightAlpha);
+  }
+
   // Trees on top (canopies)
   layout.drawTrees(ctx, time, nightAlpha);
 
@@ -730,6 +764,11 @@ function loop(timestamp: number = 0) {
 
   // Weather effects in world space
   weather.drawWorldEffects(ctx, nightAlpha);
+
+  // Birds — drawn above everything (parallax height effect)
+  for (const bird of birds) {
+    bird.draw(ctx, nightAlpha);
+  }
 
   // Night overlay — drawn in screen space
   ctx.setTransform(1, 0, 0, 1, 0, 0);

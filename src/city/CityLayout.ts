@@ -123,7 +123,13 @@ export interface CityEvent {
 }
 
 // Block type determines what fills a city block
-type BlockType = 'commercial' | 'residential' | 'park' | 'utility';
+type BlockType = 'commercial' | 'residential' | 'park' | 'utility' | 'construction';
+
+export interface ConstructionSiteDef {
+  x: number; y: number; w: number; h: number;
+  craneX: number; craneY: number;
+  craneAngle: number; // rotates slowly
+}
 
 export class CityLayout {
   width: number;
@@ -146,6 +152,7 @@ export class CityLayout {
   plazaBenches: PlazaBenchDef[] = [];
   plazaBounds: { x: number; y: number; w: number; h: number };
 
+  constructionSite: ConstructionSiteDef | null = null;
   activeEvent: CityEvent | null = null;
 
   // Which grid cells are plaza (col, row)
@@ -267,6 +274,20 @@ export class CityLayout {
         }
         this.blockTypes.set(`${c},${r}`, blockType);
       }
+    }
+
+    // Pick one outer block to be a construction site
+    const candidates: string[] = [];
+    for (const [key, type] of this.blockTypes) {
+      if (type === 'utility' || type === 'commercial') {
+        const [c, r] = key.split(',').map(Number);
+        const dist = Math.abs(c - centerCol) + Math.abs(r - centerRow);
+        if (dist >= 3) candidates.push(key);
+      }
+    }
+    if (candidates.length > 0) {
+      const pick = candidates[Math.floor(seededRandom(42) * candidates.length)];
+      this.blockTypes.set(pick, 'construction');
     }
   }
 
@@ -425,6 +446,9 @@ export class CityLayout {
             this.generateUtilityBlock(bx, by, blockW, blockH, margin, c, r, buildingIdx);
             buildingIdx += 2;
             break;
+          case 'construction':
+            this.generateConstructionBlock(bx, by, blockW, blockH);
+            break;
         }
 
         // Trees along sidewalks (occasional)
@@ -580,6 +604,117 @@ export class CityLayout {
       color: '#707880',
       windowSeed: buildingIdx * 17 + 500,
     });
+  }
+
+  private generateConstructionBlock(bx: number, by: number, blockW: number, blockH: number) {
+    // Construction site with fencing, dirt, and crane
+    this.constructionSite = {
+      x: bx, y: by, w: blockW, h: blockH,
+      craneX: bx + blockW * 0.3, craneY: by + blockH * 0.3,
+      craneAngle: 0,
+    };
+    // Add as a building so pedestrians avoid it
+    this.buildings.push({
+      x: bx + 4, y: by + 4,
+      w: blockW - 8, h: blockH - 8,
+      color: '#8a7d5a', // dirt/sand color
+      windowSeed: -1, // no windows
+    });
+  }
+
+  drawConstructionSite(ctx: CanvasRenderingContext2D, nightAlpha: number, time: number) {
+    if (!this.constructionSite) return;
+    const cs = this.constructionSite;
+    const dark = 1 - nightAlpha * 0.3;
+
+    // Dirt ground
+    ctx.fillStyle = `rgb(${Math.floor(160 * dark)}, ${Math.floor(140 * dark)}, ${Math.floor(90 * dark)})`;
+    ctx.fillRect(cs.x + 4, cs.y + 4, cs.w - 8, cs.h - 8);
+
+    // Dirt texture (random dots)
+    ctx.fillStyle = `rgba(120, 100, 60, ${0.3 * dark})`;
+    for (let i = 0; i < 20; i++) {
+      const dx = cs.x + 10 + seededRandom(i * 7 + 13) * (cs.w - 20);
+      const dy = cs.y + 10 + seededRandom(i * 11 + 17) * (cs.h - 20);
+      ctx.fillRect(dx, dy, 3 + seededRandom(i * 3) * 4, 2 + seededRandom(i * 5) * 3);
+    }
+
+    // Partial building structure (concrete frame)
+    const fx = cs.x + cs.w * 0.45;
+    const fy = cs.y + cs.h * 0.35;
+    const fw = cs.w * 0.45;
+    const fh = cs.h * 0.55;
+    ctx.fillStyle = `rgb(${Math.floor(180 * dark)}, ${Math.floor(180 * dark)}, ${Math.floor(175 * dark)})`;
+    ctx.fillRect(fx, fy, fw, fh);
+    // Floor lines
+    ctx.strokeStyle = `rgba(100, 100, 100, ${0.4 * dark})`;
+    ctx.lineWidth = 1;
+    for (let i = 1; i < 4; i++) {
+      const ly = fy + (fh / 4) * i;
+      ctx.beginPath();
+      ctx.moveTo(fx, ly);
+      ctx.lineTo(fx + fw, ly);
+      ctx.stroke();
+    }
+
+    // Construction barriers (orange/white stripes) around perimeter
+    const stripeW = 8;
+    ctx.lineWidth = 3;
+    for (let i = 0; i < Math.floor(cs.w / stripeW); i++) {
+      ctx.strokeStyle = i % 2 === 0
+        ? `rgba(255, 140, 0, ${0.8 * dark})`
+        : `rgba(255, 255, 255, ${0.6 * dark})`;
+      const sx = cs.x + 4 + i * stripeW;
+      // Top barrier
+      ctx.beginPath(); ctx.moveTo(sx, cs.y + 4); ctx.lineTo(sx + stripeW, cs.y + 4); ctx.stroke();
+      // Bottom barrier
+      ctx.beginPath(); ctx.moveTo(sx, cs.y + cs.h - 4); ctx.lineTo(sx + stripeW, cs.y + cs.h - 4); ctx.stroke();
+    }
+    for (let i = 0; i < Math.floor(cs.h / stripeW); i++) {
+      ctx.strokeStyle = i % 2 === 0
+        ? `rgba(255, 140, 0, ${0.8 * dark})`
+        : `rgba(255, 255, 255, ${0.6 * dark})`;
+      const sy = cs.y + 4 + i * stripeW;
+      // Left barrier
+      ctx.beginPath(); ctx.moveTo(cs.x + 4, sy); ctx.lineTo(cs.x + 4, sy + stripeW); ctx.stroke();
+      // Right barrier
+      ctx.beginPath(); ctx.moveTo(cs.x + cs.w - 4, sy); ctx.lineTo(cs.x + cs.w - 4, sy + stripeW); ctx.stroke();
+    }
+
+    // Crane
+    cs.craneAngle += 0.002; // slowly rotates
+    const crX = cs.craneX;
+    const crY = cs.craneY;
+    const boomLen = cs.w * 0.5;
+    const boomAngle = cs.craneAngle + time * 0.0001;
+    // Crane base
+    ctx.fillStyle = `rgb(${Math.floor(220 * dark)}, ${Math.floor(180 * dark)}, ${Math.floor(40 * dark)})`;
+    ctx.fillRect(crX - 4, crY - 4, 8, 8);
+    // Crane boom
+    ctx.strokeStyle = `rgb(${Math.floor(220 * dark)}, ${Math.floor(180 * dark)}, ${Math.floor(40 * dark)})`;
+    ctx.lineWidth = 2;
+    const boomEndX = crX + Math.cos(boomAngle) * boomLen;
+    const boomEndY = crY + Math.sin(boomAngle) * boomLen;
+    ctx.beginPath();
+    ctx.moveTo(crX, crY);
+    ctx.lineTo(boomEndX, boomEndY);
+    ctx.stroke();
+    // Cable from boom end
+    ctx.strokeStyle = `rgba(80, 80, 80, ${0.6 * dark})`;
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.moveTo(boomEndX, boomEndY);
+    ctx.lineTo(boomEndX, boomEndY + 15);
+    ctx.stroke();
+    // Load block
+    ctx.fillStyle = `rgb(${Math.floor(160 * dark)}, ${Math.floor(160 * dark)}, ${Math.floor(160 * dark)})`;
+    ctx.fillRect(boomEndX - 3, boomEndY + 15, 6, 5);
+
+    // Material piles
+    ctx.fillStyle = `rgb(${Math.floor(140 * dark)}, ${Math.floor(80 * dark)}, ${Math.floor(40 * dark)})`;
+    ctx.fillRect(cs.x + 10, cs.y + cs.h - 25, 18, 12); // lumber pile
+    ctx.fillStyle = `rgb(${Math.floor(100 * dark)}, ${Math.floor(100 * dark)}, ${Math.floor(105 * dark)})`;
+    ctx.fillRect(cs.x + 35, cs.y + cs.h - 22, 15, 10); // concrete blocks
   }
 
   private generateStreetLights(offsetX: number, offsetY: number, cellSize: number) {

@@ -18,7 +18,10 @@ A procedurally generated top-down city where pedestrians form a digital clock in
 - **Procedural city** - grid of city blocks, roads, crosswalks, trees, parks and coloured buildings generated to fill the world
 - **Central plaza** - ringed by named venues (cafes, bars, bookshops, flower shops) with outdoor seating, benches, and lamp posts
 - **Pedestrian life** - pedestrians wander sidewalks, visit venues, queue and sit outside, go home to their assigned houses via garden paths, and ride bicycles (~15%). They now also have simulated Needs (Energy, Hunger, Social) with thought bubbles guiding their routines.
-- **Dynamic City Events** - street musicians and protests occasionally spawn in the plaza, drawing nearby crowds of pedestrians to watch and interact.
+- **Dog walkers** - ~10% of pedestrians walk dogs on leashes; dogs pull ahead with animated trotting legs, floppy ears, wagging tails, and side-to-side sniffing wander
+- **City birds** - a flock of birds flies across the entire city using boid flocking (separation, alignment, cohesion); birds perch on trees and benches, scatter when pedestrians approach, and are drawn with parallax height — shadows on the ground separate from birds soaring above rooftops. Occasionally a bird feeder event attracts the flock to the plaza
+- **Construction site** - one city block is a construction zone with dirt ground, a partial concrete frame, orange/white safety barriers, material piles, and a slowly rotating crane
+- **Dynamic City Events** - street musicians and protests occasionally spawn in the plaza, drawing nearby crowds of pedestrians to watch and interact
 - **Service & Delivery Vehicles** - orange delivery vans enter the plaza, park outside a venue to drop off packages. City buses (red/blue) and garbage trucks (green) navigate the road network with unique behaviours.
 - **Emergency vehicles** - police cars, ambulances and fire trucks with flashing sirens.
 - **Traffic system** - cars navigate the road network with traffic lights, braking for pedestrians and each other, smooth quadratic Bézier arc turns at junctions, and anti-gridlock logic.
@@ -91,7 +94,7 @@ Dynamic live weather powered by the Open-Meteo API:
 - **Atmospheric Effects:**
   - Procedural parallax clouds darken dynamically into storm clouds and drift over the city in top-down volumetric rendering
   - Rain and hail particles fall visibly below the cloud layer, dynamically bouncing and melting on the plaza
-  - Widespread reflective puddles generate ripples and splash effects, drying gradually over time
+  - Widespread reflective puddles with sky and building silhouette reflections, ripple rings, and splash effects that dry gradually over time
   - Ground accumulative snow cover creates spreading white patches
   - Jagged lightning flash overlays during thunderstorms
 - **Responsive Pedestrians:** 100% of pedestrians deploy colorful umbrellas in the rain or snow, and dynamically sprint for cover or adjust walking pace depending on the weather intensity (drizzle, heavy rain, hail, slippery snow).
@@ -99,7 +102,7 @@ Dynamic live weather powered by the Open-Meteo API:
 ### Rendering Architecture
 
 1. **Static canvas** - roads, sidewalks, crosswalks, plaza, buildings, houses, venues and parks pre-rendered to an offscreen canvas; rebuilt only when the lighting level changes
-2. **Dynamic layer** - cars, pedestrians, dropped packages and animated tree sway drawn fresh each frame
+2. **Dynamic layer** - cars, pedestrians, dogs, dropped packages, construction crane, bird shadows, animated tree sway, and birds (drawn above weather with parallax height) rendered fresh each frame
 3. **DPR-aware** - canvas resolution scales with devicePixelRatio (capped at 2x) for crisp rendering on Retina displays
 
 ### Battery & Performance

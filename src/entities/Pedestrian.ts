@@ -137,6 +137,24 @@ export class Pedestrian {
   hunger: number = 100;
   social: number = 100;
 
+  // Daily schedule/routine
+  assignedWorkplace: number = -1;  // index into layout.buildings
+  assignedLunchVenue: number = -1; // index into layout.venues
+  assignedEveningVenue: number = -1; // index into layout.venues
+  schedulePhase: string = 'wandering'; // current phase
+  scheduleJitter: number = 0; // +/- hours offset for transitions
+  isAtWorkplace: boolean = false;
+  workplaceTimer: number = 0;
+
+  // Dog walking
+  hasDog: boolean = false;
+  dogX: number = 0;
+  dogY: number = 0;
+  dogVx: number = 0;
+  dogVy: number = 0;
+  dogColor: string = '#8b5e3c';
+  dogWanderPhase: number = 0;
+
   // Bicycle
   hasBicycle: boolean = false;
   isRidingBicycle: boolean = false;
@@ -173,13 +191,38 @@ export class Pedestrian {
     this.hasUmbrella = Math.random() < 0.6; // 60% of people have umbrellas
     this.umbrellaColor = UMBRELLA_COLORS[Math.floor(Math.random() * UMBRELLA_COLORS.length)];
 
-    // ~15% of non-clock pedestrians have a bicycle
-    this.hasBicycle = !this.isClockEligible && Math.random() < 0.15;
+    // ~10% of non-clock pedestrians walk a dog (mutually exclusive with bicycle)
+    const DOG_COLORS = ['#8b5e3c', '#d4a76a', '#3c2415', '#faebd7', '#696969', '#c4a882'];
+    const dogRoll = Math.random();
+    if (!this.isClockEligible && dogRoll < 0.10) {
+      this.hasDog = true;
+      this.dogColor = DOG_COLORS[Math.floor(Math.random() * DOG_COLORS.length)];
+      this.dogWanderPhase = Math.random() * Math.PI * 2;
+    }
+
+    // ~15% of non-clock pedestrians have a bicycle (not if they have a dog)
+    this.hasBicycle = !this.isClockEligible && !this.hasDog && Math.random() < 0.15;
     this.bicycleSpeed = PEDESTRIAN_BASE_SPEED * 3;
 
-    // Assign each non-clock pedestrian a home
+    // Assign each non-clock pedestrian a home, workplace, and favourite venues
     if (!this.isClockEligible) {
       this.assignedHome = Math.floor(Math.random() * Math.max(1, layout.houses.length));
+      if (layout.buildings.length > 0) {
+        this.assignedWorkplace = Math.floor(Math.random() * layout.buildings.length);
+      }
+      const cafes = layout.venues.filter(v => v.type === 'cafe' || v.type === 'restaurant');
+      const bars = layout.venues.filter(v => v.type === 'bar');
+      if (cafes.length > 0) {
+        this.assignedLunchVenue = layout.venues.indexOf(cafes[Math.floor(Math.random() * cafes.length)]);
+      } else if (layout.venues.length > 0) {
+        this.assignedLunchVenue = Math.floor(Math.random() * layout.venues.length);
+      }
+      if (bars.length > 0) {
+        this.assignedEveningVenue = layout.venues.indexOf(bars[Math.floor(Math.random() * bars.length)]);
+      } else if (layout.venues.length > 0) {
+        this.assignedEveningVenue = Math.floor(Math.random() * layout.venues.length);
+      }
+      this.scheduleJitter = (Math.random() - 0.5) * 0.5; // +/- 15 min
     }
 
     // Spawn position
@@ -207,6 +250,58 @@ export class Pedestrian {
     this.waypointY = wp.y;
     this.waypointTimer = 0;
     this.walkPhase = Math.random() * Math.PI * 2;
+
+    // Init dog position behind owner
+    if (this.hasDog) {
+      this.dogX = this.x - 10;
+      this.dogY = this.y;
+    }
+  }
+
+  /** Determine which schedule phase this pedestrian should be in based on real time */
+  private getSchedulePhase(): string {
+    const d = new Date();
+    const hour = d.getHours() + d.getMinutes() / 60 + this.scheduleJitter;
+    if (hour >= 22 || hour < 7) return 'sleeping';
+    if (hour < 7.5) return 'commuting_to_work';
+    if (hour < 12) return 'working';
+    if (hour < 13) return 'lunch_break';
+    if (hour < 13.5) return 'commuting_back';
+    if (hour < 17.5) return 'working_afternoon';
+    if (hour < 18) return 'commuting_evening';
+    if (hour < 21) return 'evening_out';
+    return 'going_home';
+  }
+
+  /** Set waypoint to a building's entrance (front face midpoint) */
+  private setWaypointToBuilding(layout: CityLayout, bIdx: number) {
+    if (bIdx < 0 || bIdx >= layout.buildings.length) return;
+    const b = layout.buildings[bIdx];
+    // Walk to front of building (bottom edge midpoint, facing the street)
+    const tx = b.x + b.w / 2;
+    const ty = b.y + b.h + 8; // just outside the front
+    this.setWaypointWithCrosswalkRouting(layout, tx, ty);
+  }
+
+  /** Set waypoint to a venue's seating area */
+  private setWaypointToVenue(layout: CityLayout, vIdx: number) {
+    if (vIdx < 0 || vIdx >= layout.venues.length) return;
+    const v = layout.venues[vIdx];
+    if (v.seatingPositions.length > 0) {
+      const seat = v.seatingPositions[Math.floor(Math.random() * v.seatingPositions.length)];
+      this.isSitting = true;
+      this.sitX = seat.x;
+      this.sitY = seat.y;
+      this.sitTimer = 0;
+      this.sitDuration = 600 + Math.floor(Math.random() * 600);
+      this.waypointX = seat.x;
+      this.waypointY = seat.y;
+      this.waypointTimer = 0;
+    } else {
+      const tx = v.x + v.w / 2;
+      const ty = v.y + v.h + 10;
+      this.setWaypointWithCrosswalkRouting(layout, tx, ty);
+    }
   }
 
   private setWaypointWithCrosswalkRouting(layout: CityLayout, wx: number, wy: number) {
@@ -298,7 +393,7 @@ export class Pedestrian {
 
       const isBusy = this.isSitting || this.isBenchSitting || this.socialMode
         || this.isQueuing || this.isWindowShopping || this.isCheckingPhone || this.isTakingPhoto
-        || this.isGoingHome || this.isAtHome;
+        || this.isGoingHome || this.isAtHome || this.isAtWorkplace;
 
       // --- Social chat mode ---
       if (this.socialMode) {
@@ -514,6 +609,24 @@ export class Pedestrian {
         }
       }
 
+      // --- At workplace ---
+      if (this.isAtWorkplace) {
+        this.workplaceTimer++;
+        // Slow movement near building
+        this.vx *= 0.3;
+        this.vy *= 0.3;
+        // Check if schedule phase has changed — time to leave work
+        const phase = this.getSchedulePhase();
+        if (phase !== 'working' && phase !== 'working_afternoon' && phase !== 'commuting_to_work' && phase !== 'commuting_back') {
+          this.isAtWorkplace = false;
+          this.schedulePhase = phase;
+          const wp = layout.getRandomSidewalkWaypoint();
+          this.waypointX = wp.x;
+          this.waypointY = wp.y;
+          this.waypointTimer = 0;
+        }
+      }
+
       // --- Group following ---
       if (this.groupLeader && !isBusy) {
         const leader = this.groupLeader;
@@ -554,9 +667,72 @@ export class Pedestrian {
             }
 
             let roll = Math.random();
+            let scheduledAction = false;
 
-            // Override roll based on needs if not clock eligible
-            if (!this.isClockEligible) {
+            // Daily schedule — override waypoint based on time of day
+            if (!this.isClockEligible && !forceNewWaypoint) {
+              const targetPhase = this.getSchedulePhase();
+              if (targetPhase !== this.schedulePhase) {
+                this.schedulePhase = targetPhase;
+                // Clear workplace state on phase change
+                this.isAtWorkplace = false;
+                this.workplaceTimer = 0;
+              }
+
+              // Route based on current schedule phase
+              switch (this.schedulePhase) {
+                case 'sleeping':
+                case 'going_home':
+                  if (!this.isGoingHome && !this.isAtHome && this.assignedHome >= 0) {
+                    roll = 0.82; // -> go home path
+                  }
+                  scheduledAction = true;
+                  break;
+                case 'commuting_to_work':
+                case 'commuting_back':
+                case 'working':
+                case 'working_afternoon':
+                  if (this.assignedWorkplace >= 0) {
+                    const b = layout.buildings[this.assignedWorkplace];
+                    const distToWork = Math.hypot(this.x - (b.x + b.w / 2), this.y - (b.y + b.h));
+                    if (distToWork > 30) {
+                      // Walk toward workplace
+                      this.setWaypointToBuilding(layout, this.assignedWorkplace);
+                      this.waypointTimer = 0;
+                      scheduledAction = true;
+                    } else {
+                      // At workplace — stand around near building, low activity
+                      this.isAtWorkplace = true;
+                      this.workplaceTimer = 0;
+                      const wx = b.x + Math.random() * b.w;
+                      const wy = b.y + b.h + 5 + Math.random() * 10;
+                      this.waypointX = wx;
+                      this.waypointY = wy;
+                      this.waypointTimer = 0;
+                      scheduledAction = true;
+                    }
+                  }
+                  break;
+                case 'lunch_break':
+                  if (this.assignedLunchVenue >= 0 && !this.isSitting) {
+                    this.setWaypointToVenue(layout, this.assignedLunchVenue);
+                    this.waypointTimer = 0;
+                    scheduledAction = true;
+                  }
+                  break;
+                case 'commuting_evening':
+                case 'evening_out':
+                  if (this.assignedEveningVenue >= 0 && !this.isSitting) {
+                    this.setWaypointToVenue(layout, this.assignedEveningVenue);
+                    this.waypointTimer = 0;
+                    scheduledAction = true;
+                  }
+                  break;
+              }
+            }
+
+            // Override roll based on needs if not clock eligible (fallback when not scheduled)
+            if (!scheduledAction && !this.isClockEligible) {
               if (this.energy < 20 && this.assignedHome >= 0) {
                 roll = 0.82; // Force -> Go home
                 this.energy = 100; // Reset need
@@ -570,7 +746,9 @@ export class Pedestrian {
             }
 
             // Venue sitting — prefer cafes/restaurants
-            if (!this.isClockEligible && roll < 0.12) {
+            if (scheduledAction) {
+              // Schedule already set the waypoint — skip random activity selection
+            } else if (!this.isClockEligible && roll < 0.12) {
               const cafeVenues = layout.venues.filter(v => v.type === 'cafe' || v.type === 'restaurant');
               const pool = cafeVenues.length > 0 ? cafeVenues : layout.venues;
               const venue = pool[Math.floor(Math.random() * pool.length)];
@@ -997,6 +1175,29 @@ export class Pedestrian {
 
     this.walkPhase += currentSpeed * 0.5;
 
+    // Update dog position — trails behind owner on a loose leash with wander
+    if (this.hasDog && !this.isAtHome) {
+      this.dogWanderPhase += 0.03;
+      const leashLen = 14;
+      // Target: in front of the owner, pulling ahead with side-to-side sniffing
+      const wanderX = Math.sin(this.dogWanderPhase * 1.7 + this.idOffset) * 10;
+      const wanderY = Math.cos(this.dogWanderPhase * 1.3 + this.idOffset) * 6;
+      const targetDogX = this.x + Math.cos(this.angle) * leashLen + wanderX;
+      const targetDogY = this.y + Math.sin(this.angle) * leashLen + wanderY;
+      // Smooth follow with springy feel
+      this.dogVx = (this.dogVx * 0.8) + (targetDogX - this.dogX) * 0.12;
+      this.dogVy = (this.dogVy * 0.8) + (targetDogY - this.dogY) * 0.12;
+      this.dogX += this.dogVx;
+      this.dogY += this.dogVy;
+      // Clamp leash length
+      const dDist = Math.hypot(this.dogX - this.x, this.dogY - this.y);
+      if (dDist > leashLen * 1.8) {
+        const ratio = (leashLen * 1.8) / dDist;
+        this.dogX = this.x + (this.dogX - this.x) * ratio;
+        this.dogY = this.y + (this.dogY - this.y) * ratio;
+      }
+    }
+
     if (isDancing) {
       this.walkPhase += 0.8; // dance faster
       if (currentSpeed < 0.5) { // if standing still, spin or bounce
@@ -1017,6 +1218,8 @@ export class Pedestrian {
 
     if (this.isAtHome) {
       ctx.globalAlpha = 0.15;
+    } else if (this.isAtWorkplace) {
+      ctx.globalAlpha = 0.3;
     }
 
     const s = this.size * 5.5;
@@ -1277,6 +1480,78 @@ export class Pedestrian {
     }
 
     ctx.restore();
+
+    // Draw dog (in world space, after restoring owner transform)
+    if (this.hasDog && !this.isAtHome && ctx.globalAlpha > 0.2) {
+      ctx.save();
+      ctx.translate(this.dogX, this.dogY);
+      // Dog faces the direction it's moving (away from owner, pulling ahead)
+      const dogAngle = Math.atan2(this.dogVy, this.dogVx);
+      ctx.rotate(dogAngle);
+      const ds = 0.8; // dog scale
+
+      // Leash line (from dog's back to owner)
+      ctx.strokeStyle = `rgba(100, 80, 60, ${0.5 - nightAlpha * 0.2})`;
+      ctx.lineWidth = 0.7;
+      ctx.beginPath();
+      const lx = this.x - this.dogX;
+      const ly = this.y - this.dogY;
+      const cosA = Math.cos(-dogAngle), sinA = Math.sin(-dogAngle);
+      const llx = cosA * lx - sinA * ly;
+      const lly = sinA * lx + cosA * ly;
+      ctx.moveTo(-3 * ds, 0); // attach at dog's back
+      ctx.quadraticCurveTo(llx * 0.5, lly * 0.5 + 3, llx, lly); // slight sag
+      ctx.stroke();
+
+      // Legs (animated trot)
+      const legPhase = this.walkPhase * 1.5;
+      const legSwing = Math.sin(legPhase) * 2 * ds;
+      ctx.strokeStyle = this.dogColor;
+      ctx.lineWidth = 1;
+      // Front legs
+      ctx.beginPath();
+      ctx.moveTo(2 * ds, -1.5 * ds); ctx.lineTo(2 * ds + legSwing, -3.5 * ds);
+      ctx.moveTo(2 * ds, 1.5 * ds); ctx.lineTo(2 * ds - legSwing, 3.5 * ds);
+      ctx.stroke();
+      // Back legs
+      ctx.beginPath();
+      ctx.moveTo(-2 * ds, -1.5 * ds); ctx.lineTo(-2 * ds - legSwing, -3.5 * ds);
+      ctx.moveTo(-2 * ds, 1.5 * ds); ctx.lineTo(-2 * ds + legSwing, 3.5 * ds);
+      ctx.stroke();
+
+      // Body (oval)
+      ctx.fillStyle = this.dogColor;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, 4 * ds, 2 * ds, 0, 0, Math.PI * 2);
+      ctx.fill();
+      // Head (in front, direction of travel)
+      ctx.beginPath();
+      ctx.arc(4 * ds, 0, 2.2 * ds, 0, Math.PI * 2);
+      ctx.fill();
+      // Snout
+      ctx.fillStyle = darkenColor(this.dogColor, 0.3);
+      ctx.beginPath();
+      ctx.ellipse(6 * ds, 0.2 * ds, 1.2 * ds, 0.8 * ds, 0, 0, Math.PI * 2);
+      ctx.fill();
+      // Ears (floppy)
+      ctx.fillStyle = darkenColor(this.dogColor, 0.15);
+      ctx.beginPath();
+      ctx.ellipse(3.5 * ds, -2 * ds, 1.2 * ds, 1.8 * ds, -0.4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.ellipse(3.5 * ds, 2 * ds, 1.2 * ds, 1.8 * ds, 0.4, 0, Math.PI * 2);
+      ctx.fill();
+      // Tail (wagging, at back)
+      const wagAngle = Math.sin(this.walkPhase * 2.5) * 0.6;
+      ctx.strokeStyle = this.dogColor;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(-4 * ds, 0);
+      ctx.quadraticCurveTo(-6 * ds, wagAngle * 5 * ds, -7 * ds, wagAngle * 3 * ds);
+      ctx.stroke();
+
+      ctx.restore();
+    }
   }
 }
 

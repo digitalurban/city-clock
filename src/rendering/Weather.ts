@@ -458,29 +458,53 @@ export class Weather {
         }
       }
 
-      // --- Puddle ripples (during rain or lingering after) ---
+      // --- Puddle reflections and ripples (during rain or lingering after) ---
       const pl = this.puddleLevel * Math.max(0, (this.alpha - 0.2) * 1.25);
       if (pl > 0.05 && !isSnowingStatus) {
         for (const puddle of this.puddles) {
+          const r = puddle.radius * pl;
           const ripple = Math.sin(time * 3 + puddle.phase) * 0.5 + 0.5;
-          // Very visible puddle lines (darker for contrast)
+
+          // Puddle base — wet reflective surface
+          ctx.fillStyle = `rgba(100, 130, 170, ${0.15 * pl})`;
+          ctx.beginPath();
+          ctx.ellipse(puddle.x, puddle.y, r, r * 0.7, 0, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Sky/building reflection — subtle lighter patch offset upward
+          const reflAlpha = pl * 0.12 * (1 - nightAlpha * 0.5);
+          if (reflAlpha > 0.01) {
+            ctx.fillStyle = `rgba(180, 200, 230, ${reflAlpha})`;
+            ctx.beginPath();
+            ctx.ellipse(puddle.x, puddle.y - r * 0.15, r * 0.6, r * 0.35, 0, 0, Math.PI * 2);
+            ctx.fill();
+            // Tiny building silhouette reflection (dark vertical lines)
+            ctx.fillStyle = `rgba(60, 60, 80, ${reflAlpha * 0.5})`;
+            const numLines = Math.floor(r / 4);
+            for (let i = 0; i < numLines; i++) {
+              const lx = puddle.x - r * 0.4 + (r * 0.8 / numLines) * i;
+              const lh = 2 + Math.sin(puddle.phase + i) * 1.5;
+              ctx.fillRect(lx, puddle.y - r * 0.3, 1, lh);
+            }
+          }
+
+          // Ripple rings
           const pa = pl * (0.4 + 0.5 * ripple);
           ctx.strokeStyle = `rgba(50, 70, 110, ${pa})`;
           ctx.lineWidth = 1.5;
           ctx.beginPath();
-          ctx.arc(puddle.x, puddle.y, puddle.radius * (0.6 + ripple * 0.4) * pl, 0, Math.PI * 2);
+          ctx.arc(puddle.x, puddle.y, r * (0.6 + ripple * 0.4), 0, Math.PI * 2);
           ctx.stroke();
-          // Inner ripple
           ctx.beginPath();
-          ctx.arc(puddle.x, puddle.y, puddle.radius * 0.3 * (1 + ripple * 0.5) * pl, 0, Math.PI * 2);
+          ctx.arc(puddle.x, puddle.y, r * 0.3 * (1 + ripple * 0.5), 0, Math.PI * 2);
           ctx.stroke();
 
           // Occasional splash dots
           if (Math.random() < pl * 0.2) {
             ctx.fillStyle = `rgba(150, 180, 220, ${0.9 * pl})`;
             ctx.beginPath();
-            const sx = puddle.x + (Math.random() - 0.5) * puddle.radius * pl;
-            const sy = puddle.y + (Math.random() - 0.5) * puddle.radius * pl;
+            const sx = puddle.x + (Math.random() - 0.5) * r;
+            const sy = puddle.y + (Math.random() - 0.5) * r;
             ctx.arc(sx, sy, 1.0 + Math.random(), 0, Math.PI * 2);
             ctx.fill();
           }
