@@ -460,12 +460,8 @@ export class Car {
     this.y += moveY;
     this.vx = moveX;
     this.vy = moveY;
-    // Smoothly rotate toward actual movement direction
-    const targetAngle = Math.atan2(moveY, moveX);
-    let angleDiff = targetAngle - this.angle;
-    while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
-    while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
-    this.angle += angleDiff * 0.2;
+    // Snap angle to movement direction (axis-aligned waypoint following)
+    this.angle = Math.atan2(moveY, moveX);
     return false;
   }
 
@@ -1284,16 +1280,16 @@ export class Car {
       const alpha = pkg.timer < 60 ? pkg.timer / 60 : 1;
 
       // Shadow
-      ctx.fillStyle = `rgba(0,0,0,${0.15 * alpha})`;
-      ctx.fillRect(pkg.x - 3.5, pkg.y - 2.5, 8, 6);
+      ctx.fillStyle = `rgba(0,0,0,${0.2 * alpha})`;
+      ctx.fillRect(pkg.x - 5, pkg.y - 3.5, 12, 9);
 
       // Box
       ctx.fillStyle = `rgba(${Math.floor(r * dark)},${Math.floor(g * dark)},${Math.floor(b * dark)},${alpha})`;
-      ctx.fillRect(pkg.x - 4, pkg.y - 3, 8, 6);
+      ctx.fillRect(pkg.x - 6, pkg.y - 4, 12, 9);
 
       // Tape stripe
-      ctx.fillStyle = `rgba(200,180,140,${0.6 * alpha})`;
-      ctx.fillRect(pkg.x - 4, pkg.y - 0.5, 8, 1);
+      ctx.fillStyle = `rgba(200,180,140,${0.7 * alpha})`;
+      ctx.fillRect(pkg.x - 6, pkg.y - 0.5, 12, 1.5);
       ctx.fillRect(pkg.x - 0.5, pkg.y - 3, 1, 6);
     }
   }
