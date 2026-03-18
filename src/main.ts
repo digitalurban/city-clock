@@ -436,8 +436,10 @@ function adjustPedCount(target: number) {
 // ==================== Resize / init ====================
 function resize() {
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const width = window.innerWidth;
-  const height = window.innerHeight;
+  // visualViewport gives the actual visible area on iOS (accounts for toolbar/rotation)
+  const vv = window.visualViewport;
+  const width = vv ? vv.width : window.innerWidth;
+  const height = vv ? vv.height : window.innerHeight;
 
   canvas.width = width * dpr;
   canvas.height = height * dpr;
@@ -727,6 +729,17 @@ function loop(timestamp: number = 0) {
 window.addEventListener('resize', () => {
   resize();
 });
+
+// iOS: viewport dimensions may not update immediately on rotation
+window.addEventListener('orientationchange', () => {
+  setTimeout(resize, 100);
+  setTimeout(resize, 300);
+});
+
+// visualViewport fires reliably on iOS when toolbar shows/hides or rotation settles
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', () => resize());
+}
 
 
 createOptionsUI();
