@@ -304,12 +304,12 @@ export class Bird {
       const flapIntensity = this.soarTimer > 0 ? 0.15 : 0.8;
       const wingFlap = Math.sin(this.wingPhase) * flapIntensity;
 
-      // Left wing
+      // Left wing — root moved forward to match mid-body/shoulder
       ctx.fillStyle = GULL_WING;
       ctx.beginPath();
-      ctx.moveTo(2 * s, -1.5 * s);
-      ctx.quadraticCurveTo(0, (-5 - wingFlap * 4) * s, -4 * s, (-3 - wingFlap * 3) * s);
-      ctx.lineTo(-2 * s, -0.5 * s);
+      ctx.moveTo(3 * s, -1.3 * s);
+      ctx.quadraticCurveTo(0.5 * s, (-5 - wingFlap * 4) * s, -4 * s, (-3 - wingFlap * 3) * s);
+      ctx.lineTo(-1 * s, -0.5 * s);
       ctx.closePath();
       ctx.fill();
       // Dark wingtip
@@ -321,12 +321,12 @@ export class Bird {
       ctx.closePath();
       ctx.fill();
 
-      // Right wing
+      // Right wing — root moved forward to match mid-body/shoulder
       ctx.fillStyle = GULL_WING;
       ctx.beginPath();
-      ctx.moveTo(2 * s, 1.5 * s);
-      ctx.quadraticCurveTo(0, (5 + wingFlap * 4) * s, -4 * s, (3 + wingFlap * 3) * s);
-      ctx.lineTo(-2 * s, 0.5 * s);
+      ctx.moveTo(3 * s, 1.3 * s);
+      ctx.quadraticCurveTo(0.5 * s, (5 + wingFlap * 4) * s, -4 * s, (3 + wingFlap * 3) * s);
+      ctx.lineTo(-1 * s, 0.5 * s);
       ctx.closePath();
       ctx.fill();
       // Dark wingtip

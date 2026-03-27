@@ -1098,7 +1098,7 @@ export class CityLayout {
       const r = parseInt(b.color.slice(1, 3), 16);
       const g = parseInt(b.color.slice(3, 5), 16);
       const bl = parseInt(b.color.slice(5, 7), 16);
-      const darkFactor = 1 - nightAlpha * 0.5;
+      const darkFactor = 1 - nightAlpha * 0.82;
       ctx.fillStyle = `rgb(${Math.floor(r * darkFactor)}, ${Math.floor(g * darkFactor)}, ${Math.floor(bl * darkFactor)})`;
       ctx.fillRect(b.x, b.y, b.w, b.h);
 
@@ -1110,22 +1110,28 @@ export class CityLayout {
       // Windows at night
       if (nightAlpha > 0.1) {
         const hour = new Date().getHours() + new Date().getMinutes() / 60;
-        let litChance = 0.4;
-        if (hour >= 20 || hour < 6) litChance = 0.05; // Late night
-        else if (hour >= 18 && hour < 20) litChance = 0.2; // Evening
+        let litChance = 0.30; // default
+        if (hour >= 23 || hour < 5) litChance = 0.18;       // very late night — few lights on
+        else if (hour >= 20 || hour < 6) litChance = 0.38;  // night — moderate
+        else if (hour >= 18) litChance = 0.55;               // early evening — peak
 
-        const winSize = 4;
+        const winSize = 5;
         const winGap = 8;
-        const winAlpha = nightAlpha * 1.2;
+        const winAlpha = Math.min(1, nightAlpha * 1.6);
         for (let wx = b.x + 6; wx < b.x + b.w - 6; wx += winGap) {
           for (let wy = b.y + 6; wy < b.y + b.h - 6; wy += winGap) {
             const isLit = seededRandom(b.windowSeed + wx * 7 + wy * 13) < litChance;
             if (isLit) {
               const warmth = seededRandom(b.windowSeed + wx * 3 + wy * 11);
-              if (warmth > 0.5) {
-                ctx.fillStyle = `rgba(255, 220, 120, ${winAlpha * 0.8})`;
+              if (warmth > 0.4) {
+                // Warm incandescent / warm-white LED
+                ctx.fillStyle = `rgba(255, 215, 110, ${winAlpha})`;
+              } else if (warmth > 0.15) {
+                // Cool daylight / monitor glow
+                ctx.fillStyle = `rgba(180, 220, 255, ${winAlpha * 0.85})`;
               } else {
-                ctx.fillStyle = `rgba(200, 230, 255, ${winAlpha * 0.5})`;
+                // Blue-ish TV flicker
+                ctx.fillStyle = `rgba(140, 180, 255, ${winAlpha * 0.7})`;
               }
               ctx.fillRect(wx, wy, winSize, winSize);
             }
@@ -1494,17 +1500,20 @@ export class CityLayout {
 
   drawStreetLights(ctx: CanvasRenderingContext2D, nightAlpha: number) {
     if (nightAlpha < 0.05) return;
+    const glowR = 65;
     for (const sl of this.streetLights) {
-      const grad = ctx.createRadialGradient(sl.x, sl.y, 0, sl.x, sl.y, 60);
-      grad.addColorStop(0, `rgba(255, 210, 120, ${nightAlpha * 0.35})`);
-      grad.addColorStop(0.5, `rgba(255, 200, 100, ${nightAlpha * 0.1})`);
-      grad.addColorStop(1, 'rgba(255, 200, 100, 0)');
+      const grad = ctx.createRadialGradient(sl.x, sl.y, 0, sl.x, sl.y, glowR);
+      grad.addColorStop(0,   `rgba(255, 215, 130, ${nightAlpha * 0.55})`);
+      grad.addColorStop(0.4, `rgba(255, 205, 110, ${nightAlpha * 0.18})`);
+      grad.addColorStop(0.8, `rgba(255, 195, 90,  ${nightAlpha * 0.05})`);
+      grad.addColorStop(1,   'rgba(255, 190, 80, 0)');
       ctx.fillStyle = grad;
-      ctx.fillRect(sl.x - 60, sl.y - 60, 120, 120);
+      ctx.fillRect(sl.x - glowR, sl.y - glowR, glowR * 2, glowR * 2);
 
-      ctx.fillStyle = `rgba(255, 240, 180, ${nightAlpha})`;
+      // Bright lamp point
+      ctx.fillStyle = `rgba(255, 248, 200, ${Math.min(1, nightAlpha * 1.8)})`;
       ctx.beginPath();
-      ctx.arc(sl.x, sl.y, 2.5, 0, Math.PI * 2);
+      ctx.arc(sl.x, sl.y, 3, 0, Math.PI * 2);
       ctx.fill();
     }
   }
@@ -1588,11 +1597,12 @@ export class CityLayout {
   drawPlazaLampGlows(ctx: CanvasRenderingContext2D, nightAlpha: number) {
     if (nightAlpha < 0.05) return;
     for (const lamp of this.plazaLamps) {
-      const glowR = 50 + nightAlpha * 20;
+      const glowR = 55 + nightAlpha * 25;
       const grad = ctx.createRadialGradient(lamp.x, lamp.y, 0, lamp.x, lamp.y, glowR);
-      grad.addColorStop(0, `rgba(255, 220, 130, ${nightAlpha * 0.5})`);
-      grad.addColorStop(0.4, `rgba(255, 210, 110, ${nightAlpha * 0.18})`);
-      grad.addColorStop(1, 'rgba(255, 200, 100, 0)');
+      grad.addColorStop(0,   `rgba(255, 225, 140, ${nightAlpha * 0.60})`);
+      grad.addColorStop(0.45,`rgba(255, 215, 120, ${nightAlpha * 0.20})`);
+      grad.addColorStop(0.85,`rgba(255, 205, 100, ${nightAlpha * 0.06})`);
+      grad.addColorStop(1,   'rgba(255, 200, 90, 0)');
       ctx.fillStyle = grad;
       ctx.fillRect(lamp.x - glowR, lamp.y - glowR, glowR * 2, glowR * 2);
     }

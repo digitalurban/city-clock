@@ -547,6 +547,10 @@ function buildStaticCanvas(nightAlpha: number) {
   sctx.fillStyle = dayNight.getSkyColor(nightAlpha);
   sctx.fillRect(0, 0, worldW, worldH);
 
+  // Stars and moon drawn before buildings so buildings cover them naturally
+  dayNight.drawStars(sctx, worldW, worldH, nightAlpha);
+  dayNight.drawMoon(sctx, worldW, worldH, nightAlpha);
+
   // Render layers
   layout.drawRoads(sctx, nightAlpha);
   layout.drawSidewalks(sctx, nightAlpha);
@@ -760,10 +764,6 @@ function loop(timestamp: number = 0) {
   // Trees on top (canopies)
   layout.drawTrees(ctx, time, nightAlpha);
 
-  // Street light glows + plaza lamp glows
-  layout.drawStreetLights(ctx, nightAlpha);
-  layout.drawPlazaLampGlows(ctx, nightAlpha);
-
   // Update and draw dynamic events (in world space, underneath weather/UI)
   if (nightAlpha < 0.3 && !layout.activeEvent && Math.random() < 0.00025) {
     layout.startEvent(Math.random() < 0.5 ? 'musician' : 'protest');
@@ -788,6 +788,15 @@ function loop(timestamp: number = 0) {
   // Night overlay — drawn in screen space
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   dayNight.drawNightOverlay(ctx, canvas.width, canvas.height, nightAlpha);
+
+  // Street lights, lamp glows, and car headlight beams drawn AFTER the overlay so they punch through darkness
+  ctx.setTransform(dpr * zoom, 0, 0, dpr * zoom, panX * dpr, panY * dpr);
+  layout.drawStreetLights(ctx, nightAlpha);
+  layout.drawPlazaLampGlows(ctx, nightAlpha);
+  for (const car of cars) {
+    car.drawHeadlightGlow(ctx, nightAlpha);
+  }
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
 
   // Weather screen overlay
   weather.drawScreenOverlay(ctx, canvas.width, canvas.height);

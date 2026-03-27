@@ -19,13 +19,13 @@ A procedurally generated top-down city where pedestrians form a digital clock in
 - **Central plaza** - ringed by named venues (cafes, bars, bookshops, flower shops) with outdoor seating, benches, and lamp posts
 - **Pedestrian life** - pedestrians wander sidewalks, visit venues, queue and sit outside, go home to their assigned houses via garden paths, and ride bicycles (~15%). They now also have simulated Needs (Energy, Hunger, Social) with thought bubbles guiding their routines.
 - **Dog walkers** - ~10% of pedestrians walk dogs on leashes; dogs pull ahead with animated trotting legs, floppy ears, wagging tails, and side-to-side sniffing wander
-- **City birds** - a flock of birds flies across the entire city using boid flocking (separation, alignment, cohesion); birds perch on trees and benches, scatter when pedestrians approach, and are drawn with parallax height — shadows on the ground separate from birds soaring above rooftops. Occasionally a bird feeder event attracts the flock to the plaza
+- **City birds** - seagull flocks sweep across the city using boid flocking (separation, alignment, cohesion); birds perch on trees and benches, scatter when pedestrians approach, and are drawn with parallax height — shadows on the ground separate from birds soaring above rooftops. Wings attach at the shoulder for anatomically correct flight silhouettes. Occasionally a bird feeder event attracts the flock to the plaza
 - **Construction site** - one city block is a construction zone with dirt ground, a partial concrete frame, orange/white safety barriers, material piles, and a slowly rotating crane
 - **Dynamic City Events** - street musicians and protests occasionally spawn in the plaza, drawing nearby crowds of pedestrians to watch and interact
 - **Service & Delivery Vehicles** - orange delivery vans enter the plaza, park outside a venue to drop off packages. City buses (red/blue) and garbage trucks (green) navigate the road network with unique behaviours.
 - **Emergency vehicles** - police cars, ambulances and fire trucks with flashing sirens.
 - **Traffic system** - cars navigate the road network with traffic lights, braking for pedestrians and each other, smooth quadratic Bézier arc turns at junctions, and anti-gridlock logic.
-- **Day/night cycle** - real-time lighting based on system clock; street lights, lamp posts, building windows outlaid by granular business/residential schedules, and headlights glow at night.
+- **Day/night cycle** - real-time lighting based on system clock; deep dark-blue night sky with procedural stars and a crescent moon; street lights and plaza lamps cast distinct warm pools through the darkness; building windows glow in three colour temperatures (incandescent, daylight, TV-blue) on realistic occupancy schedules; car headlight beams cut through the night; all rendered in a correct depth order so light sources punch through the darkness rather than being dimmed by it.
 - **Weather** - procedural clouds with realistic multi-lobe shapes, 3D shading, and ground shadows drifting across the city.
 - **Zoom and pan** - scroll-wheel zoom, click-drag pan, touch pinch and drag on mobile
 - **Adjustable population** - settings panel to control traffic (10-300) and people (112-500) counts live
@@ -84,7 +84,7 @@ Real-time based on system clock:
 - **9pm-5am**: Night (60% darkness)
 - **5am-8am**: Dawn
 
-At night: buildings show lit windows based on realistic opening/closing times (e.g. offices closing late, bars staying open, residential lights turning off overnight), street lights and plaza lamp posts emit radial glows, car headlights illuminate the road, venue doorways glow warmly, all colours darken.
+At night: a deep blue-black sky reveals procedural stars and a crescent moon above the rooftops. Buildings darken significantly with scattered lit windows in three colour temperatures (warm incandescent, cool daylight, blue TV glow) on realistic occupancy schedules. Street lights and plaza lamps cast focused warm pools through the darkness. Car headlight beams sweep ahead of each vehicle. All light sources are composited after the dark overlay so they genuinely cut through the night rather than being muted by it.
 
 ### Weather
 
@@ -101,8 +101,9 @@ Dynamic live weather powered by the Open-Meteo API:
 
 ### Rendering Architecture
 
-1. **Static canvas** - roads, sidewalks, crosswalks, plaza, buildings, houses, venues and parks pre-rendered to an offscreen canvas; rebuilt only when the lighting level changes
+1. **Static canvas** - roads, sidewalks, crosswalks, plaza, buildings, houses, venues, parks, stars and moon pre-rendered to an offscreen canvas; rebuilt only when the lighting level changes
 2. **Dynamic layer** - cars, pedestrians, dogs, dropped packages, construction crane, bird shadows, animated tree sway, and birds (drawn above weather with parallax height) rendered fresh each frame
+3. **Light pass** - street lights, plaza lamp glows, and car headlight beams drawn after the night overlay so they punch through the darkness correctly
 3. **DPR-aware** - canvas resolution scales with devicePixelRatio (capped at 2x) for crisp rendering on Retina displays
 
 ### Battery & Performance

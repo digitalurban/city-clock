@@ -1408,6 +1408,39 @@ export class Car {
     ctx.restore();
   }
 
+  /** Drawn after the night overlay so beams punch through darkness */
+  drawHeadlightGlow(ctx: CanvasRenderingContext2D, nightAlpha: number) {
+    if (nightAlpha < 0.1 || this.currentSpeed < 0.05) return;
+
+    ctx.save();
+    ctx.translate(this.x, this.y);
+    ctx.rotate(this.angle);
+
+    const hw = this.length / 2;
+    const hh = this.width / 2;
+    const beamLen = 50 + nightAlpha * 40;
+    const spread = hh * 2.8;
+
+    // Two separate beams — one per headlight
+    for (const side of [-1, 1]) {
+      const originY = side * (hh - 1.5);
+      const grad = ctx.createRadialGradient(hw, originY, 0, hw + beamLen * 0.35, originY * 0.4, beamLen);
+      grad.addColorStop(0,   `rgba(255, 248, 210, ${nightAlpha * 0.60})`);
+      grad.addColorStop(0.25,`rgba(255, 242, 190, ${nightAlpha * 0.30})`);
+      grad.addColorStop(0.7, `rgba(255, 235, 160, ${nightAlpha * 0.10})`);
+      grad.addColorStop(1,   'rgba(255, 230, 140, 0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.moveTo(hw, originY);
+      ctx.lineTo(hw + beamLen, originY + side * spread);
+      ctx.lineTo(hw + beamLen, originY + side * spread * 0.3);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    ctx.restore();
+  }
+
   private drawTypeDetails(
     ctx: CanvasRenderingContext2D, nightAlpha: number, darkFactor: number,
     hw: number, hh: number, r: number, g: number, b: number
