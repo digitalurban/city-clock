@@ -2,7 +2,7 @@ import type { CityLayout } from '../city/CityLayout';
 import type { Pedestrian } from './Pedestrian';
 
 /**
- * Seagull flock system — occasional flocks sweep across the city.
+ * Bird flock systems — seagulls and sparrows sweep across the city.
  * Each flock is a group of birds flying in formation with boid behaviours.
  * They fly at altitude with parallax shadows on the ground.
  */
@@ -10,6 +10,11 @@ import type { Pedestrian } from './Pedestrian';
 const GULL_BODY = '#f5f5f0';   // white/off-white
 const GULL_WING = '#d0d0cc';   // slightly grey wing tips
 const GULL_TIPS = '#3a3a3a';   // dark wingtips
+
+const SPARROW_BODY = '#8b6530'; // warm brown
+const SPARROW_BELLY = '#d4b896'; // buff/cream underside
+const SPARROW_WING = '#6b4a1e'; // darker brown wing
+const SPARROW_STREAK = '#3d2208'; // dark brown streaks/cap
 
 export interface Flock {
   birds: Bird[];
@@ -36,6 +41,46 @@ export function updateBirdFeeder(layout: CityLayout) {
     birdFeederActive = true;
     feederTimer = 1200; // ~20 seconds
   }
+}
+
+/** Create a sparrow flock — flies lower and faster than seagulls */
+export function createSparrowFlock(layout: CityLayout): Flock {
+  const worldW = layout.width;
+  const worldH = layout.height;
+  const edge = Math.floor(Math.random() * 4);
+  let startX: number, startY: number;
+  let exitX: number, exitY: number;
+
+  const margin = 150;
+  switch (edge) {
+    case 0:
+      startX = -margin; startY = 100 + Math.random() * (worldH - 200);
+      exitX = worldW + margin; exitY = 100 + Math.random() * (worldH - 200);
+      break;
+    case 1:
+      startX = worldW + margin; startY = 100 + Math.random() * (worldH - 200);
+      exitX = -margin; exitY = 100 + Math.random() * (worldH - 200);
+      break;
+    case 2:
+      startX = 100 + Math.random() * (worldW - 200); startY = -margin;
+      exitX = 100 + Math.random() * (worldW - 200); exitY = worldH + margin;
+      break;
+    default:
+      startX = 100 + Math.random() * (worldW - 200); startY = worldH + margin;
+      exitX = 100 + Math.random() * (worldW - 200); exitY = -margin;
+      break;
+  }
+
+  const count = 8 + Math.floor(Math.random() * 13); // 8-20 birds, tighter flocks
+  const birds: Sparrow[] = [];
+  for (let i = 0; i < count; i++) {
+    birds.push(new Sparrow(
+      startX + (Math.random() - 0.5) * 50,
+      startY + (Math.random() - 0.5) * 50,
+    ));
+  }
+
+  return { birds, targetX: exitX, targetY: exitY, active: true, timer: 0 };
 }
 
 /** Manage flocks — spawn, update, despawn */
@@ -93,7 +138,7 @@ export class Bird {
   wingPhase: number;
   size: number;
   height: number; // parallax altitude
-  private idOffset: number;
+  protected idOffset: number;
   private soarTimer: number = 0;
   landed: boolean = false;
   landTimer: number = 0;
@@ -345,6 +390,272 @@ export class Bird {
       ctx.lineTo(-7 * s, -1.2 * s);
       ctx.lineTo(-6 * s, 0);
       ctx.lineTo(-7 * s, 1.2 * s);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    ctx.restore();
+  }
+}
+
+/**
+ * Sparrow — smaller, lower-flying, faster-flapping city birds.
+ * Tighter boid radii and rapid wing beats give a distinctly different feel.
+ */
+export class Sparrow extends Bird {
+  constructor(x: number, y: number) {
+    super(x, y);
+    this.size = 0.45 + Math.random() * 0.2;  // much smaller than seagulls
+    this.height = 0.1 + Math.random() * 0.25; // fly lower
+  }
+
+  update(flock: Bird[], targetX: number, targetY: number, time: number) {
+    if (this.landed) {
+      this.landTimer++;
+      if (this.landTimer > 200 + Math.random() * 200) {
+        this.landed = false;
+        this.vx = (Math.random() - 0.5) * 0.8;
+        this.vy = (Math.random() - 0.5) * 0.8;
+        this.height = 0.05;
+      }
+      return;
+    }
+
+    // Rise to a lower cruising altitude than seagulls
+    if (this.height < 0.25) this.height += 0.004;
+
+    // === Boid forces — tighter radii for sparrow flocking ===
+    let sepX = 0, sepY = 0, sepN = 0;
+    let aliVx = 0, aliVy = 0, aliN = 0;
+    let cohX = 0, cohY = 0, cohN = 0;
+
+    for (const other of flock) {
+      if (other === this || other.landed) continue;
+      const dx = this.x - other.x;
+      const dy = this.y - other.y;
+      const distSq = dx * dx + dy * dy;
+
+      if (distSq < 225 && distSq > 0) { // 15px separation (vs 25px gulls)
+        const dist = Math.sqrt(distSq);
+        sepX += dx / dist;
+        sepY += dy / dist;
+        sepN++;
+      }
+      if (distSq < 2500) { // 50px alignment (vs 80px)
+        aliVx += other.vx;
+        aliVy += other.vy;
+        aliN++;
+      }
+      if (distSq < 4900) { // 70px cohesion (vs 126px)
+        cohX += other.x;
+        cohY += other.y;
+        cohN++;
+      }
+    }
+
+    let ax = 0, ay = 0;
+    const maxForce = 0.013;
+
+    if (sepN > 0) {
+      ax += (sepX / sepN) * maxForce * 3;
+      ay += (sepY / sepN) * maxForce * 3;
+    }
+    if (aliN > 0) {
+      ax += (aliVx / aliN - this.vx) * maxForce * 2.5;
+      ay += (aliVy / aliN - this.vy) * maxForce * 2.5;
+    }
+    if (cohN > 0) {
+      const avgX = cohX / cohN;
+      const avgY = cohY / cohN;
+      ax += (avgX - this.x) * maxForce * 0.008;
+      ay += (avgY - this.y) * maxForce * 0.008;
+    }
+
+    // Pull toward exit target or feeder
+    let pullX = targetX, pullY = targetY;
+    let pullStrength = 0.5;
+    if (birdFeederActive) {
+      const fd = Math.hypot(this.x - birdFeederX, this.y - birdFeederY);
+      if (fd < 400) {
+        pullX = birdFeederX;
+        pullY = birdFeederY;
+        pullStrength = 2.0; // sparrows love seed
+        if (fd < 60 && Math.random() < 0.012 && !this.landed) {
+          this.landed = true;
+          this.landTimer = 0;
+          this.height = 0;
+          this.vx = 0;
+          this.vy = 0;
+          this.x = birdFeederX + (Math.random() - 0.5) * 30;
+          this.y = birdFeederY + (Math.random() - 0.5) * 30;
+          return;
+        }
+      }
+    }
+
+    const tDx = pullX - this.x;
+    const tDy = pullY - this.y;
+    const tD = Math.hypot(tDx, tDy) || 1;
+    ax += (tDx / tD) * maxForce * pullStrength;
+    ay += (tDy / tD) * maxForce * pullStrength;
+
+    // More erratic wander than seagulls
+    ax += Math.cos(time * 0.25 + this.idOffset * 5) * maxForce * 0.5;
+    ay += Math.sin(time * 0.3 + this.idOffset * 7) * maxForce * 0.5;
+
+    this.vx = this.vx * 0.982 + ax;
+    this.vy = this.vy * 0.982 + ay;
+
+    // Faster speed range
+    const speed = Math.hypot(this.vx, this.vy);
+    const maxSpeed = 1.3;
+    const minSpeed = 0.55;
+    if (speed > maxSpeed) {
+      this.vx = (this.vx / speed) * maxSpeed;
+      this.vy = (this.vy / speed) * maxSpeed;
+    } else if (speed < minSpeed && speed > 0) {
+      this.vx = (this.vx / speed) * minSpeed;
+      this.vy = (this.vy / speed) * minSpeed;
+    }
+
+    this.x += this.vx;
+    this.y += this.vy;
+
+    // Rapid flutter — sparrows don't really soar
+    this.wingPhase += 0.18 + speed * 0.12;
+  }
+
+  drawShadow(ctx: CanvasRenderingContext2D, nightAlpha: number) {
+    if (this.landed) return;
+    const dark = 1 - nightAlpha * 0.5;
+    const shadowAlpha = Math.max(0, 0.1 - this.height * 0.08) * dark;
+    if (shadowAlpha < 0.005) return;
+    const shadowScale = 1 + this.height * 1.5;
+    const offsetY = this.height * 10;
+    ctx.fillStyle = `rgba(0, 0, 0, ${shadowAlpha})`;
+    ctx.beginPath();
+    ctx.ellipse(this.x + this.height * 4, this.y + offsetY, 3.5 * shadowScale, 1.2 * shadowScale, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  draw(ctx: CanvasRenderingContext2D, nightAlpha: number) {
+    const dark = 1 - nightAlpha * 0.4;
+    const s = this.size;
+    const heightOffset = this.height * 40; // lower parallax than seagulls
+    ctx.save();
+    ctx.translate(this.x, this.y - heightOffset);
+    ctx.globalAlpha = dark;
+
+    if (this.landed) {
+      // Perched sparrow — compact round body
+      ctx.fillStyle = SPARROW_BODY;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, 3 * s, 2.2 * s, 0, 0, Math.PI * 2);
+      ctx.fill();
+      // Buff belly
+      ctx.fillStyle = SPARROW_BELLY;
+      ctx.beginPath();
+      ctx.ellipse(0.5 * s, 0.5 * s, 1.8 * s, 1.4 * s, 0, 0, Math.PI * 2);
+      ctx.fill();
+      // Head
+      ctx.fillStyle = SPARROW_BODY;
+      ctx.beginPath();
+      ctx.arc(2.5 * s, -0.8 * s, 1.5 * s, 0, Math.PI * 2);
+      ctx.fill();
+      // Crown streak
+      ctx.fillStyle = SPARROW_STREAK;
+      ctx.beginPath();
+      ctx.ellipse(2.5 * s, -1.5 * s, 0.6 * s, 0.5 * s, 0, 0, Math.PI * 2);
+      ctx.fill();
+      // Short stubby beak
+      ctx.fillStyle = '#a08040';
+      ctx.beginPath();
+      ctx.moveTo(4 * s, -0.7 * s);
+      ctx.lineTo(5.2 * s, -0.4 * s);
+      ctx.lineTo(4 * s, -0.1 * s);
+      ctx.fill();
+    } else {
+      // Flying sparrow
+      const angle = Math.atan2(this.vy, this.vx);
+      const hScale = 1 + this.height * 0.2;
+      ctx.rotate(angle);
+      ctx.scale(hScale, hScale);
+
+      // Body — plump oval
+      ctx.fillStyle = SPARROW_BODY;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, 4 * s, 1.6 * s, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Buff belly stripe
+      ctx.fillStyle = SPARROW_BELLY;
+      ctx.beginPath();
+      ctx.ellipse(0.5 * s, 0.3 * s, 2.5 * s, 1 * s, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Head
+      ctx.fillStyle = SPARROW_BODY;
+      ctx.beginPath();
+      ctx.arc(3.5 * s, -0.2 * s, 1.5 * s, 0, Math.PI * 2);
+      ctx.fill();
+      // Crown/streak
+      ctx.fillStyle = SPARROW_STREAK;
+      ctx.beginPath();
+      ctx.arc(3.5 * s, -1 * s, 0.7 * s, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Short stubby beak
+      ctx.fillStyle = '#a08040';
+      ctx.beginPath();
+      ctx.moveTo(5 * s, -0.2 * s);
+      ctx.lineTo(6.5 * s, 0.1 * s);
+      ctx.lineTo(5 * s, 0.5 * s);
+      ctx.fill();
+
+      // Wings — short and rounded, rapid flutter
+      const wingFlap = Math.sin(this.wingPhase) * 0.9;
+
+      // Left wing
+      ctx.fillStyle = SPARROW_WING;
+      ctx.beginPath();
+      ctx.moveTo(2 * s, -1 * s);
+      ctx.quadraticCurveTo(0, (-4 - wingFlap * 3) * s, -2.5 * s, (-2 - wingFlap * 2.5) * s);
+      ctx.lineTo(-0.5 * s, -0.4 * s);
+      ctx.closePath();
+      ctx.fill();
+      // Wing streak
+      ctx.fillStyle = SPARROW_STREAK;
+      ctx.beginPath();
+      ctx.moveTo(1.5 * s, -1 * s);
+      ctx.lineTo(-0.5 * s, (-3.5 - wingFlap * 2.5) * s);
+      ctx.lineTo(0.5 * s, (-3 - wingFlap * 2) * s);
+      ctx.closePath();
+      ctx.fill();
+
+      // Right wing
+      ctx.fillStyle = SPARROW_WING;
+      ctx.beginPath();
+      ctx.moveTo(2 * s, 1 * s);
+      ctx.quadraticCurveTo(0, (4 + wingFlap * 3) * s, -2.5 * s, (2 + wingFlap * 2.5) * s);
+      ctx.lineTo(-0.5 * s, 0.4 * s);
+      ctx.closePath();
+      ctx.fill();
+      // Wing streak
+      ctx.fillStyle = SPARROW_STREAK;
+      ctx.beginPath();
+      ctx.moveTo(1.5 * s, 1 * s);
+      ctx.lineTo(-0.5 * s, (3.5 + wingFlap * 2.5) * s);
+      ctx.lineTo(0.5 * s, (3 + wingFlap * 2) * s);
+      ctx.closePath();
+      ctx.fill();
+
+      // Short rounded tail
+      ctx.fillStyle = SPARROW_BODY;
+      ctx.beginPath();
+      ctx.moveTo(-3.5 * s, 0);
+      ctx.lineTo(-5.5 * s, -0.8 * s);
+      ctx.lineTo(-5 * s, 0);
+      ctx.lineTo(-5.5 * s, 0.8 * s);
       ctx.closePath();
       ctx.fill();
     }

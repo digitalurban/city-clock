@@ -1,7 +1,7 @@
 import { CityLayout } from './city/CityLayout';
 import { Pedestrian, clearPedestrianState } from './entities/Pedestrian';
 import { Car } from './entities/Car';
-import { Bird, Flock, createFlock, updateBirdFeeder, birdFeederActive, birdFeederX, birdFeederY } from './entities/Bird';
+import { Bird, Flock, createFlock, createSparrowFlock, updateBirdFeeder, birdFeederActive, birdFeederX, birdFeederY } from './entities/Bird';
 import { ClockManager } from './clock/ClockManager';
 import { DayNightCycle } from './rendering/DayNightCycle';
 import { Weather } from './rendering/Weather';
@@ -14,6 +14,7 @@ let layout: CityLayout;
 let pedestrians: Pedestrian[] = [];
 let cars: Car[] = [];
 let flocks: Flock[] = [];
+let sparrowFlocks: Flock[] = [];
 const clockManager = new ClockManager();
 const dayNight = new DayNightCycle();
 const weather = new Weather();
@@ -520,6 +521,8 @@ function resize() {
 
   // Seagull flocks — start with one
   flocks = [createFlock(layout)];
+  // Sparrow flocks — start with one
+  sparrowFlocks = [createSparrowFlock(layout)];
 
   // Init weather with world dimensions
   weather.init(worldW, worldH);
@@ -740,6 +743,10 @@ function loop(timestamp: number = 0) {
   if (flocks.length < 3 && Math.random() < 0.0003) {
     flocks.push(createFlock(layout));
   }
+  // Spawn sparrow flocks more frequently (max 4 active flocks)
+  if (sparrowFlocks.length < 4 && Math.random() < 0.0005) {
+    sparrowFlocks.push(createSparrowFlock(layout));
+  }
 
   // Update flocks and draw shadows on ground
   for (const flock of flocks) {
@@ -761,6 +768,24 @@ function loop(timestamp: number = 0) {
   // Clean up inactive flocks
   flocks = flocks.filter(f => f.active);
 
+  // Update sparrow flocks and draw shadows
+  for (const flock of sparrowFlocks) {
+    if (!flock.active) continue;
+    for (const bird of flock.birds) {
+      bird.update(flock.birds, flock.targetX, flock.targetY, time);
+      bird.drawShadow(ctx, nightAlpha);
+    }
+    flock.timer++;
+    if (flock.timer > 3000) {
+      const allOut = flock.birds.every(b =>
+        b.x < -200 || b.x > layout.width + 200 ||
+        b.y < -200 || b.y > layout.height + 200
+      );
+      if (allOut || flock.timer > 5000) flock.active = false;
+    }
+  }
+  sparrowFlocks = sparrowFlocks.filter(f => f.active);
+
   // Trees on top (canopies)
   layout.drawTrees(ctx, time, nightAlpha);
 
@@ -776,6 +801,14 @@ function loop(timestamp: number = 0) {
 
   // Weather effects in world space
   weather.drawWorldEffects(ctx, nightAlpha);
+
+  // Sparrow flocks — drawn below seagulls (lower altitude)
+  for (const flock of sparrowFlocks) {
+    if (!flock.active) continue;
+    for (const bird of flock.birds) {
+      bird.draw(ctx, nightAlpha);
+    }
+  }
 
   // Seagull flocks — drawn above everything (parallax height)
   for (const flock of flocks) {
