@@ -31,12 +31,14 @@ A procedurally generated top-down city where pedestrians form a digital clock in
 - **Busker pitch** - a street musician sets up in the plaza with a guitar and open case between 9am–9pm, appearing for 40 seconds to 2 minutes at a time. Floating ♪ ♫ music notes drift upward from the pitch. Pedestrians who pass within earshot stop to listen, face the musician, and periodically toss coins — rendered as arcing gold particles landing in the case
 - **Newspaper stand** - a metal kiosk with a blue masthead banner and stacked papers appears in the lower plaza from 6am, fading out by 1pm. Morning pedestrians nearby stop briefly to buy a paper then walk away with a happy thought bubble
 - **Dynamic City Events** - street musicians and protests occasionally spawn in the plaza, drawing nearby crowds of pedestrians to watch and interact
+- **Click to inspect** - tap or click any pedestrian to reveal a frosted-glass pop-up showing their name, current activity, daily schedule phase, and assigned home. Distinguished from a drag by a 4px movement threshold; auto-dismisses after 4 seconds
+- **Roadside wheelie bins** - ~70% of houses put a small colour-coded wheelie bin out by the kerb (each house has its own lid colour). The garbage truck collects nearby bins when it pulls over, and bins quietly reappear ~5 minutes later once residents wheel them back in
 - **Service & Delivery Vehicles** - orange delivery vans enter the plaza, park outside a venue to drop off packages. City buses (red/blue) and garbage trucks (green) navigate the road network with unique behaviours.
 - **Emergency vehicles** - police cars, ambulances and fire trucks with flashing sirens.
 - **Traffic system** - cars navigate the road network with traffic lights, braking for pedestrians and each other, smooth quadratic Bézier arc turns at junctions, and anti-gridlock logic.
 - **Day/night cycle** - real-time lighting based on system clock; deep dark-blue night sky with procedural stars and a crescent moon; street lights and plaza lamps cast distinct warm pools through the darkness; building windows glow in three colour temperatures (incandescent, daylight, TV-blue) on realistic occupancy schedules; car headlight beams cut through the night; all rendered in a correct depth order so light sources punch through the darkness rather than being dimmed by it.
 - **Weather** - procedural clouds with realistic multi-lobe shapes, 3D shading, and ground shadows drifting across the city.
-- **Zoom and pan** - scroll-wheel zoom, click-drag pan, touch pinch and drag on mobile
+- **Zoom and pan** - scroll-wheel zoom, click-drag pan, touch pinch and drag on mobile. The static city layer rebuilds at the current zoom level 300 ms after each gesture settles, so the background is always sharp at any magnification
 - **Adjustable population** - settings panel to control traffic (10-300) and people (112-500) counts live
 - **iOS PWA** - add to home screen on Safari for fullscreen standalone experience; handles orientation changes and visualViewport resizing
 
@@ -81,7 +83,7 @@ Configurable from 10 to 300 vehicles including delivery vans and emergency servi
 
 - **Normal cars** - scan ahead for pedestrians and other cars, brake proportionally; smooth Bézier curve turns at junctions; headlight beams at night
 - **Delivery vans** - navigate to the plaza via a dedicated entry stub road, drive around the plaza perimeter in front of shops, drop visible packages at venue fronts, then exit and rejoin the main road network. Pedestrians flee from delivery trucks inside the plaza.
-- **Specialized Service Vehicles** - city buses that pause at intersections to simulate pickups, and garbage trucks that slowly traverse the city.
+- **Specialized Service Vehicles** - city buses that pause at intersections to simulate pickups, and garbage trucks that slowly traverse the city collecting roadside bins as they go.
 - **Emergency vehicles** - police, ambulance and fire trucks with flashing light bars and sirens
 - **Traffic lights** - alternating red/green phases at intersections; cars clear intersections before stopping
 - **Anti-gridlock** - cross-traffic detection prevents deadlocks; stuck vehicles teleport to clear roads after timeout
@@ -144,11 +146,11 @@ Several passes work together to give the city depth and visual polish:
 
 ### Rendering Architecture
 
-1. **Static canvas** - roads, sidewalks, crosswalks, plaza (with decorative paving), buildings, houses, venues, parks, stars and moon pre-rendered to an offscreen canvas; rebuilt only when the lighting level changes
-2. **Dynamic layer** - atmosphere overlays, chimney smoke, market stalls, newspaper stand, busker pitch, cars, pedestrians, dogs, dropped packages, construction crane, bird shadows, animated tree sway, and birds (drawn above weather with parallax height) rendered fresh each frame
+1. **Static canvas** - roads, sidewalks, crosswalks, plaza (with decorative paving), buildings, houses, venues, parks, stars and moon pre-rendered to an offscreen canvas. Rebuilt when lighting changes *or* when zoom drifts more than 0.18 from the level it was last rendered at (debounced 300 ms after gesture settles). Canvas size is capped to stay within browser/iOS texture limits (~4096 px per dimension)
+2. **Dynamic layer** - venue name labels (re-rasterised every frame for crisp text at any zoom), atmosphere overlays, chimney smoke, roadside bins, market stalls, newspaper stand, busker pitch, cars, pedestrians, dogs, dropped packages, construction crane, bird shadows, animated tree sway, and birds (drawn above weather with parallax height)
 3. **Light pass** - street lights, plaza lamp glows, and car headlight beams drawn after the night overlay so they punch through the darkness correctly
 4. **Vignette pass** - screen-space radial gradient drawn last over everything to frame the scene
-5. **DPR-aware** - canvas resolution scales with devicePixelRatio (capped at 2x) for crisp rendering on Retina displays
+5. **DPR-aware** - canvas resolution scales with devicePixelRatio (capped at 2x) for crisp rendering on Retina displays; static canvas uses `imageSmoothingQuality = 'high'` for any residual upscaling during active zoom gestures
 
 ### Battery & Performance
 

@@ -131,6 +131,16 @@ export interface ConstructionSiteDef {
   craneAngle: number; // rotates slowly
 }
 
+export interface BinDef {
+  x: number;
+  y: number;
+  collected: boolean;
+  respawnTimer: number; // counts up; bin reappears when >= BIN_RESPAWN_FRAMES
+  houseIndex: number;
+}
+
+const BIN_RESPAWN_FRAMES = 18000; // ~5 minutes at 60fps
+
 export class CityLayout {
   width: number;
   height: number;
@@ -176,6 +186,9 @@ export class CityLayout {
   // ── Newspaper stand ────────────────────────────────────────────────────
   newsstandX: number = 0;
   newsstandY: number = 0;
+
+  // Roadside wheelie bins — put out near houses, collected by garbage truck
+  bins: BinDef[] = [];
 
   // Which grid cells are plaza (col, row)
   plazaCells: Set<string> = new Set();
@@ -266,6 +279,7 @@ export class CityLayout {
     this.generateChimneyPositions();
     this.generateMarketStalls();
     this.generateAwningSheltPositions();
+    this.generateBins();
     this.initPersistentFixtures();
   }
 
@@ -939,23 +953,6 @@ export class CityLayout {
         }
       }
 
-      // Venue name label — rotate for left/right facing venues so text fits
-      ctx.fillStyle = `rgba(255,255,255,${0.8 - nightAlpha * 0.3})`;
-      ctx.font = 'bold 8px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      const labelX = v.x + v.w / 2;
-      const labelY = v.y + v.h / 2;
-      if (v.facingPlaza === 'left' || v.facingPlaza === 'right') {
-        ctx.save();
-        ctx.translate(labelX, labelY);
-        ctx.rotate(-Math.PI / 2);
-        ctx.fillText(v.name, 0, 0);
-        ctx.restore();
-      } else {
-        ctx.fillText(v.name, labelX, labelY);
-      }
-
       // Door light at night
       if (nightAlpha > 0.1) {
         let doorX = v.x + v.w / 2;
@@ -1018,6 +1015,34 @@ export class CityLayout {
         }
       }
     }
+  }
+
+  /**
+   * Draw venue name labels in the dynamic layer so they're re-rasterised at
+   * the current zoom level each frame — always crisp, never upscaled.
+   */
+  drawVenueLabels(ctx: CanvasRenderingContext2D, nightAlpha: number) {
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    // Scale font down slightly relative to world units so it fits inside the building body
+    ctx.font = 'bold 7.5px sans-serif';
+    ctx.fillStyle = `rgba(255,255,255,${0.82 - nightAlpha * 0.3})`;
+
+    for (const v of this.venues) {
+      const labelX = v.x + v.w / 2;
+      const labelY = v.y + v.h / 2;
+      if (v.facingPlaza === 'left' || v.facingPlaza === 'right') {
+        ctx.save();
+        ctx.translate(labelX, labelY);
+        ctx.rotate(-Math.PI / 2);
+        ctx.fillText(v.name, 0, 0);
+        ctx.restore();
+      } else {
+        ctx.fillText(v.name, labelX, labelY);
+      }
+    }
+    ctx.restore();
   }
 
   drawDeliveryLanes(ctx: CanvasRenderingContext2D, nightAlpha: number) {
@@ -2282,6 +2307,70 @@ export class CityLayout {
         }
         this.awningSheltPositions.push({ x: sx, y: sy });
       }
+    }
+  }
+
+  // ── Roadside bins ──────────────────────────────────────────────────────
+
+  private generateBins() {
+    this.bins = [];
+    for (let i = 0; i < this.houses.length; i++) {
+      const h = this.houses[i];
+      if (!h.gardenPathEnd) continue;
+      if (seededRandom(i * 17 + 3) > 0.70) continue;
+      const pe = h.gardenPathEnd;
+      const offsetX = (seededRandom(i * 31 + 7) - 0.5) * 10 + 5;
+      const offsetY = (seededRandom(i * 23 + 11) - 0.5) * 4;
+      this.bins.push({
+        x: pe.x + offsetX,
+        y: pe.y + offsetY,
+        collected: false,
+        respawnTimer: 0,
+        houseIndex: i,
+      });
+    }
+  }
+
+  /** Call once per frame — respawn collected bins after a delay. */
+  updateBins() {
+    for (const bin of this.bins) {
+      if (bin.collected) {
+        bin.respawnTimer++;
+        if (bin.respawnTimer >= BIN_RESPAWN_FRAMES) {
+          bin.collected = false;
+          bin.respawnTimer = 0;
+        }
+      }
+    }
+  }
+
+  /** Draw wheelie bins in the dynamic layer. */
+  drawBins(ctx: CanvasRenderingContext2D, nightAlpha: number) {
+    const dark = 1 - nightAlpha * 0.55;
+    for (const bin of this.bins) {
+      if (bin.collected) continue;
+      ctx.save();
+      ctx.translate(bin.x, bin.y);
+
+      // Body — dark grey
+      const bw = 5, bh = 7;
+      ctx.fillStyle = `rgb(${Math.floor(70 * dark)}, ${Math.floor(70 * dark)}, ${Math.floor(75 * dark)})`;
+      ctx.beginPath();
+      ctx.roundRect(-bw / 2, -bh / 2, bw, bh, 1);
+      ctx.fill();
+
+      // Lid — slightly lighter, slightly wider
+      ctx.fillStyle = `rgb(${Math.floor(95 * dark)}, ${Math.floor(95 * dark)}, ${Math.floor(100 * dark)})`;
+      ctx.fillRect(-bw / 2 - 0.5, -bh / 2 - 2, bw + 1, 2);
+
+      // Coloured stripe on lid (each house gets its own colour)
+      const stripeColors = ['#e53935', '#1e88e5', '#43a047', '#fb8c00', '#8e24aa', '#00acc1'];
+      ctx.fillStyle = stripeColors[bin.houseIndex % stripeColors.length];
+      ctx.globalAlpha = 0.75 * dark;
+      ctx.fillRect(-bw / 2, -bh / 2 - 1.5, bw, 1);
+      ctx.globalAlpha = 1;
+
+      ctx.restore();
     }
   }
 }

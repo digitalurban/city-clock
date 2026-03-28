@@ -27,6 +27,17 @@ let trafficPhase = 0;
 // Offscreen canvas for static city elements
 let staticCanvas: HTMLCanvasElement | null = null;
 let lastStaticNightAlpha = -1;
+let lastStaticDetailScale = -1;   // track which detail level the canvas was built at
+
+// Debounced rebuild: fires 300ms after the last zoom/pan gesture settles
+let staticRebuildTimer: ReturnType<typeof setTimeout> | null = null;
+function scheduleStaticRebuild() {
+  if (staticRebuildTimer) clearTimeout(staticRebuildTimer);
+  staticRebuildTimer = setTimeout(() => {
+    lastStaticNightAlpha = -1; // force rebuild on next frame
+    staticRebuildTimer = null;
+  }, 300);
+}
 
 // Zoom / pan state
 let zoom = 1.0;
@@ -100,18 +111,21 @@ canvas.addEventListener('wheel', (e) => {
   const py = e.clientY - rect.top;
   const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
   applyZoom(factor, px, py, window.innerWidth, window.innerHeight);
+  scheduleStaticRebuild(); // rebuild at new zoom level once scrolling settles
 }, { passive: false });
 
-// ==================== Mouse drag to pan ====================
+// ==================== Mouse drag to pan + click to inspect ====================
 let isDragging = false;
 let dragStartX = 0;
 let dragStartY = 0;
 let dragStartPanX = 0;
 let dragStartPanY = 0;
+let dragMoved = false; // true if pointer moved enough to be a drag (not a click)
 
 canvas.addEventListener('mousedown', (e) => {
   ensureAudioUnlocked();
   isDragging = true;
+  dragMoved = false;
   dragStartX = e.clientX;
   dragStartY = e.clientY;
   dragStartPanX = panX;
@@ -123,15 +137,25 @@ window.addEventListener('mousemove', (e) => {
   if (!isDragging) return;
   const dx = e.clientX - dragStartX;
   const dy = e.clientY - dragStartY;
+  if (Math.abs(dx) > 4 || Math.abs(dy) > 4) dragMoved = true;
   panX = dragStartPanX + dx;
   panY = dragStartPanY + dy;
   clampPan(window.innerWidth, window.innerHeight);
 });
 
-window.addEventListener('mouseup', () => {
+window.addEventListener('mouseup', (e) => {
   if (isDragging) {
     isDragging = false;
     canvas.style.cursor = 'grab';
+    if (!dragMoved) {
+      // Treat as a click — try to inspect a pedestrian
+      const rect = canvas.getBoundingClientRect();
+      const cssX = e.clientX - rect.left;
+      const cssY = e.clientY - rect.top;
+      const worldX = (cssX - panX) / zoom;
+      const worldY = (cssY - panY) / zoom;
+      inspectPedestrianAt(worldX, worldY);
+    }
   }
 });
 
@@ -240,7 +264,10 @@ canvas.addEventListener('touchend', (e) => {
     activeTouches.delete(t.identifier);
     if (t.identifier === touchDragId) touchDragId = null;
   }
-  if (activeTouches.size < 2) lastPinchDist = -1;
+  if (activeTouches.size < 2) {
+    lastPinchDist = -1;
+    scheduleStaticRebuild(); // rebuild once pinch-zoom settles
+  }
   if (activeTouches.size === 1) {
     const [id, pos] = [...activeTouches.entries()][0];
     touchDragId = id;
@@ -542,14 +569,26 @@ function buildStaticCanvas(nightAlpha: number) {
   const worldW = layout.width;
   const worldH = layout.height;
 
+  // Render at the current zoom level so there's no upscaling when displayed.
+  // Cap to avoid exceeding browser/iOS canvas size limits (~4096px per dimension).
+  const MAX_CANVAS_DIM = 4096;
+  const maxScale = Math.min(
+    MAX_CANVAS_DIM / (worldW * dpr),   // width limit
+    MAX_CANVAS_DIM / (worldH * dpr),   // height limit
+    2.0                                 // memory cap: never more than 2× world pixels
+  );
+  const detailScale = Math.min(Math.max(zoom, 1), maxScale);
+
   if (!staticCanvas) {
     staticCanvas = document.createElement('canvas');
   }
-  staticCanvas.width = worldW * dpr;
-  staticCanvas.height = worldH * dpr;
+  staticCanvas.width  = Math.round(worldW * dpr * detailScale);
+  staticCanvas.height = Math.round(worldH * dpr * detailScale);
+
+  lastStaticDetailScale = detailScale;
 
   const sctx = staticCanvas.getContext('2d')!;
-  sctx.scale(dpr, dpr);
+  sctx.scale(dpr * detailScale, dpr * detailScale);
 
   // Sky/ground base
   sctx.fillStyle = dayNight.getSkyColor(nightAlpha);
@@ -605,9 +644,13 @@ function loop(timestamp: number = 0) {
   // Update weather
   weather.update();
 
-  // Rebuild static canvas if lighting changed significantly
+  // Rebuild static canvas if lighting changed significantly, or if zoom has moved
+  // far enough from the level it was last rendered at (detail mismatch).
   const quantizedAlpha = Math.round(nightAlpha * 20) / 20;
-  if (quantizedAlpha !== lastStaticNightAlpha) {
+  const detailMismatch = lastStaticDetailScale > 0 &&
+    Math.abs(zoom - lastStaticDetailScale) > 0.18 &&
+    staticRebuildTimer === null; // only if no pending debounced rebuild already
+  if (quantizedAlpha !== lastStaticNightAlpha || detailMismatch) {
     buildStaticCanvas(nightAlpha);
   }
 
@@ -619,10 +662,15 @@ function loop(timestamp: number = 0) {
   // Apply zoom + pan + DPR transform
   ctx.setTransform(dpr * zoom, 0, 0, dpr * zoom, panX * dpr, panY * dpr);
 
-  // Draw cached static city
+  // Draw cached static city — use high-quality smoothing for any residual upscale
   if (staticCanvas) {
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(staticCanvas, 0, 0, layout.width, layout.height);
   }
+
+  // Venue labels — drawn live in world space so text is rasterised at current zoom, never upscaled
+  layout.drawVenueLabels(ctx, nightAlpha);
 
   // Time-of-day atmosphere (mist, golden hour, Sunday tint) — world space, under everything
   dayNight.drawAtmosphere(ctx, layout.width, layout.height, nightAlpha);
@@ -630,6 +678,10 @@ function loop(timestamp: number = 0) {
   // Chimney smoke — above rooftops, below everything else
   chimneySmoke.update();
   chimneySmoke.draw(ctx);
+
+  // Roadside bins — update respawn timers and draw before pedestrians
+  layout.updateBins();
+  layout.drawBins(ctx, nightAlpha);
 
   // Market stalls and morning newsstand — drawn in plaza before pedestrians
   layout.drawMarket(ctx, nightAlpha);
@@ -895,6 +947,81 @@ if (window.visualViewport) {
   window.visualViewport.addEventListener('resize', () => resize());
 }
 
+
+// ==================== Pedestrian inspector ====================
+let inspectPopup: HTMLDivElement | null = null;
+
+function createInspectPopup() {
+  const popup = document.createElement('div');
+  popup.id = 'ped-inspect';
+  popup.style.cssText = `
+    position: fixed; z-index: 200; pointer-events: none;
+    background: rgba(10, 12, 22, 0.88); color: #e8ecf4;
+    border: 1px solid rgba(120,150,220,0.35);
+    border-radius: 10px; padding: 10px 14px; min-width: 170px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 12px; line-height: 1.6;
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    box-shadow: 0 4px 18px rgba(0,0,0,0.55);
+    display: none;
+  `;
+  document.body.appendChild(popup);
+  return popup;
+}
+
+function inspectPedestrianAt(worldX: number, worldY: number) {
+  if (!inspectPopup) inspectPopup = createInspectPopup();
+
+  // Find nearest pedestrian within 16 world-px
+  let nearest: (typeof pedestrians)[0] | null = null;
+  let bestDist = 16;
+  for (const p of pedestrians) {
+    const dx = p.x - worldX;
+    const dy = p.y - worldY;
+    const d = Math.sqrt(dx * dx + dy * dy);
+    if (d < bestDist) { bestDist = d; nearest = p; }
+  }
+
+  if (!nearest) {
+    inspectPopup.style.display = 'none';
+    return;
+  }
+
+  const p = nearest;
+  const phase = p.getSchedulePhase().replace(/_/g, ' ');
+  const activity = p.getActivityLabel();
+  const homeName = p.assignedHome >= 0
+    ? `House ${p.assignedHome + 1}`
+    : '—';
+  const type = p.isClockEligible ? 'Clock performer' : p.hasBicycle ? 'Cyclist' : p.hasDog ? 'Dog walker' : 'Resident';
+
+  inspectPopup.innerHTML = `
+    <div style="font-size:13px;font-weight:600;color:#b8d0ff;margin-bottom:5px">${p.name}</div>
+    <div><span style="color:#7a94b8">Type:</span> ${type}</div>
+    <div><span style="color:#7a94b8">Doing:</span> ${activity}</div>
+    <div><span style="color:#7a94b8">Schedule:</span> ${phase}</div>
+    <div><span style="color:#7a94b8">Home:</span> ${homeName}</div>
+  `;
+
+  // Position popup near the pedestrian in screen space, avoiding edges
+  const screenX = p.x * zoom + panX;
+  const screenY = p.y * zoom + panY;
+  const pw = 190, ph = 110;
+  let left = screenX + 14;
+  let top = screenY - ph / 2;
+  if (left + pw > window.innerWidth - 10) left = screenX - pw - 14;
+  if (top < 8) top = 8;
+  if (top + ph > window.innerHeight - 8) top = window.innerHeight - ph - 8;
+  inspectPopup.style.left = `${left}px`;
+  inspectPopup.style.top = `${top}px`;
+  inspectPopup.style.display = 'block';
+
+  // Auto-hide after 4 seconds
+  clearTimeout((inspectPopup as any)._hideTimeout);
+  (inspectPopup as any)._hideTimeout = setTimeout(() => {
+    if (inspectPopup) inspectPopup.style.display = 'none';
+  }, 4000);
+}
 
 createOptionsUI();
 resize();

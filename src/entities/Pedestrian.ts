@@ -2,6 +2,16 @@ import { PEDESTRIAN_BASE_SPEED, PEDESTRIAN_MAX_FORCE, SEPARATION_RADIUS, PEDESTR
 import type { CityLayout, VenueDef, PlazaBenchDef } from '../city/CityLayout';
 import type { Car } from './Car';
 
+// Pedestrian first names
+const PEDESTRIAN_NAMES = [
+  'Alice', 'Ben', 'Cara', 'David', 'Elena', 'Finn', 'Grace', 'Harry',
+  'Isla', 'Jack', 'Katie', 'Liam', 'Maya', 'Noah', 'Olivia', 'Pete',
+  'Quinn', 'Rose', 'Sam', 'Tara', 'Uma', 'Victor', 'Wendy', 'Xavi',
+  'Yara', 'Zoe', 'Aaron', 'Beth', 'Carl', 'Diana', 'Ethan', 'Faye',
+  'George', 'Hannah', 'Ivan', 'Jade', 'Kyle', 'Laura', 'Marco', 'Nina',
+  'Oscar', 'Paige', 'Ray', 'Sofia', 'Tom', 'Una', 'Vera', 'Will',
+];
+
 // Skin tone palette — varied across the full human range
 const SKIN_TONES = [
   '#fcd5b0', '#f5c28a', '#e8aa68', '#d4884a',
@@ -59,6 +69,7 @@ export class Pedestrian {
   isClockEligible: boolean;
   clockDismissTarget: { x: number; y: number } | null = null;
 
+  name: string;
   color: string;
 
   // Appearance
@@ -189,6 +200,7 @@ export class Pedestrian {
 
   constructor(layout: CityLayout, index: number, clockEligibleCount: number) {
     this.isClockEligible = index < clockEligibleCount;
+    this.name = PEDESTRIAN_NAMES[index % PEDESTRIAN_NAMES.length];
     this.idOffset = Math.random() * 1000;
     this.size = 0.8 + Math.random() * 0.4;
     this.baseSpeed = PEDESTRIAN_BASE_SPEED * (0.7 + Math.random() * 0.6);
@@ -283,7 +295,7 @@ export class Pedestrian {
   }
 
   /** Determine which schedule phase this pedestrian should be in based on real time */
-  private getSchedulePhase(): string {
+  getSchedulePhase(): string {
     const d = new Date();
     const hour = d.getHours() + d.getMinutes() / 60 + this.scheduleJitter;
     if (hour >= 22 || hour < 7) return 'sleeping';
@@ -295,6 +307,36 @@ export class Pedestrian {
     if (hour < 18) return 'commuting_evening';
     if (hour < 21) return 'evening_out';
     return 'going_home';
+  }
+
+  /** Return a human-readable description of what this pedestrian is currently doing. */
+  getActivityLabel(): string {
+    if (this.clockTarget) return 'Forming the clock';
+    if (this.clockDismissTarget) return 'Dispersing from clock';
+    if (this.isAtHome && this.isInGarden) return 'Pottering in the garden';
+    if (this.isAtHome) return 'At home';
+    if (this.isGoingHome) return 'Heading home';
+    if (this.isWatchingBusker) return 'Watching the busker';
+    if (this.isBuyingPaper) return 'Buying a newspaper';
+    if (this.isBrowsingMarket) return 'Browsing the market';
+    if (this.isSheltering) return 'Sheltering from weather';
+    if (this.isSitting) return 'Sitting outside a café';
+    if (this.isBenchSitting) return 'Sitting on a bench';
+    if (this.isQueuing) return 'Queuing at a shop';
+    if (this.isWindowShopping) return 'Window shopping';
+    if (this.isAtWorkplace) return 'At work';
+    if (this.socialMode) return 'Having a chat';
+    if (this.isCheckingPhone) return 'Checking phone';
+    if (this.isTakingPhoto) return 'Taking a photo';
+    if (this.hasBicycle && this.isRidingBicycle) return 'Cycling';
+    if (this.hasDog) return 'Walking the dog';
+    const phase = this.getSchedulePhase();
+    if (phase === 'sleeping') return 'Sleeping';
+    if (phase === 'commuting_to_work' || phase === 'commuting_back' || phase === 'commuting_evening') return 'Commuting';
+    if (phase === 'working' || phase === 'working_afternoon') return 'Working';
+    if (phase === 'lunch_break') return 'On lunch break';
+    if (phase === 'evening_out') return 'Out for the evening';
+    return 'Wandering';
   }
 
   /** Set waypoint to a building's entrance (front face midpoint) */

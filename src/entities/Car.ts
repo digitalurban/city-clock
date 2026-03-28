@@ -1074,6 +1074,16 @@ export class Car {
           this.currentSpeed = 0;
           this.vx = 0;
           this.vy = 0;
+          // Collect any roadside bins within reach
+          for (const bin of layout.bins) {
+            if (bin.collected) continue;
+            const dx = bin.x - this.x;
+            const dy = bin.y - this.y;
+            if (dx * dx + dy * dy < 40 * 40) {
+              bin.collected = true;
+              bin.respawnTimer = 0;
+            }
+          }
         }
         break;
       case 'collecting':
