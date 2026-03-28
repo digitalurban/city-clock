@@ -62,10 +62,11 @@ Pedestrians use a steering-behaviours model with multiple activity types:
 - **Waypoint following** - pick random sidewalk and plaza waypoints and walk toward them
 - **Separation** - repel nearby pedestrians to avoid clumping
 - **Venue visits** - queue outside cafes and shops, sit at outdoor seating
-- **Going home** - every pedestrian (including the 112 clock performers) has an assigned house. They walk to the garden path, enter through the front door, and stay inside (fading to near-invisible). During the day visits last 20–40 s; the sleeping schedule (22:00–07:00) keeps them home until morning. While home they occasionally step outside to potter in the garden before returning indoors. When summoned to form the clock, performers cleanly snap out of any home, sitting, or queuing state
+- **Going home** - every pedestrian (including the 112 clock performers) has an assigned house. When heading home, each pedestrian follows an A* path computed on a 9px obstacle-aware walkability grid that covers the whole city — routes go around all buildings, houses and venues rather than through them, walking along roads and sidewalks. They arrive via the garden path, step through the front door, and stay inside (fading to near-invisible). During the day visits last 20–40 s; the sleeping schedule (22:00–07:00) keeps them home until morning. While home they occasionally step outside to potter in the garden before returning indoors. When summoned to form the clock, performers cleanly snap out of any home, sitting, or queuing state
 - **House lights** - roof skylights switch on when a resident is home and off when they leave; evaluated live each frame against the full pedestrian list so lights track actual occupancy
 - **Bicycle riding** - ~15% of pedestrians ride bicycles at 2.5x walking speed
 - **Building and venue avoidance** - steering forces keep pedestrians on sidewalks and paths with velocity damping to prevent oscillation at road edges
+- **Pathfinding** - a 9px walkability grid is precomputed at startup by testing every cell against all buildings, houses and venues. When a pedestrian needs to navigate home, an 8-directional A* search (cardinal + diagonal, no corner-cutting) finds the shortest clear route through the city. Collinear waypoints are thinned so the pedestrian walks in long straight stretches rather than micro-stepping
 
 ### City Generation
 
