@@ -1176,6 +1176,41 @@ export class CityLayout {
     }
   }
 
+  /** Dynamic pass — call each frame with the set of currently-occupied house indices.
+   *  Lit windows glow warmly; empty houses show dark window frames at night.
+   */
+  drawHouseWindows(ctx: CanvasRenderingContext2D, nightAlpha: number, occupiedIndices: Set<number>) {
+    if (nightAlpha < 0.05) return;
+    const winSize = 3;
+    const winAlpha = Math.min(1, nightAlpha * 1.6);
+
+    this.houses.forEach((h, i) => {
+      const occupied = occupiedIndices.has(i);
+      const positions = [
+        { x: h.x + h.w * 0.30, y: h.y + h.h * 0.35 },
+        { x: h.x + h.w * 0.65, y: h.y + h.h * 0.65 },
+      ];
+
+      for (const wp of positions) {
+        if (occupied) {
+          // Warm lit skylight
+          ctx.fillStyle = `rgba(255, 218, 95, ${winAlpha * 0.88})`;
+          ctx.fillRect(wp.x - winSize / 2, wp.y - winSize / 2, winSize, winSize);
+          // Soft glow halo
+          const gr = ctx.createRadialGradient(wp.x, wp.y, 0, wp.x, wp.y, 7);
+          gr.addColorStop(0, `rgba(255, 205, 75, ${nightAlpha * 0.22})`);
+          gr.addColorStop(1, 'rgba(255, 205, 75, 0)');
+          ctx.fillStyle = gr;
+          ctx.fillRect(wp.x - 7, wp.y - 7, 14, 14);
+        } else {
+          // Unlit — dark window frame, just enough to show the house is empty
+          ctx.fillStyle = `rgba(15, 15, 25, ${nightAlpha * 0.28})`;
+          ctx.fillRect(wp.x - winSize / 2, wp.y - winSize / 2, winSize, winSize);
+        }
+      }
+    });
+  }
+
   drawBuildings(ctx: CanvasRenderingContext2D, nightAlpha: number) {
     const shadow = this.getShadowOffset();
     for (const b of this.buildings) {
@@ -1480,34 +1515,8 @@ export class CityLayout {
         ctx.strokeRect(chimX, chimY, chimW, chimH);
       }
 
-      // Lit windows at night (visible through roof — skylight effect)
-      if (nightAlpha > 0.1) {
-        const hour = new Date().getHours() + new Date().getMinutes() / 60;
-        let litChance = 0.35;
-        if (hour >= 23 || hour < 6) litChance = 0.05; // Mostly asleep
-
-        const winAlpha = nightAlpha * 0.8;
-        const winSize = 2.5;
-        // Two skylights
-        const windowPositions = [
-          { x: h.x + h.w * 0.3, y: h.y + h.h * 0.35 },
-          { x: h.x + h.w * 0.6, y: h.y + h.h * 0.65 },
-        ];
-        for (const wp of windowPositions) {
-          const isLit = seededRandom(h.seed + wp.x * 7 + wp.y * 13) < litChance;
-          if (isLit) {
-            // Warm glow
-            ctx.fillStyle = `rgba(255, 220, 120, ${winAlpha * 0.7})`;
-            ctx.fillRect(wp.x - winSize / 2, wp.y - winSize / 2, winSize, winSize);
-            // Tiny glow around it
-            const gr = ctx.createRadialGradient(wp.x, wp.y, 0, wp.x, wp.y, 5);
-            gr.addColorStop(0, `rgba(255, 210, 100, ${nightAlpha * 0.15})`);
-            gr.addColorStop(1, 'rgba(255, 210, 100, 0)');
-            ctx.fillStyle = gr;
-            ctx.fillRect(wp.x - 5, wp.y - 5, 10, 10);
-          }
-        }
-      }
+      // Window lights are drawn dynamically (see drawHouseWindows) so they
+      // respond to actual occupancy — nothing baked into the static canvas here.
 
       // Front door step (small rectangle at building edge)
       const doorStepAlpha = 0.4 - nightAlpha * 0.15;

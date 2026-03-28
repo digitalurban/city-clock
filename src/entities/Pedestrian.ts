@@ -109,6 +109,13 @@ export class Pedestrian {
   isBrowsingMarket: boolean = false;
   marketBrowseTimer: number = 0;
 
+  // Garden presence — stepping outside while at home
+  isInGarden: boolean = false;
+  gardenTimer: number = 0;
+  gardenDuration: number = 0;
+  gardenTargetX: number = 0;
+  gardenTargetY: number = 0;
+
   // Busker watching — slowing down near a street musician and tossing coins
   isWatchingBusker: boolean = false;
   watchBuskerTimer: number = 0;
@@ -702,32 +709,82 @@ export class Pedestrian {
       // --- At home ---
       if (this.isAtHome) {
         this.homeTimer++;
-        // Hide inside house (freeze position)
-        this.vx *= 0.1;
-        this.vy *= 0.1;
+        const home = layout.houses[this.assignedHome];
+
+        // --- Garden puttering (daytime only) ---
+        if (this.isInGarden) {
+          this.gardenTimer++;
+          if (this.gardenTimer >= this.gardenDuration || isDancing || this.clockTarget) {
+            // Come back inside
+            this.isInGarden = false;
+            if (home) {
+              this.x = home.x + home.w / 2;
+              this.y = home.gardenSide === 'bottom' ? home.y + home.h - 2 : home.y + 2;
+            }
+            this.vx = 0; this.vy = 0;
+          } else {
+            // Slow wander within garden bounds
+            if (Math.random() < 0.018 && home && home.hasGarden) {
+              const gh = Math.floor(home.h * 0.5);
+              const gy = home.gardenSide === 'top' ? home.y - gh : home.y + home.h;
+              this.gardenTargetX = home.x + 3 + Math.random() * (home.w - 6);
+              this.gardenTargetY = gy + 3 + Math.random() * (gh - 6);
+            }
+            const gdx = this.gardenTargetX - this.x;
+            const gdy = this.gardenTargetY - this.y;
+            ax += gdx * 0.04;
+            ay += gdy * 0.04;
+            this.vx *= 0.88;
+            this.vy *= 0.88;
+            this.angle = Math.atan2(gdy, gdx);
+          }
+        } else {
+          // Inside — freeze position
+          this.vx *= 0.1;
+          this.vy *= 0.1;
+
+          // Occasionally step into garden during the day
+          const phase = this.getSchedulePhase();
+          const isDaytime = phase !== 'sleeping';
+          if (isDaytime && !this.clockTarget && !isDancing && Math.random() < 0.0015
+            && home && home.hasGarden) {
+            const gh = Math.floor(home.h * 0.5);
+            const gy = home.gardenSide === 'top' ? home.y - gh : home.y + home.h;
+            this.isInGarden = true;
+            this.gardenTimer = 0;
+            this.gardenDuration = 180 + Math.floor(Math.random() * 300); // 3–8 s in garden
+            this.gardenTargetX = home.x + 3 + Math.random() * (home.w - 6);
+            this.gardenTargetY = gy + 3 + Math.random() * (gh - 6);
+            this.x = this.gardenTargetX;
+            this.y = this.gardenTargetY;
+          }
+        }
 
         if (this.homeTimer >= this.homeDuration) {
-          // Leave home
-          this.isAtHome = false;
-          this.isGoingHome = false;
-          this.thoughtBubble = 'happy';
-          this.thoughtTimer = 100;
-
-          // Walk back out to sidewalk via garden path
-          const home = layout.houses[this.assignedHome];
-          if (home && home.gardenPathEnd) {
-            this.waypointX = home.gardenPathEnd.x;
-            this.waypointY = home.gardenPathEnd.y;
+          // During sleeping phase, renew stay instead of leaving
+          if (this.getSchedulePhase() === 'sleeping') {
+            this.homeTimer = 0;
+            this.homeDuration = 3600; // re-check in ~1 min
           } else {
-            const wp = layout.getRandomSidewalkWaypoint();
-            this.waypointX = wp.x;
-            this.waypointY = wp.y;
-          }
-          this.waypointTimer = 0;
+            // Leave home
+            this.isAtHome = false;
+            this.isGoingHome = false;
+            this.isInGarden = false;
+            this.thoughtBubble = 'happy';
+            this.thoughtTimer = 100;
 
-          // Some ride bicycle back
-          if (this.hasBicycle && Math.random() < 0.6) {
-            this.isRidingBicycle = true;
+            // Walk back out to sidewalk via garden path
+            if (home && home.gardenPathEnd) {
+              this.waypointX = home.gardenPathEnd.x;
+              this.waypointY = home.gardenPathEnd.y;
+            } else {
+              const wp = layout.getRandomSidewalkWaypoint();
+              this.waypointX = wp.x;
+              this.waypointY = wp.y;
+            }
+            this.waypointTimer = 0;
+
+            if (this.hasBicycle && Math.random() < 0.6) this.isRidingBicycle = true;
           }
         }
       }
@@ -1104,7 +1161,7 @@ export class Pedestrian {
                 const home = layout.houses[this.assignedHome];
                 this.isGoingHome = true;
                 this.homeTimer = 0;
-                this.homeDuration = 400 + Math.floor(Math.random() * 400); // stay home 400-800 frames
+                this.homeDuration = 1200 + Math.floor(Math.random() * 1200); // 20–40 s daytime visit
 
                 // Walk to garden path end first, then to front door
                 const pathEnd = home.gardenPathEnd;
@@ -1441,8 +1498,8 @@ export class Pedestrian {
     ctx.translate(this.x, this.y);
     ctx.rotate(this.angle);
 
-    if (this.isAtHome) {
-      ctx.globalAlpha = 0.15;
+    if (this.isAtHome && !this.isInGarden) {
+      ctx.globalAlpha = 0.15;  // inside the house — faintly visible through roof
     } else if (this.isAtWorkplace) {
       ctx.globalAlpha = 0.3;
     }

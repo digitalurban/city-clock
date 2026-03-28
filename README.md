@@ -17,7 +17,8 @@ A procedurally generated top-down city where pedestrians form a digital clock in
 - **Double-tap to show time** - Double-tap or double-click anywhere to force the clock formation immediately
 - **Procedural city** - grid of city blocks, roads, crosswalks, trees, parks and coloured buildings generated to fill the world
 - **Central plaza** - ringed by named venues (cafes, bars, bookshops, flower shops) with outdoor seating, benches, and lamp posts
-- **Pedestrian life** - pedestrians wander sidewalks, visit venues, queue and sit outside, go home to their assigned houses via garden paths, and ride bicycles (~15%). They now also have simulated Needs (Energy, Hunger, Social) with thought bubbles guiding their routines.
+- **Pedestrian life** - pedestrians wander sidewalks, visit venues, queue and sit outside, go home to their assigned houses via garden paths, and ride bicycles (~15%). Each has simulated Needs (Energy, Hunger, Social) with thought bubbles guiding their routines
+- **Home life** - every non-clock pedestrian is assigned a specific house. During the day they make 20–40 second home visits; at night (22:00–07:00) their schedule keeps them home until morning. While at home they occasionally step into their garden to putter around — moving slowly between spots, fully visible — before going back inside. House roof-lights glow amber when a resident is home and go dark when the house is empty, updating in real time as people come and go
 - **Dog walkers** - ~10% of pedestrians walk dogs on leashes; dogs pull ahead with animated trotting legs, floppy ears, wagging tails, and side-to-side sniffing wander
 - **City birds** - two species share the skies: seagull flocks sweep high across the city and sparrow flocks dart at lower altitude with rapid wing beats and tighter formations. Both use boid flocking (separation, alignment, cohesion) and are drawn with parallax height — shadows on the ground separate from birds soaring above rooftops. Seagulls glide with slow wingbeats and dark wingtips; sparrows are smaller, browner, and flutter continuously. Occasionally a bird feeder event draws both species down to the plaza
 - **Chimney smoke** - soft grey particles drift upward from residential chimneys. Emission rate responds to the season (more smoke in cold months Oct–Mar) and time of day (morning warm-up and evening heating peaks produce denser plumes)
@@ -58,7 +59,8 @@ Pedestrians use a steering-behaviours model with multiple activity types:
 - **Waypoint following** - pick random sidewalk and plaza waypoints and walk toward them
 - **Separation** - repel nearby pedestrians to avoid clumping
 - **Venue visits** - queue outside cafes and shops, sit at outdoor seating
-- **Going home** - each pedestrian has an assigned house; they walk to the garden path, enter through the front door, stay inside, then leave
+- **Going home** - each pedestrian has an assigned house; they walk to the garden path, enter through the front door, and stay inside (fading to near-invisible). During the day visits last 20–40 s; the sleeping schedule (22:00–07:00) keeps them home until morning. While home they occasionally step outside to potter in the garden before returning indoors
+- **House lights** - roof skylights switch on when a resident is home and off when they leave; evaluated live each frame against the full pedestrian list so lights track actual occupancy
 - **Bicycle riding** - ~15% of pedestrians ride bicycles at 2.5x walking speed
 - **Building and venue avoidance** - steering forces keep pedestrians on sidewalks and paths with velocity damping to prevent oscillation at road edges
 

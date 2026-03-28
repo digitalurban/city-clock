@@ -806,6 +806,15 @@ function loop(timestamp: number = 0) {
   }
   sparrowFlocks = sparrowFlocks.filter(f => f.active);
 
+  // House windows — lit only when a resident is actually home
+  {
+    const occupiedHouses = new Set<number>();
+    for (const p of pedestrians) {
+      if (p.isAtHome && p.assignedHome >= 0) occupiedHouses.add(p.assignedHome);
+    }
+    layout.drawHouseWindows(ctx, nightAlpha, occupiedHouses);
+  }
+
   // Trees on top (canopies)
   layout.drawTrees(ctx, time, nightAlpha);
 
