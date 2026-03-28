@@ -137,7 +137,10 @@ window.addEventListener('mousemove', (e) => {
   if (!isDragging) return;
   const dx = e.clientX - dragStartX;
   const dy = e.clientY - dragStartY;
-  if (Math.abs(dx) > 4 || Math.abs(dy) > 4) dragMoved = true;
+  if (Math.abs(dx) > 4 || Math.abs(dy) > 4) {
+    dragMoved = true;
+    if (followedPedestrian) stopFollowing(); // user reclaimed manual control
+  }
   panX = dragStartPanX + dx;
   panY = dragStartPanY + dy;
   clampPan(window.innerWidth, window.innerHeight);
@@ -644,6 +647,21 @@ function loop(timestamp: number = 0) {
   // Update weather
   weather.update();
 
+  // Follow camera — smoothly pan to keep the selected pedestrian centred
+  if (followedPedestrian) {
+    // Update chip activity text live each frame
+    if (followChipActivityEl) {
+      const act = followedPedestrian.getActivityLabel();
+      if (followChipActivityEl.textContent !== act) followChipActivityEl.textContent = act;
+    }
+    const targetPanX = w / 2 - followedPedestrian.x * zoom;
+    const targetPanY = h / 2 - followedPedestrian.y * zoom;
+    // Lerp for a smooth lag that feels like a camera operator rather than a hard lock
+    panX += (targetPanX - panX) * 0.08;
+    panY += (targetPanY - panY) * 0.08;
+    clampPan(w, h);
+  }
+
   // Rebuild static canvas if lighting changed significantly, or if zoom has moved
   // far enough from the level it was last rendered at (detail mismatch).
   const quantizedAlpha = Math.round(nightAlpha * 20) / 20;
@@ -948,23 +966,107 @@ if (window.visualViewport) {
 }
 
 
+// ==================== Follow camera + chip ====================
+let followedPedestrian: (typeof pedestrians)[0] | null = null;
+
+// Compact follow chip — persistent pill shown while following
+let followChip: HTMLDivElement | null = null;
+let followChipNameEl: HTMLElement | null = null;
+let followChipActivityEl: HTMLSpanElement | null = null;
+
+function buildFollowChip() {
+  const chip = document.createElement('div');
+  chip.style.cssText = `
+    position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
+    z-index: 300; display: none; align-items: center; gap: 5px;
+    background: rgba(10,12,22,0.88); color: #e0eaff;
+    border: 1px solid rgba(120,150,220,0.4); border-radius: 20px;
+    padding: 5px 6px 5px 13px; white-space: nowrap; cursor: default;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 12px; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    box-shadow: 0 3px 14px rgba(0,0,0,0.5); user-select: none;
+  `;
+
+  const icon = document.createElement('span');
+  icon.textContent = '➤';
+  icon.style.cssText = 'color:#5888c8;font-size:10px;margin-right:2px;';
+
+  const nameEl = document.createElement('strong');
+  nameEl.style.color = '#b8d0ff';
+
+  const sep = document.createElement('span');
+  sep.textContent = '·';
+  sep.style.cssText = 'color:#3a5070;margin:0 4px;';
+
+  const actEl = document.createElement('span');
+  actEl.style.color = '#7a94b8';
+
+  const stopBtn = document.createElement('button');
+  stopBtn.textContent = '✕';
+  stopBtn.title = 'Stop following';
+  stopBtn.style.cssText = `
+    background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.12);
+    color: #7a8898; border-radius: 12px; width: 22px; height: 22px;
+    flex-shrink: 0; cursor: pointer; font-size: 10px; margin-left: 6px; padding: 0;
+  `;
+
+  chip.append(icon, nameEl, sep, actEl, stopBtn);
+
+  // Tap/click chip body → show full popup for this person
+  chip.addEventListener('click', (e) => {
+    if (e.target === stopBtn) return;
+    if (followedPedestrian) showInspectPopup(followedPedestrian);
+  });
+  chip.addEventListener('mousedown', e => e.stopPropagation());
+  chip.addEventListener('touchstart', e => e.stopPropagation(), { passive: true });
+  stopBtn.addEventListener('click', e => { e.stopPropagation(); stopFollowing(); });
+
+  document.body.appendChild(chip);
+  followChip = chip;
+  followChipNameEl = nameEl;
+  followChipActivityEl = actEl;
+}
+
+function startFollowing(p: (typeof pedestrians)[0]) {
+  followedPedestrian = p;
+  if (!followChip) buildFollowChip();
+  followChipNameEl!.textContent = p.name;
+  followChipActivityEl!.textContent = p.getActivityLabel();
+  followChip!.style.display = 'flex';
+  // Hide the full popup — chip takes over
+  if (inspectPopup) {
+    clearTimeout((inspectPopup as any)._hideTimeout);
+    inspectPopup.style.display = 'none';
+  }
+}
+
+function stopFollowing() {
+  followedPedestrian = null;
+  if (followChip) followChip.style.display = 'none';
+}
+
 // ==================== Pedestrian inspector ====================
 let inspectPopup: HTMLDivElement | null = null;
+
+function titleCase(s: string): string {
+  return s.replace(/\b\w/g, c => c.toUpperCase());
+}
 
 function createInspectPopup() {
   const popup = document.createElement('div');
   popup.id = 'ped-inspect';
   popup.style.cssText = `
-    position: fixed; z-index: 200; pointer-events: none;
+    position: fixed; z-index: 200;
     background: rgba(10, 12, 22, 0.88); color: #e8ecf4;
-    border: 1px solid rgba(120,150,220,0.35);
-    border-radius: 10px; padding: 10px 14px; min-width: 170px;
+    border: 1px solid rgba(120,150,220,0.35); border-radius: 10px;
+    padding: 10px 14px; min-width: 180px;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     font-size: 12px; line-height: 1.6;
     backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
-    box-shadow: 0 4px 18px rgba(0,0,0,0.55);
-    display: none;
+    box-shadow: 0 4px 18px rgba(0,0,0,0.55); display: none;
   `;
+  popup.addEventListener('mousedown', e => e.stopPropagation());
+  popup.addEventListener('touchstart', e => e.stopPropagation(), { passive: true });
   document.body.appendChild(popup);
   return popup;
 }
@@ -972,12 +1074,10 @@ function createInspectPopup() {
 function inspectPedestrianAt(worldX: number, worldY: number) {
   if (!inspectPopup) inspectPopup = createInspectPopup();
 
-  // Find nearest pedestrian within 16 world-px
   let nearest: (typeof pedestrians)[0] | null = null;
   let bestDist = 16;
   for (const p of pedestrians) {
-    const dx = p.x - worldX;
-    const dy = p.y - worldY;
+    const dx = p.x - worldX, dy = p.y - worldY;
     const d = Math.sqrt(dx * dx + dy * dy);
     if (d < bestDist) { bestDist = d; nearest = p; }
   }
@@ -986,41 +1086,60 @@ function inspectPedestrianAt(worldX: number, worldY: number) {
     inspectPopup.style.display = 'none';
     return;
   }
+  showInspectPopup(nearest);
+}
 
-  const p = nearest;
-  const phase = p.getSchedulePhase().replace(/_/g, ' ');
+function showInspectPopup(p: (typeof pedestrians)[0]) {
+  if (!inspectPopup) inspectPopup = createInspectPopup();
+
+  const phase    = titleCase(p.getSchedulePhase().replace(/_/g, ' '));
   const activity = p.getActivityLabel();
-  const homeName = p.assignedHome >= 0
-    ? `House ${p.assignedHome + 1}`
-    : '—';
-  const type = p.isClockEligible ? 'Clock performer' : p.hasBicycle ? 'Cyclist' : p.hasDog ? 'Dog walker' : 'Resident';
+  const homeName = p.assignedHome >= 0 ? `House ${p.assignedHome + 1}` : '—';
+  const type     = p.isClockEligible ? 'Clock performer'
+                 : p.hasBicycle      ? 'Cyclist'
+                 : p.hasDog          ? 'Dog walker' : 'Resident';
+  const isFollowing = followedPedestrian === p;
 
   inspectPopup.innerHTML = `
     <div style="font-size:13px;font-weight:600;color:#b8d0ff;margin-bottom:5px">${p.name}</div>
     <div><span style="color:#7a94b8">Type:</span> ${type}</div>
     <div><span style="color:#7a94b8">Doing:</span> ${activity}</div>
     <div><span style="color:#7a94b8">Schedule:</span> ${phase}</div>
-    <div><span style="color:#7a94b8">Home:</span> ${homeName}</div>
+    <div style="margin-bottom:8px"><span style="color:#7a94b8">Home:</span> ${homeName}</div>
+    <button id="inspect-follow-btn" style="
+      width:100%;padding:5px 0;border-radius:6px;border:none;cursor:pointer;
+      font-size:11px;font-weight:600;letter-spacing:0.03em;
+      background:${isFollowing ? 'rgba(255,80,80,0.22)' : 'rgba(90,140,255,0.22)'};
+      color:${isFollowing ? '#ff9090' : '#90b8ff'};
+      border:1px solid ${isFollowing ? 'rgba(255,80,80,0.32)' : 'rgba(90,140,255,0.32)'};
+    ">${isFollowing ? '✕  Stop following' : '➤  Follow'}</button>
   `;
 
-  // Position popup near the pedestrian in screen space, avoiding edges
-  const screenX = p.x * zoom + panX;
-  const screenY = p.y * zoom + panY;
-  const pw = 190, ph = 110;
-  let left = screenX + 14;
-  let top = screenY - ph / 2;
-  if (left + pw > window.innerWidth - 10) left = screenX - pw - 14;
+  document.getElementById('inspect-follow-btn')?.addEventListener('click', () => {
+    if (followedPedestrian === p) {
+      stopFollowing();
+      showInspectPopup(p); // refresh button state in popup
+    } else {
+      startFollowing(p); // hides popup, shows chip
+    }
+  });
+
+  // Position beside the pedestrian, clamped to viewport
+  const sx = p.x * zoom + panX, sy = p.y * zoom + panY;
+  const pw = 196, ph = 148;
+  let left = sx + 16, top = sy - ph / 2;
+  if (left + pw > window.innerWidth - 10) left = sx - pw - 16;
   if (top < 8) top = 8;
   if (top + ph > window.innerHeight - 8) top = window.innerHeight - ph - 8;
   inspectPopup.style.left = `${left}px`;
-  inspectPopup.style.top = `${top}px`;
+  inspectPopup.style.top  = `${top}px`;
   inspectPopup.style.display = 'block';
 
-  // Auto-hide after 4 seconds
+  // Auto-dismiss after 5 s when not following
   clearTimeout((inspectPopup as any)._hideTimeout);
   (inspectPopup as any)._hideTimeout = setTimeout(() => {
     if (inspectPopup) inspectPopup.style.display = 'none';
-  }, 4000);
+  }, 5000);
 }
 
 createOptionsUI();
