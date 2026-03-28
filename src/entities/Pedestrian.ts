@@ -109,6 +109,14 @@ export class Pedestrian {
   isBrowsingMarket: boolean = false;
   marketBrowseTimer: number = 0;
 
+  // Busker watching — slowing down near a street musician and tossing coins
+  isWatchingBusker: boolean = false;
+  watchBuskerTimer: number = 0;
+
+  // Newspaper stand — stopping briefly to buy a morning paper
+  isBuyingPaper: boolean = false;
+  buyPaperTimer: number = 0;
+
   // Group walking
   groupLeader: Pedestrian | null = null;
   groupFollowers: Pedestrian[] = [];
@@ -530,6 +538,57 @@ export class Pedestrian {
         }
       }
 
+      // --- Busker watching ---
+      if (this.isWatchingBusker) {
+        this.watchBuskerTimer++;
+        const watchDuration = 100 + Math.random() * 200; // ~2–5 s
+        if (!layout.buskerActive || this.watchBuskerTimer >= watchDuration || this.clockTarget || isDancing) {
+          this.isWatchingBusker = false;
+          const wp = layout.getRandomSidewalkWaypoint();
+          this.waypointX = wp.x;
+          this.waypointY = wp.y;
+          this.waypointTimer = 0;
+        } else {
+          // Drift toward standing spot and slow right down
+          const sdx = this.waypointX - this.x;
+          const sdy = this.waypointY - this.y;
+          ax += sdx * 0.05;
+          ay += sdy * 0.05;
+          this.vx *= 0.84;
+          this.vy *= 0.84;
+          // Face the busker
+          this.angle = Math.atan2(layout.buskerY - this.y, layout.buskerX - this.x);
+          // Toss a coin roughly every 1.5 s
+          if (this.watchBuskerTimer % 90 === 45 && Math.random() < 0.4) {
+            layout.addCoinParticle(this.x, this.y);
+          }
+        }
+      }
+
+      // --- Newspaper stand ---
+      if (this.isBuyingPaper) {
+        this.buyPaperTimer++;
+        const buyDuration = 55 + Math.random() * 65; // ~1–2 s
+        if (this.buyPaperTimer >= buyDuration || this.clockTarget || isDancing) {
+          this.isBuyingPaper = false;
+          this.thoughtBubble = 'happy';
+          this.thoughtTimer = 80;
+          const wp = layout.getRandomSidewalkWaypoint();
+          this.waypointX = wp.x;
+          this.waypointY = wp.y;
+          this.waypointTimer = 0;
+        } else {
+          const sdx = this.waypointX - this.x;
+          const sdy = this.waypointY - this.y;
+          ax += sdx * 0.09;
+          ay += sdy * 0.09;
+          this.vx *= 0.78;
+          this.vy *= 0.78;
+          // Face the stand
+          this.angle = Math.atan2(layout.newsstandY - this.y, layout.newsstandX - this.x);
+        }
+      }
+
       // --- Shop queuing ---
       if (this.isQueuing && this.queueVenue) {
         this.queueTimer++;
@@ -848,9 +907,45 @@ export class Pedestrian {
                 const stall = layout.marketStalls[Math.floor(Math.random() * layout.marketStalls.length)];
                 this.isBrowsingMarket = true;
                 this.marketBrowseTimer = 0;
-                this.waypointX = stall.x + 10;
-                this.waypointY = stall.y + 7;
+                // Stand in front of the stall (south edge + gap), not on top of it
+                this.waypointX = stall.x + 10 + (Math.random() - 0.5) * 8;
+                this.waypointY = stall.y + 22;
                 this.waypointTimer = 0;
+              }
+            }
+
+            // Trigger busker watching — stop and listen when passing near an active pitch
+            if (!scheduledAction && !this.isClockEligible && !this.isWatchingBusker
+              && !this.isBuyingPaper && layout.buskerActive && !isDancing) {
+              const bdx = this.x - layout.buskerX;
+              const bdy = this.y - layout.buskerY;
+              const bdist = Math.sqrt(bdx * bdx + bdy * bdy);
+              if (bdist < 70 && Math.random() < 0.018) {
+                this.isWatchingBusker = true;
+                this.watchBuskerTimer = 0;
+                // Stand a short distance away facing the busker
+                const angle = Math.atan2(bdy, bdx);
+                const standDist = 22 + Math.random() * 18;
+                this.waypointX = layout.buskerX + Math.cos(angle) * standDist;
+                this.waypointY = layout.buskerY + Math.sin(angle) * standDist;
+                this.waypointTimer = 0;
+              }
+            }
+
+            // Trigger newspaper buying — stop at the stand in the morning
+            if (!scheduledAction && !this.isClockEligible && !this.isBuyingPaper
+              && !this.isWatchingBusker && !isDancing) {
+              const hour = new Date().getHours();
+              if (hour >= 6 && hour < 13) {
+                const ndx = this.x - layout.newsstandX;
+                const ndy = this.y - layout.newsstandY;
+                if (Math.sqrt(ndx * ndx + ndy * ndy) < 90 && Math.random() < 0.010) {
+                  this.isBuyingPaper = true;
+                  this.buyPaperTimer = 0;
+                  this.waypointX = layout.newsstandX + 10;
+                  this.waypointY = layout.newsstandY + 32;
+                  this.waypointTimer = 0;
+                }
               }
             }
 
@@ -1177,6 +1272,26 @@ export class Pedestrian {
             ax += (rdx / rd) * this.maxForce * 8;
             ay += (rdy / rd) * this.maxForce * 8;
             break;
+          }
+        }
+      }
+
+      // Market stall repulsion — treat active stalls as solid obstacles
+      if (!repelled && layout.isMarketDay()) {
+        const mhour = new Date().getHours();
+        if (mhour >= 8 && mhour < 19) {
+          const stallW = 20, stallH = 14, sm = 5;
+          for (const stall of layout.marketStalls) {
+            if (nextX >= stall.x - sm && nextX <= stall.x + stallW + sm &&
+                nextY >= stall.y - sm && nextY <= stall.y + stallH + sm) {
+              const rdx = this.x - (stall.x + stallW / 2);
+              const rdy = this.y - (stall.y + stallH / 2);
+              const rd = Math.sqrt(rdx * rdx + rdy * rdy) || 1;
+              ax += (rdx / rd) * this.maxForce * 7;
+              ay += (rdy / rd) * this.maxForce * 7;
+              repelled = true;
+              break;
+            }
           }
         }
       }

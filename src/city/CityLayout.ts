@@ -164,6 +164,19 @@ export class CityLayout {
   // Cached awning shelter positions (standing under venue awnings)
   awningSheltPositions: { x: number; y: number }[] = [];
 
+  // ── Busker pitch ───────────────────────────────────────────────────────
+  buskerActive: boolean = false;
+  buskerX: number = 0;
+  buskerY: number = 0;
+  buskerTimer: number = 0;
+  buskerCooldown: number = 600; // frames until first appearance
+  coinParticles: { sx: number; sy: number; tx: number; ty: number; t: number; alpha: number }[] = [];
+  buskerNotes: { x: number; y: number; vy: number; alpha: number; char: string }[] = [];
+
+  // ── Newspaper stand ────────────────────────────────────────────────────
+  newsstandX: number = 0;
+  newsstandY: number = 0;
+
   // Which grid cells are plaza (col, row)
   plazaCells: Set<string> = new Set();
   // Block types for generating varied city content
@@ -253,6 +266,7 @@ export class CityLayout {
     this.generateChimneyPositions();
     this.generateMarketStalls();
     this.generateAwningSheltPositions();
+    this.initPersistentFixtures();
   }
 
   private assignBlockTypes(offsetX: number, offsetY: number, cellSize: number, plazaCols: number[], plazaRows: number[]) {
@@ -1037,12 +1051,22 @@ export class CityLayout {
   }
 
   drawRoads(ctx: CanvasRenderingContext2D, nightAlpha: number) {
-    const roadLight = Math.max(0, 45 - nightAlpha * 25);
-    ctx.fillStyle = `hsl(220, 5%, ${roadLight}%)`;
+    const roadLight = Math.max(0, 44 - nightAlpha * 25);
+    ctx.fillStyle = `hsl(220, 6%, ${roadLight}%)`;
     for (const road of this.roads) {
       ctx.fillRect(road.x, road.y, road.w, road.h);
     }
-    ctx.strokeStyle = `rgba(255, 255, 200, ${0.3 - nightAlpha * 0.1})`;
+
+    // Curb edge lines — thin bright strip at each road boundary, suggests raised kerb
+    ctx.strokeStyle = `rgba(255, 255, 255, ${0.20 - nightAlpha * 0.08})`;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([]);
+    for (const road of this.roads) {
+      ctx.strokeRect(road.x + 0.5, road.y + 0.5, road.w - 1, road.h - 1);
+    }
+
+    // Dashed centre lines
+    ctx.strokeStyle = `rgba(255, 255, 200, ${0.28 - nightAlpha * 0.10})`;
     ctx.lineWidth = 1.5;
     ctx.setLineDash([8, 12]);
     for (const road of this.roads) {
@@ -1084,27 +1108,80 @@ export class CityLayout {
 
   drawPlaza(ctx: CanvasRenderingContext2D, nightAlpha: number) {
     const p = this.plazaBounds;
-    const light = Math.max(0, 75 - nightAlpha * 35);
-    ctx.fillStyle = `hsl(35, 15%, ${light}%)`;
+    const light = Math.max(0, 76 - nightAlpha * 35);
+    ctx.fillStyle = `hsl(36, 14%, ${light}%)`;
     ctx.fillRect(p.x, p.y, p.w, p.h);
 
-    // Subtle tile pattern
-    ctx.strokeStyle = `rgba(0, 0, 0, ${0.05 - nightAlpha * 0.02})`;
-    ctx.lineWidth = 0.5;
-    const tileSize = 20;
+    // Subtle 2-tone checkerboard paving (40px tiles)
+    const tileSize = 40;
+    ctx.fillStyle = `rgba(0, 0, 0, ${0.028 - nightAlpha * 0.01})`;
     for (let tx = p.x; tx < p.x + p.w; tx += tileSize) {
+      for (let ty = p.y; ty < p.y + p.h; ty += tileSize) {
+        const col = Math.floor((tx - p.x) / tileSize);
+        const row = Math.floor((ty - p.y) / tileSize);
+        if ((col + row) % 2 === 0) {
+          ctx.fillRect(tx, ty, Math.min(tileSize, p.x + p.w - tx), Math.min(tileSize, p.y + p.h - ty));
+        }
+      }
+    }
+
+    // Grout / tile grid lines
+    ctx.strokeStyle = `rgba(0, 0, 0, ${0.08 - nightAlpha * 0.03})`;
+    ctx.lineWidth = 0.6;
+    ctx.setLineDash([]);
+    for (let tx = p.x; tx <= p.x + p.w; tx += tileSize) {
       ctx.beginPath(); ctx.moveTo(tx, p.y); ctx.lineTo(tx, p.y + p.h); ctx.stroke();
     }
-    for (let ty = p.y; ty < p.y + p.h; ty += tileSize) {
+    for (let ty = p.y; ty <= p.y + p.h; ty += tileSize) {
       ctx.beginPath(); ctx.moveTo(p.x, ty); ctx.lineTo(p.x + p.w, ty); ctx.stroke();
+    }
+
+    // Decorative inset border (inner perimeter band)
+    ctx.strokeStyle = `rgba(0, 0, 0, ${0.11 - nightAlpha * 0.04})`;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(p.x + 10, p.y + 10, p.w - 20, p.h - 20);
+    // Second inner line, 4px inside
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = `rgba(0, 0, 0, ${0.06 - nightAlpha * 0.02})`;
+    ctx.strokeRect(p.x + 15, p.y + 15, p.w - 30, p.h - 30);
+
+    // Central ornamental compass rose
+    const cx = p.x + p.w / 2;
+    const cy = p.y + p.h / 2;
+    const r1 = Math.min(p.w, p.h) * 0.13;  // outer ring
+    const r2 = r1 * 0.55;                    // inner ring
+    const lineA = `rgba(0, 0, 0, ${0.07 - nightAlpha * 0.025})`;
+    ctx.strokeStyle = lineA;
+    ctx.lineWidth = 1.2;
+    // Outer circle
+    ctx.beginPath(); ctx.arc(cx, cy, r1, 0, Math.PI * 2); ctx.stroke();
+    // Inner circle
+    ctx.lineWidth = 0.8;
+    ctx.beginPath(); ctx.arc(cx, cy, r2, 0, Math.PI * 2); ctx.stroke();
+    // 8 radial spokes between the rings
+    for (let a = 0; a < Math.PI * 2; a += Math.PI / 4) {
+      ctx.beginPath();
+      ctx.moveTo(cx + Math.cos(a) * r2, cy + Math.sin(a) * r2);
+      ctx.lineTo(cx + Math.cos(a) * r1, cy + Math.sin(a) * r1);
+      ctx.stroke();
+    }
+    // 4 cardinal cross lines through centre
+    ctx.lineWidth = 0.6;
+    ctx.strokeStyle = `rgba(0, 0, 0, ${0.05 - nightAlpha * 0.02})`;
+    for (let a = 0; a < Math.PI * 2; a += Math.PI / 2) {
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(cx + Math.cos(a) * r2, cy + Math.sin(a) * r2);
+      ctx.stroke();
     }
   }
 
   drawBuildings(ctx: CanvasRenderingContext2D, nightAlpha: number) {
+    const shadow = this.getShadowOffset();
     for (const b of this.buildings) {
-      // Shadow for depth
-      ctx.fillStyle = `rgba(0, 0, 0, ${0.15 + nightAlpha * 0.06})`;
-      ctx.fillRect(b.x + 3, b.y + 3, b.w, b.h);
+      // Directional ground shadow — direction & length shift with sun position
+      ctx.fillStyle = `rgba(0, 0, 0, ${shadow.alpha + nightAlpha * 0.06})`;
+      ctx.fillRect(b.x + shadow.dx, b.y + shadow.dy, b.w, b.h);
 
       // Building body
       const r = parseInt(b.color.slice(1, 3), 16);
@@ -1114,8 +1191,24 @@ export class CityLayout {
       ctx.fillStyle = `rgb(${Math.floor(r * darkFactor)}, ${Math.floor(g * darkFactor)}, ${Math.floor(bl * darkFactor)})`;
       ctx.fillRect(b.x, b.y, b.w, b.h);
 
+      // ── Depth shading ────────────────────────────────────────────────
+      // Top-edge highlight — roof parapet catching ambient light
+      const hf = Math.min(1, darkFactor * 1.22);
+      ctx.fillStyle = `rgb(${Math.min(255, Math.floor(r * hf))}, ${Math.min(255, Math.floor(g * hf))}, ${Math.min(255, Math.floor(bl * hf))})`;
+      ctx.fillRect(b.x, b.y, b.w, 2);
+
+      // Bottom near-face shadow — visible south wall in top-down view
+      const sf = darkFactor * 0.68;
+      ctx.fillStyle = `rgb(${Math.floor(r * sf)}, ${Math.floor(g * sf)}, ${Math.floor(bl * sf)})`;
+      ctx.fillRect(b.x, b.y + b.h - 4, b.w, 4);
+
+      // Right-edge shadow — east face catches less light
+      ctx.fillStyle = `rgba(0, 0, 0, ${0.10 * darkFactor})`;
+      ctx.fillRect(b.x + b.w - 2, b.y, 2, b.h);
+      // ────────────────────────────────────────────────────────────────
+
       // Building border
-      ctx.strokeStyle = `rgba(0, 0, 0, ${0.15 + nightAlpha * 0.1})`;
+      ctx.strokeStyle = `rgba(0, 0, 0, ${0.18 + nightAlpha * 0.1})`;
       ctx.lineWidth = 1;
       ctx.strokeRect(b.x, b.y, b.w, b.h);
 
@@ -1200,9 +1293,10 @@ export class CityLayout {
         }
       }
 
-      // House shadow
-      ctx.fillStyle = `rgba(0, 0, 0, ${0.14 + nightAlpha * 0.06})`;
-      ctx.fillRect(h.x + 2.5, h.y + 2.5, h.w, h.h);
+      // House shadow — directional, matches building shadows
+      const shadow = this.getShadowOffset();
+      ctx.fillStyle = `rgba(0, 0, 0, ${shadow.alpha + nightAlpha * 0.06})`;
+      ctx.fillRect(h.x + shadow.dx, h.y + shadow.dy, h.w, h.h);
 
       // Determine roof style from seed: 0 = gabled (ridge runs left-right),
       // 1 = hip roof, 2 = gabled rotated (ridge runs top-bottom)
@@ -1487,15 +1581,38 @@ export class CityLayout {
     }
   }
 
+  /** Returns the current directional shadow offset based on the time of day.
+   *  Morning: shadow sweeps west (−dx), midday: short shadow pointing south, evening: shadow sweeps east (+dx).
+   */
+  getShadowOffset(): { dx: number; dy: number; alpha: number } {
+    const now = new Date();
+    const hour = now.getHours() + now.getMinutes() / 60;
+    // Outside daylight hours — small static depth shadow
+    if (hour < 6 || hour > 20) return { dx: 2, dy: 3, alpha: 0.15 };
+    // t = 0 at 6 am, 0.5 at 1 pm (solar noon), 1 at 8 pm
+    const t = (hour - 6) / 14;
+    // Horizontal: sweeps from −10 (west/left at dawn) through 0 (noon) to +10 (east/right at dusk)
+    const dx = (t - 0.5) * 20;
+    // Vertical: always a small positive offset (depth), slightly larger at dawn/dusk (long shadows foreshorten)
+    const dy = 2 + Math.abs(t - 0.5) * 3;
+    // Shadow darkens slightly at dawn/dusk when the angle is shallower
+    const alpha = 0.12 + Math.abs(t - 0.5) * 0.07;
+    return { dx, dy, alpha };
+  }
+
   drawTrees(ctx: CanvasRenderingContext2D, time: number, nightAlpha: number) {
+    const shadow = this.getShadowOffset();
     for (const t of this.trees) {
       const sway = Math.sin(time * 0.5 + t.seed) * 1.5;
       const green = Math.max(0, 120 - nightAlpha * 60);
       const lightness = 35 - nightAlpha * 15;
 
-      ctx.fillStyle = `rgba(0, 0, 0, ${0.15 + nightAlpha * 0.1})`;
+      // Directional tree shadow — an ellipse offset in the sun's opposite direction
+      const tsDx = shadow.dx * 0.55;
+      const tsDy = shadow.dy * 0.55 + t.radius * 0.35; // always slightly below (trunk base)
+      ctx.fillStyle = `rgba(0, 0, 0, ${shadow.alpha + nightAlpha * 0.08})`;
       ctx.beginPath();
-      ctx.ellipse(t.x + 2, t.y + 2, t.radius, t.radius * 0.8, 0, 0, Math.PI * 2);
+      ctx.ellipse(t.x + tsDx, t.y + tsDy, t.radius * 0.9, t.radius * 0.45, 0, 0, Math.PI * 2);
       ctx.fill();
 
       ctx.fillStyle = `hsl(${green}, 50%, ${lightness}%)`;
@@ -1736,6 +1853,198 @@ export class CityLayout {
     }
 
     ctx.restore();
+  }
+
+  // ── Persistent fixtures: busker pitch + newspaper stand ──────────────
+
+  private initPersistentFixtures() {
+    const pb = this.plazaBounds;
+    // Busker starts near centre-left of plaza; position varies each session
+    this.buskerX = pb.x + pb.w * 0.32;
+    this.buskerY = pb.y + pb.h * 0.48;
+    // Newsstand in the lower-left plaza corner, near pedestrian flow
+    this.newsstandX = pb.x + 38;
+    this.newsstandY = pb.y + pb.h - 60;
+  }
+
+  /** Call once per frame — manages busker lifecycle, coin arcs and music notes. */
+  updateBusker() {
+    const hour = new Date().getHours();
+
+    if (this.buskerActive) {
+      this.buskerTimer--;
+
+      // Float music notes up from the busker
+      if (Math.random() < 0.07 && this.buskerNotes.length < 10) {
+        this.buskerNotes.push({
+          x: this.buskerX + (Math.random() - 0.5) * 12,
+          y: this.buskerY - 14,
+          vy: -(0.28 + Math.random() * 0.18),
+          alpha: 0.65 + Math.random() * 0.3,
+          char: Math.random() < 0.5 ? '♪' : '♫',
+        });
+      }
+
+      if (this.buskerTimer <= 0) {
+        this.buskerActive = false;
+        this.buskerCooldown = Math.floor(1800 + Math.random() * 3600); // 30–90 s gap
+      }
+    } else if (hour >= 9 && hour < 21) {
+      this.buskerCooldown--;
+      if (this.buskerCooldown <= 0) {
+        this.buskerActive = true;
+        this.buskerTimer = Math.floor(2400 + Math.random() * 3600); // 40 s – 2 min
+        // Vary position slightly each appearance
+        const pb = this.plazaBounds;
+        this.buskerX = pb.x + pb.w * 0.32 + (Math.random() - 0.5) * 60;
+        this.buskerY = pb.y + pb.h * 0.48 + (Math.random() - 0.5) * 40;
+      }
+    }
+
+    // Advance coin-arc particles
+    for (const c of this.coinParticles) {
+      c.t += 0.045;
+      if (c.t >= 1) c.alpha = 0;
+    }
+    this.coinParticles = this.coinParticles.filter(c => c.alpha > 0);
+
+    // Advance music notes
+    for (const n of this.buskerNotes) {
+      n.y += n.vy;
+      n.x += Math.sin(n.y * 0.12) * 0.25;
+      n.alpha -= 0.011;
+    }
+    this.buskerNotes = this.buskerNotes.filter(n => n.alpha > 0.01);
+  }
+
+  /** Spawn a coin arc from a pedestrian toward the guitar case. */
+  addCoinParticle(fromX: number, fromY: number) {
+    if (!this.buskerActive || this.coinParticles.length > 18) return;
+    this.coinParticles.push({
+      sx: fromX,
+      sy: fromY,
+      tx: this.buskerX + (Math.random() - 0.5) * 8,
+      ty: this.buskerY + 9,    // land in the guitar case
+      t: 0,
+      alpha: 1,
+    });
+  }
+
+  drawBusker(ctx: CanvasRenderingContext2D, nightAlpha: number) {
+    if (!this.buskerActive) return;
+    const dark = 1 - nightAlpha * 0.5;
+    const t = Date.now() / 1000;
+    const bounce = Math.abs(Math.sin(t * 3.5)) * 1.8;
+
+    ctx.save();
+    ctx.translate(this.buskerX, this.buskerY);
+
+    // Guitar case flat on the ground
+    ctx.fillStyle = `rgb(${Math.floor(95 * dark)}, ${Math.floor(65 * dark)}, ${Math.floor(38 * dark)})`;
+    ctx.fillRect(-9, 5, 18, 8);
+    ctx.strokeStyle = `rgba(0,0,0,${0.35 * dark})`;
+    ctx.lineWidth = 0.7;
+    ctx.strokeRect(-9, 5, 18, 8);
+    // Coins sitting in the case
+    ctx.fillStyle = `rgba(${Math.floor(215 * dark)}, ${Math.floor(175 * dark)}, ${Math.floor(45 * dark)}, 0.9)`;
+    for (let i = 0; i < 5; i++) {
+      ctx.beginPath();
+      ctx.arc(-6 + i * 3.2, 9, 1.1, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Torso
+    ctx.fillStyle = `rgb(${Math.floor(75 * dark)}, ${Math.floor(105 * dark)}, ${Math.floor(155 * dark)})`;
+    ctx.fillRect(-4, -7 - bounce, 8, 11);
+    // Head
+    ctx.fillStyle = `rgb(${Math.floor(215 * dark)}, ${Math.floor(175 * dark)}, ${Math.floor(135 * dark)})`;
+    ctx.beginPath();
+    ctx.arc(0, -11 - bounce, 3.8, 0, Math.PI * 2);
+    ctx.fill();
+    // Guitar body
+    ctx.fillStyle = `rgb(${Math.floor(155 * dark)}, ${Math.floor(88 * dark)}, ${Math.floor(38 * dark)})`;
+    ctx.fillRect(-7, -4 - bounce, 15, 5);
+    // Guitar neck
+    ctx.fillStyle = `rgb(${Math.floor(125 * dark)}, ${Math.floor(68 * dark)}, ${Math.floor(28 * dark)})`;
+    ctx.fillRect(6, -5 - bounce, 4, 2);
+
+    ctx.restore();
+
+    // Floating music notes
+    ctx.save();
+    ctx.font = '8px serif';
+    ctx.textAlign = 'center';
+    for (const n of this.buskerNotes) {
+      ctx.fillStyle = `rgba(70, 55, 190, ${n.alpha * (1 - nightAlpha * 1.2)})`;
+      ctx.fillText(n.char, n.x, n.y);
+    }
+    ctx.restore();
+
+    // Coin arc particles
+    for (const c of this.coinParticles) {
+      const px = c.sx + (c.tx - c.sx) * c.t;
+      const py = c.sy + (c.ty - c.sy) * c.t - Math.sin(c.t * Math.PI) * 18;
+      const coinAlpha = c.alpha * (1 - nightAlpha * 0.6);
+      ctx.fillStyle = `rgba(215, 178, 48, ${coinAlpha})`;
+      ctx.beginPath();
+      ctx.arc(px, py, 2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = `rgba(255, 228, 120, ${coinAlpha * 0.55})`;
+      ctx.beginPath();
+      ctx.arc(px - 0.6, py - 0.6, 0.85, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  drawNewstand(ctx: CanvasRenderingContext2D, nightAlpha: number) {
+    const hour = new Date().getHours();
+    if (hour < 6 || hour >= 13) return;   // morning papers only
+    // Fade out toward 13:00
+    const fadeAlpha = hour < 12 ? 1 : (13 - hour); // 1 until noon, then fade over 1 hour
+    if (fadeAlpha < 0.05) return;
+
+    const dark = (1 - nightAlpha * 0.5) * fadeAlpha;
+    const x = this.newsstandX;
+    const y = this.newsstandY;
+
+    // Ground shadow
+    ctx.fillStyle = `rgba(0,0,0,${0.13 * fadeAlpha})`;
+    ctx.fillRect(x + 2, y + 2, 20, 26);
+
+    // Kiosk body — slate metal
+    ctx.fillStyle = `rgb(${Math.floor(125 * dark)}, ${Math.floor(120 * dark)}, ${Math.floor(118 * dark)})`;
+    ctx.fillRect(x, y, 20, 26);
+
+    // Roof overhang
+    ctx.fillStyle = `rgb(${Math.floor(72 * dark)}, ${Math.floor(68 * dark)}, ${Math.floor(65 * dark)})`;
+    ctx.fillRect(x - 2, y - 4, 24, 5);
+
+    // Front display window — newspaper pages
+    ctx.fillStyle = `rgb(${Math.floor(242 * dark)}, ${Math.floor(242 * dark)}, ${Math.floor(246 * dark)})`;
+    ctx.fillRect(x + 2, y + 3, 16, 11);
+    // Masthead block (blue banner)
+    ctx.fillStyle = `rgb(${Math.floor(40 * dark)}, ${Math.floor(80 * dark)}, ${Math.floor(160 * dark)})`;
+    ctx.fillRect(x + 2, y + 3, 16, 3);
+    // Headline lines
+    ctx.fillStyle = `rgba(15, 15, 15, ${0.65 * dark})`;
+    ctx.fillRect(x + 3, y + 8,  12, 1.4);
+    ctx.fillRect(x + 3, y + 10.5, 9,  1);
+    ctx.fillRect(x + 3, y + 12,  11, 1);
+
+    // Newspaper stack on the lower shelf
+    for (let i = 0; i < 4; i++) {
+      const shade = (228 - i * 12) * dark;
+      ctx.fillStyle = `rgb(${Math.floor(shade)}, ${Math.floor(shade)}, ${Math.floor(shade + 6)})`;
+      ctx.fillRect(x + 2, y + 16 + i * 2.5, 16, 2.2);
+      ctx.strokeStyle = `rgba(0,0,0,0.18)`;
+      ctx.lineWidth = 0.4;
+      ctx.strokeRect(x + 2, y + 16 + i * 2.5, 16, 2.2);
+    }
+
+    // Kiosk border
+    ctx.strokeStyle = `rgba(0,0,0,${0.38 * fadeAlpha})`;
+    ctx.lineWidth = 0.9;
+    ctx.strokeRect(x, y, 20, 26);
   }
 
   getRandomWalkablePosition(seed: number): { x: number; y: number } {

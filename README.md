@@ -25,6 +25,10 @@ A procedurally generated top-down city where pedestrians form a digital clock in
 - **Cafe rush hours** - outdoor seating fills up noticeably during morning coffee (8–9:30am) and lunch (12–1:30pm). Pedestrians stay seated 1.4–1.8× longer, and more people spontaneously head to cafes and restaurants during these windows
 - **Rain sheltering** - during rain, heavy rain, thunderstorms, and hail, pedestrians in the plaza dash for the nearest venue awning and wait under it until the weather eases, then resume their normal routines
 - **Construction site** - one city block is a construction zone with dirt ground, a partial concrete frame, orange/white safety barriers, material piles, and a slowly rotating crane
+- **Directional shadows** - buildings and trees cast ground shadows whose direction sweeps from west (dawn) through a short northward stub at solar noon to east (dusk), with length and opacity scaling with sun angle
+- **Time-of-day atmosphere** - three subtle world-space overlays: a gradient morning mist that burns off between 5–9am; a warm amber golden-hour wash that peaks around 6pm and fades into dusk; a barely-there cool blue Sunday-morning tint that gives the city a distinctly quieter feel on Sundays before noon
+- **Busker pitch** - a street musician sets up in the plaza with a guitar and open case between 9am–9pm, appearing for 40 seconds to 2 minutes at a time. Floating ♪ ♫ music notes drift upward from the pitch. Pedestrians who pass within earshot stop to listen, face the musician, and periodically toss coins — rendered as arcing gold particles landing in the case
+- **Newspaper stand** - a metal kiosk with a blue masthead banner and stacked papers appears in the lower plaza from 6am, fading out by 1pm. Morning pedestrians nearby stop briefly to buy a paper then walk away with a happy thought bubble
 - **Dynamic City Events** - street musicians and protests occasionally spawn in the plaza, drawing nearby crowds of pedestrians to watch and interact
 - **Service & Delivery Vehicles** - orange delivery vans enter the plaza, park outside a venue to drop off packages. City buses (red/blue) and garbage trucks (green) navigate the road network with unique behaviours.
 - **Emergency vehicles** - police cars, ambulances and fire trucks with flashing sirens.
@@ -103,12 +107,32 @@ Dynamic live weather powered by the Open-Meteo API:
   - Jagged lightning flash overlays during thunderstorms
 - **Responsive Pedestrians:** 100% of pedestrians deploy colorful umbrellas in the rain or snow, and dynamically sprint for cover or adjust walking pace depending on the weather intensity (drizzle, heavy rain, hail, slippery snow).
 
+### Day/Night Atmosphere
+
+Beyond the core day/night cycle, three time-of-day atmosphere overlays run in world space each frame:
+
+- **Morning mist (5–9am)** — a gradient fog layer, densest at ground level, that burns off quadratically as dawn progresses
+- **Golden hour (17–20h)** — a warm amber wash peaking around 18:00; respects the dusk system so it doesn't compete with the night overlay
+- **Sunday quiet (7–12h on Sundays)** — a cool blue-grey tint so faint it only becomes noticeable side-by-side, giving Sunday mornings a distinctly slower feel
+
+### Aesthetics & Lighting
+
+Several passes work together to give the city depth and visual polish:
+
+- **Building depth shading** — each building has a 2px lighter strip at the top (roof parapet catching ambient light), a 4px darker strip along the bottom edge (the near south-facing wall visible in top-down perspective), and a 2px right-edge shadow (east face). Buildings read as 3D boxes rather than flat rectangles
+- **Directional shadows** — buildings and trees cast ground shadows whose direction sweeps from west (dawn) through a short stub at solar noon to east (dusk), with length and opacity scaling with sun angle; computed once per frame and shared across all draw calls
+- **Plaza paving** — a two-tone checkerboard floor (40px tiles), visible grout lines, a double inset perimeter border, and a central compass rose (concentric rings, 8 spokes, 4 cardinal lines) baked into the static canvas at zero runtime cost
+- **Road kerb lines** — a thin white edge stroke around every road rectangle defines the curb/gutter boundary and gives the road network visual structure
+- **Screen vignette** — a radial gradient from transparent at the centre to 36% black at the screen edges, drawn last in screen space; frames the city, gives it weight, and makes the plaza pop as the focal point
+- **Time-of-day atmosphere** — morning mist (5–9am), golden hour amber (17–20h), and Sunday quiet blue tint, all composited in world space before the main dynamic layer
+
 ### Rendering Architecture
 
-1. **Static canvas** - roads, sidewalks, crosswalks, plaza, buildings, houses, venues, parks, stars and moon pre-rendered to an offscreen canvas; rebuilt only when the lighting level changes
-2. **Dynamic layer** - cars, pedestrians, dogs, dropped packages, construction crane, bird shadows, animated tree sway, and birds (drawn above weather with parallax height) rendered fresh each frame
+1. **Static canvas** - roads, sidewalks, crosswalks, plaza (with decorative paving), buildings, houses, venues, parks, stars and moon pre-rendered to an offscreen canvas; rebuilt only when the lighting level changes
+2. **Dynamic layer** - atmosphere overlays, chimney smoke, market stalls, newspaper stand, busker pitch, cars, pedestrians, dogs, dropped packages, construction crane, bird shadows, animated tree sway, and birds (drawn above weather with parallax height) rendered fresh each frame
 3. **Light pass** - street lights, plaza lamp glows, and car headlight beams drawn after the night overlay so they punch through the darkness correctly
-3. **DPR-aware** - canvas resolution scales with devicePixelRatio (capped at 2x) for crisp rendering on Retina displays
+4. **Vignette pass** - screen-space radial gradient drawn last over everything to frame the scene
+5. **DPR-aware** - canvas resolution scales with devicePixelRatio (capped at 2x) for crisp rendering on Retina displays
 
 ### Battery & Performance
 

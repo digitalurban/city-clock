@@ -624,12 +624,20 @@ function loop(timestamp: number = 0) {
     ctx.drawImage(staticCanvas, 0, 0, layout.width, layout.height);
   }
 
+  // Time-of-day atmosphere (mist, golden hour, Sunday tint) — world space, under everything
+  dayNight.drawAtmosphere(ctx, layout.width, layout.height, nightAlpha);
+
   // Chimney smoke — above rooftops, below everything else
   chimneySmoke.update();
   chimneySmoke.draw(ctx);
 
-  // Market stalls — drawn in plaza before pedestrians
+  // Market stalls and morning newsstand — drawn in plaza before pedestrians
   layout.drawMarket(ctx, nightAlpha);
+  layout.drawNewstand(ctx, nightAlpha);
+
+  // Busker update + draw (after market stalls so they layer correctly)
+  layout.updateBusker();
+  layout.drawBusker(ctx, nightAlpha);
 
   // Update clock targets
   const plazaCX = layout.plazaBounds.x + layout.plazaBounds.w / 2;
@@ -845,6 +853,16 @@ function loop(timestamp: number = 0) {
 
   // Weather screen overlay
   weather.drawScreenOverlay(ctx, canvas.width, canvas.height);
+
+  // Vignette — subtle radial darkening at the screen edges to frame the scene
+  {
+    const vw = canvas.width, vh = canvas.height;
+    const vig = ctx.createRadialGradient(vw / 2, vh / 2, vh * 0.18, vw / 2, vh / 2, vw * 0.72);
+    vig.addColorStop(0, 'rgba(0, 0, 0, 0)');
+    vig.addColorStop(1, 'rgba(0, 0, 0, 0.36)');
+    ctx.fillStyle = vig;
+    ctx.fillRect(0, 0, vw, vh);
+  }
 
   requestAnimationFrame(loop);
 }
