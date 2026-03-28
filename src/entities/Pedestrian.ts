@@ -166,6 +166,9 @@ export class Pedestrian {
   isAtHome: boolean = false;
   homeTimer: number = 0;
   homeDuration: number = 0;
+  // Grid-based path home: array of world-space waypoints computed via A*
+  homePath: { x: number; y: number }[] = [];
+  homePathIdx: number = 0;
 
   // Needs
   energy: number = 100;
@@ -412,6 +415,8 @@ export class Pedestrian {
           this.isWatchingBusker || this.isBuyingPaper || this.isBrowsingMarket || this.isInGarden) {
         this.isAtHome = false;
         this.isGoingHome = false;
+        this.homePath = [];
+        this.homePathIdx = 0;
         this.isInGarden = false;
         this.isSitting = false;
         if (this.isBenchSitting && this.benchRef) { occupiedBenches.delete(this.benchRef); this.benchRef = null; }
@@ -759,7 +764,7 @@ export class Pedestrian {
         }
       }
 
-      // --- Going home ---
+      // --- Going home (grid-routed) ---
       if (this.isGoingHome && !this.isAtHome) {
         const home = layout.houses[this.assignedHome];
         if (home) {
@@ -767,13 +772,43 @@ export class Pedestrian {
           const frontDoorY = home.gardenSide === 'bottom' ? home.y + home.h : home.y;
           const distToDoor = Math.hypot(frontDoorX - this.x, frontDoorY - this.y);
 
-          if (distToDoor < 15) {
-            // Arrived at house - go inside
+          if (distToDoor < 12) {
+            // Arrived — step inside
             this.isAtHome = true;
             this.isRidingBicycle = false;
             this.homeTimer = 0;
             this.vx = 0;
             this.vy = 0;
+          } else if (this.homePath.length === 0) {
+            // Path not yet computed (e.g. spawned mid-state) — generate it now
+            const pathEnd = home.gardenPathEnd;
+            const destX = pathEnd ? pathEnd.x : frontDoorX;
+            const destY = pathEnd ? pathEnd.y : frontDoorY;
+            this.homePath = layout.findHomePath(this.x, this.y, destX, destY);
+            this.homePathIdx = 0;
+          } else {
+            // Follow the A* path waypoint by waypoint
+            const wp = this.homePath[this.homePathIdx];
+            const wpDx = wp.x - this.x;
+            const wpDy = wp.y - this.y;
+            const wpDist = Math.hypot(wpDx, wpDy);
+
+            if (wpDist < 12) {
+              // Reached this waypoint — advance to next
+              this.homePathIdx++;
+              if (this.homePathIdx >= this.homePath.length) {
+                // Path complete — walk the final step straight to front door
+                this.homePath = [];
+                this.homePathIdx = 0;
+              }
+            } else {
+              // Steer purposefully along the grid path
+              ax += (wpDx / wpDist) * this.maxForce * 2.8;
+              ay += (wpDy / wpDist) * this.maxForce * 2.8;
+              this.vx *= 0.90;
+              this.vy *= 0.90;
+              this.angle = Math.atan2(wpDy, wpDx);
+            }
           }
         }
       }
@@ -1235,15 +1270,12 @@ export class Pedestrian {
                 this.homeTimer = 0;
                 this.homeDuration = 1200 + Math.floor(Math.random() * 1200); // 20–40 s daytime visit
 
-                // Walk to garden path end first, then to front door
+                // Compute A* path through the road grid to gardenPathEnd (or front door)
                 const pathEnd = home.gardenPathEnd;
-                if (pathEnd) {
-                  this.setWaypointWithCrosswalkRouting(layout, pathEnd.x, pathEnd.y);
-                } else {
-                  this.waypointX = home.x + home.w / 2;
-                  this.waypointY = home.y + home.h;
-                  this.waypointTimer = 0;
-                }
+                const destX = pathEnd ? pathEnd.x : home.x + home.w / 2;
+                const destY = pathEnd ? pathEnd.y : (home.gardenSide === 'bottom' ? home.y + home.h : home.y);
+                this.homePath = layout.findHomePath(this.x, this.y, destX, destY);
+                this.homePathIdx = 0;
 
                 // If has bicycle, ride it
                 if (this.hasBicycle) {

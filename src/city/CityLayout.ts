@@ -146,6 +146,12 @@ export class CityLayout {
   height: number;
   gridCols: number;
   gridRows: number;
+  cellSize: number = BLOCK_SIZE + ROAD_WIDTH;
+  // Pedestrian pathfinding — obstacle-aware grid
+  readonly PF_STEP = 9;          // world pixels per pathfinding cell
+  pfCols: number = 0;
+  pfRows: number = 0;
+  pfGrid: Uint8Array = new Uint8Array(0); // 1 = walkable, 0 = blocked
   buildings: BuildingDef[] = [];
   houses: HouseDef[] = [];
   parks: ParkDef[] = [];
@@ -281,6 +287,7 @@ export class CityLayout {
     this.generateAwningSheltPositions();
     this.generateBins();
     this.initPersistentFixtures();
+    this.buildPfGrid();
   }
 
   private assignBlockTypes(offsetX: number, offsetY: number, cellSize: number, plazaCols: number[], plazaRows: number[]) {
@@ -2162,6 +2169,146 @@ export class CityLayout {
       }
     }
     return false;
+  }
+
+  /**
+   * Build a walkability grid over the whole city.
+   * Cell size = PF_STEP (9px). A cell is blocked if it overlaps any building, house, or venue.
+   * Called once at the end of the constructor after all structures are placed.
+   */
+  buildPfGrid() {
+    const step = this.PF_STEP;
+    const cols = Math.ceil(this.width  / step) + 1;
+    const rows = Math.ceil(this.height / step) + 1;
+    this.pfCols = cols;
+    this.pfRows = rows;
+    const grid = new Uint8Array(cols * rows); // default 0 = blocked
+
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const wx = c * step;
+        const wy = r * step;
+        // walkable if not inside any solid structure (use a 1px margin so path stays off wall edges)
+        grid[r * cols + c] = this.isInBuilding(wx, wy, 1) ? 0 : 1;
+      }
+    }
+    this.pfGrid = grid;
+  }
+
+  /**
+   * A* shortest path on the obstacle-aware walkability grid.
+   * Avoids all buildings, houses and venues. Returns world-space waypoints.
+   * Diagonal movement allowed (cost √2) so paths hug corners naturally.
+   */
+  findHomePath(fromX: number, fromY: number, toX: number, toY: number): { x: number; y: number }[] {
+    const step  = this.PF_STEP;
+    const cols  = this.pfCols;
+    const rows  = this.pfRows;
+    const grid  = this.pfGrid;
+
+    const clampC = (c: number) => Math.max(0, Math.min(cols - 1, c));
+    const clampR = (r: number) => Math.max(0, Math.min(rows - 1, r));
+
+    const sc = clampC(Math.round(fromX / step));
+    const sr = clampR(Math.round(fromY / step));
+    let   ec = clampC(Math.round(toX   / step));
+    let   er = clampR(Math.round(toY   / step));
+
+    // If target cell is blocked (e.g. front-door is inside house bounds), walk outward to
+    // the nearest walkable cell so the path can still finish close to the door
+    if (!grid[er * cols + ec]) {
+      let found = false;
+      for (let radius = 1; radius <= 6 && !found; radius++) {
+        for (let dc = -radius; dc <= radius && !found; dc++) {
+          for (let dr = -radius; dr <= radius && !found; dr++) {
+            if (Math.abs(dc) !== radius && Math.abs(dr) !== radius) continue;
+            const nc = clampC(ec + dc), nr = clampR(er + dr);
+            if (grid[nr * cols + nc]) { ec = nc; er = nr; found = true; }
+          }
+        }
+      }
+    }
+
+    if (sc === ec && sr === er) return [{ x: toX, y: toY }];
+
+    type ANode = { c: number; r: number; g: number; f: number; parent: ANode | null };
+    const h = (c: number, r: number) => Math.hypot(c - ec, r - er); // Euclidean heuristic for diagonals
+
+    const idx = (c: number, r: number) => r * cols + c;
+    const startNode: ANode = { c: sc, r: sr, g: 0, f: h(sc, sr), parent: null };
+    const open: ANode[] = [startNode];
+    const gCost  = new Float32Array(cols * rows).fill(Infinity);
+    const nodeOf = new Array<ANode | null>(cols * rows).fill(null);
+    gCost[idx(sc, sr)] = 0;
+    nodeOf[idx(sc, sr)] = startNode;
+    const closed = new Uint8Array(cols * rows);
+    let found: ANode | null = null;
+
+    // 8-directional moves: 4 cardinal + 4 diagonal
+    const DIRS = [
+      { dc:  1, dr:  0, cost: 1   },
+      { dc: -1, dr:  0, cost: 1   },
+      { dc:  0, dr:  1, cost: 1   },
+      { dc:  0, dr: -1, cost: 1   },
+      { dc:  1, dr:  1, cost: 1.4 },
+      { dc: -1, dr:  1, cost: 1.4 },
+      { dc:  1, dr: -1, cost: 1.4 },
+      { dc: -1, dr: -1, cost: 1.4 },
+    ];
+
+    while (open.length > 0) {
+      let bi = 0;
+      for (let i = 1; i < open.length; i++) { if (open[i].f < open[bi].f) bi = i; }
+      const cur = open.splice(bi, 1)[0];
+
+      if (cur.c === ec && cur.r === er) { found = cur; break; }
+
+      const ci = idx(cur.c, cur.r);
+      if (closed[ci]) continue;
+      closed[ci] = 1;
+
+      for (const { dc, dr, cost } of DIRS) {
+        const nc = cur.c + dc, nr = cur.r + dr;
+        if (nc < 0 || nr < 0 || nc >= cols || nr >= rows) continue;
+        const ni = idx(nc, nr);
+        if (!grid[ni] || closed[ni]) continue;
+        // For diagonal moves, ensure both cardinal neighbours are walkable (no corner-cutting)
+        if (dc !== 0 && dr !== 0) {
+          if (!grid[idx(cur.c + dc, cur.r)] || !grid[idx(cur.c, cur.r + dr)]) continue;
+        }
+        const g = cur.g + cost;
+        if (g < gCost[ni]) {
+          gCost[ni] = g;
+          const node: ANode = { c: nc, r: nr, g, f: g + h(nc, nr), parent: cur };
+          nodeOf[ni] = node;
+          open.push(node);
+        }
+      }
+    }
+
+    if (!found) return [{ x: toX, y: toY }]; // fallback: direct line
+
+    // Reconstruct path (skip start node), replace last point with exact world destination
+    const path: { x: number; y: number }[] = [];
+    let cur: ANode | null = found;
+    while (cur && cur.parent !== null) {
+      path.unshift({ x: cur.c * step, y: cur.r * step });
+      cur = cur.parent;
+    }
+
+    // Thin the path — remove collinear intermediate nodes to reduce unnecessary micro-turns
+    const thinned: { x: number; y: number }[] = [];
+    for (let i = 0; i < path.length; i++) {
+      if (i === 0 || i === path.length - 1) { thinned.push(path[i]); continue; }
+      const prev = path[i - 1], next = path[i + 1];
+      const dx1 = path[i].x - prev.x, dy1 = path[i].y - prev.y;
+      const dx2 = next.x - path[i].x, dy2 = next.y - path[i].y;
+      if (dx1 !== dx2 || dy1 !== dy2) thinned.push(path[i]); // direction changed — keep
+    }
+
+    if (thinned.length > 0) thinned[thinned.length - 1] = { x: toX, y: toY };
+    else thinned.push({ x: toX, y: toY });
+    return thinned;
   }
 
   isInBuilding(x: number, y: number, margin = 4): boolean {
