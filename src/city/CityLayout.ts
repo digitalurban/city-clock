@@ -1859,9 +1859,9 @@ export class CityLayout {
 
   private initPersistentFixtures() {
     const pb = this.plazaBounds;
-    // Busker starts near centre-left of plaza; position varies each session
-    this.buskerX = pb.x + pb.w * 0.32;
-    this.buskerY = pb.y + pb.h * 0.48;
+    // Busker sets up in the left quarter of the plaza, away from the clock digits
+    this.buskerX = pb.x + pb.w * 0.18;
+    this.buskerY = pb.y + pb.h * 0.50;
     // Newsstand in the lower-left plaza corner, near pedestrian flow
     this.newsstandX = pb.x + 38;
     this.newsstandY = pb.y + pb.h - 60;
@@ -1896,8 +1896,8 @@ export class CityLayout {
         this.buskerTimer = Math.floor(2400 + Math.random() * 3600); // 40 s – 2 min
         // Vary position slightly each appearance
         const pb = this.plazaBounds;
-        this.buskerX = pb.x + pb.w * 0.32 + (Math.random() - 0.5) * 60;
-        this.buskerY = pb.y + pb.h * 0.48 + (Math.random() - 0.5) * 40;
+        this.buskerX = pb.x + pb.w * 0.18 + (Math.random() - 0.5) * 40;
+        this.buskerY = pb.y + pb.h * 0.50 + (Math.random() - 0.5) * 30;
       }
     }
 
@@ -2170,8 +2170,6 @@ export class CityLayout {
   /** Place 8 market stalls in two rows inside the delivery perimeter */
   private generateMarketStalls() {
     const dp = this.deliveryPerimeter;
-    const cx = (dp.leftX + dp.rightX) / 2;
-    const cy = (dp.topY + dp.bottomY) / 2;
 
     const awningColors = ['#e63946','#f4a261','#e9c46a','#2a9d8f','#457b9d','#9b5de5','#f72585','#4cc9f0'];
     const produceSets = [
@@ -2181,22 +2179,31 @@ export class CityLayout {
       ['#e9c46a','#f4a261','#e63946'],
     ];
 
+    // 4 stalls along the north inner edge + 4 along the south inner edge.
+    // Spread evenly across the plaza width so the centre stays clear for the clock.
     const cols = 4;
-    const xSpacing = 52;
-    const ySpacing = 42;
+    const pw = dp.rightX - dp.leftX;
+    const xSpacing = pw / (cols + 1); // equal gaps including margins
 
-    for (let row = 0; row < 2; row++) {
-      for (let col = 0; col < cols; col++) {
-        const idx = row * cols + col;
-        const sx = cx - (cols * xSpacing) / 2 + col * xSpacing + xSpacing / 2 - 10;
-        const sy = cy - ySpacing / 2 + row * ySpacing - 7;
-        this.marketStalls.push({
-          x: sx,
-          y: sy,
-          awningColor: awningColors[idx % awningColors.length],
-          produceColors: produceSets[idx % produceSets.length],
-        });
-      }
+    for (let col = 0; col < cols; col++) {
+      const sx = dp.leftX + xSpacing * (col + 1) - 10; // -10 centres the 20 px stall
+      const idx = col;
+
+      // North row — just inside the north delivery lane
+      this.marketStalls.push({
+        x: sx,
+        y: dp.topY + 16,
+        awningColor: awningColors[idx % awningColors.length],
+        produceColors: produceSets[idx % produceSets.length],
+      });
+
+      // South row — just inside the south delivery lane (stall h = 14, leave 18 px gap)
+      this.marketStalls.push({
+        x: sx,
+        y: dp.bottomY - 30,
+        awningColor: awningColors[(idx + 4) % awningColors.length],
+        produceColors: produceSets[(idx + 2) % produceSets.length],
+      });
     }
   }
 
