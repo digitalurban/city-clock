@@ -388,20 +388,50 @@ export class Weather {
   }
 
   private cycleWeather() {
-    // Weighted random: clear 40%, cloudy 35%, rain 25%
+    // Weighted distribution across all 10 weather types.
+    // Rarer events (thunderstorm, hail, heavy snow) are brief; common ones last longer.
     const roll = Math.random();
-    if (roll < 0.40) {
+
+    if (roll < 0.28) {
       this.current = 'clear';
       this.targetAlpha = 0;
-      this.transitionTimer = 1800 + Math.random() * 3600; // 15-45 seconds of clear
-    } else if (roll < 0.75) {
+      this.transitionTimer = 1800 + Math.random() * 3600;   // 30–90 s
+    } else if (roll < 0.50) {
       this.current = 'cloudy';
-      this.targetAlpha = 0.5;
-      this.transitionTimer = 1200 + Math.random() * 2400; // 10-30 seconds cloudy
-    } else {
+      this.targetAlpha = 0.4;
+      this.transitionTimer = 1200 + Math.random() * 2400;   // 20–60 s
+    } else if (roll < 0.64) {
+      this.current = 'drizzle';
+      this.targetAlpha = 0.55;
+      this.transitionTimer = 900  + Math.random() * 1500;   // 15–40 s
+    } else if (roll < 0.76) {
       this.current = 'rain';
+      this.targetAlpha = 0.85;
+      this.transitionTimer = 600  + Math.random() * 1800;   // 10–40 s
+    } else if (roll < 0.84) {
+      this.current = 'fog';
+      this.targetAlpha = 0.45;
+      this.transitionTimer = 1200 + Math.random() * 2400;   // 20–60 s
+    } else if (roll < 0.90) {
+      this.current = 'heavy_rain';
       this.targetAlpha = 1.0;
-      this.transitionTimer = 800 + Math.random() * 1600;  // 7-20 seconds of rain
+      this.transitionTimer = 480  + Math.random() * 960;    // 8–24 s
+    } else if (roll < 0.94) {
+      this.current = 'snow';
+      this.targetAlpha = 0.80;
+      this.transitionTimer = 900  + Math.random() * 1500;   // 15–40 s
+    } else if (roll < 0.97) {
+      this.current = 'thunderstorm';
+      this.targetAlpha = 1.0;
+      this.transitionTimer = 480  + Math.random() * 960;    // 8–24 s
+    } else if (roll < 0.99) {
+      this.current = 'heavy_snow';
+      this.targetAlpha = 1.0;
+      this.transitionTimer = 600  + Math.random() * 1200;   // 10–30 s
+    } else {
+      this.current = 'hail';
+      this.targetAlpha = 1.0;
+      this.transitionTimer = 240  + Math.random() * 480;    // 4–12 s
     }
   }
 

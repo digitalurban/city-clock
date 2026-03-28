@@ -96,16 +96,30 @@ At night: a deep blue-black sky reveals procedural stars and a crescent moon abo
 
 ### Weather
 
-Dynamic live weather powered by the Open-Meteo API:
-- **Location Setting:** Allows testing specific weather conditions manually globally
-- **Rich Conditions:** Supports clear, cloudy, fog, drizzle, rain, heavy rain, thunderstorms, snow, heavy snow, and hail based on realtime WMO codes
+Dynamic live weather powered by the Open-Meteo API, with all 10 weather types fully implemented end-to-end:
+
+| Type | Chance (demo mode) | Notes |
+|------|--------------------|-------|
+| Clear | 28% | |
+| Cloudy | 22% | |
+| Drizzle | 14% | |
+| Rain | 12% | |
+| Fog | 8% | |
+| Heavy rain | 6% | |
+| Snow | 4% | ground accumulation |
+| Thunderstorm | 3% | lightning flashes |
+| Heavy snow | 2% | |
+| Hail | 1% | bouncing ice particles |
+
+- **Two modes:** set a real city in Options to pull live WMO weather codes from Open-Meteo (refreshed every 5 minutes); without a city the system cycles through all 10 types with the weighted distribution above
 - **Atmospheric Effects:**
   - Procedural parallax clouds darken dynamically into storm clouds and drift over the city in top-down volumetric rendering
   - Rain and hail particles fall visibly below the cloud layer, dynamically bouncing and melting on the plaza
   - Widespread reflective puddles with sky and building silhouette reflections, ripple rings, and splash effects that dry gradually over time
   - Ground accumulative snow cover creates spreading white patches
-  - Jagged lightning flash overlays during thunderstorms
-- **Responsive Pedestrians:** 100% of pedestrians deploy colorful umbrellas in the rain or snow, and dynamically sprint for cover or adjust walking pace depending on the weather intensity (drizzle, heavy rain, hail, slippery snow).
+  - Jagged lightning flash overlays during thunderstorms and hail
+  - Fog renders as a distinct grey-white screen overlay separate from the cloud layer
+- **Responsive Pedestrians:** 100% of pedestrians deploy colourful umbrellas in rain or snow, sprint for venue awnings in heavy rain, and adjust walking pace by condition (drizzle slows slightly; hail triggers a full sprint; snow causes careful shuffling)
 
 ### Day/Night Atmosphere
 
