@@ -118,6 +118,7 @@ Dynamic live weather powered by the Open-Meteo API, with all 10 weather types fu
 | Hail | 1% | bouncing ice particles |
 
 - **Two modes:** set a real city in Options to pull live WMO weather codes from Open-Meteo (refreshed every 5 minutes); without a city the system cycles through all 10 types with the weighted distribution above
+- **Smooth cross-fade transitions:** weather never cuts harshly between types. When a change is due, the current weather fades out first (particles thin gradually over ~7 s) before the new type fades in at its own pace — so rain doesn't vanish mid-drop and fog doesn't snap off. The next-cycle timer is paused during the fade to prevent transitions from being interrupted
 - **Atmospheric Effects:**
   - Procedural parallax clouds darken dynamically into storm clouds and drift over the city in top-down volumetric rendering
   - Rain and hail particles fall visibly below the cloud layer, dynamically bouncing and melting on the plaza
@@ -161,7 +162,7 @@ City Clock is designed to run efficiently as a always-on wallpaper or bedside cl
 - **Native 60fps** - the render loop runs at the display's native refresh rate for smooth animation; all timers and speeds are tuned for 60fps
 - **Visibility pause** - the loop stops entirely when the tab is hidden or the screen is off (via the Page Visibility API), dropping power draw to near zero when no one is watching
 - **Cloud caching** - each cloud is pre-rendered to an offscreen canvas and cached; only rebuilt when storm intensity changes the cloud colour. Eliminates ~200 `createRadialGradient` calls per frame
-- **Idle particle skip** - the 2000-particle rain pool is only iterated during active precipitation; clear weather skips the loop entirely
+- **Idle particle skip** - the 2000-particle rain pool is only iterated while `alpha > 0.01`; fully settled clear weather skips the loop entirely. During cross-fade transitions the pool keeps animating so particles fade out naturally rather than disappearing mid-fall
 - **Single `Date.now()` per frame** - shared time value computed once before the particle loop rather than per-particle
 
 ## Tech Stack

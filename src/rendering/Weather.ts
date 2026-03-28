@@ -94,6 +94,11 @@ export class Weather {
   private worldH: number = 0;
   private initialised: boolean = false;
 
+  // Cross-fade transition — fade old weather OUT to near-zero, then switch type and fade IN
+  private pendingWeather: WeatherType | null = null;
+  private pendingTargetAlpha: number = 0;
+  private isFadingOut: boolean = false;
+
   // Dynamic levels (0 to 1)
   private puddleLevel: number = 0;
   private snowLevel: number = 0;
@@ -149,23 +154,27 @@ export class Weather {
 
       this.cloudCover = cover;
       const weatherType = wmoToWeather(code);
-      this.current = weatherType;
 
+      let newAlpha: number;
       if (weatherType === 'clear') {
-        this.targetAlpha = 0;
+        newAlpha = 0;
       } else if (weatherType === 'cloudy' || weatherType === 'fog') {
-        // Scale alpha by cloud cover percentage
-        this.targetAlpha = 0.2 + (cover / 100) * 0.3;
+        newAlpha = 0.2 + (cover / 100) * 0.3;
       } else {
-        // Boost target alpha for rain/snow to ensure visibility
-        this.targetAlpha = Math.max(0.6, 0.7 + (cover / 100) * 0.3);
+        newAlpha = Math.max(0.6, 0.7 + (cover / 100) * 0.3);
       }
 
       if (instant) {
-        this.alpha = this.targetAlpha;
+        // Initial load — apply immediately with no transition
+        this.current = weatherType;
+        this.targetAlpha = newAlpha;
+        this.alpha = newAlpha;
         this.puddleLevel = ['rain', 'heavy_rain', 'thunderstorm', 'hail'].includes(weatherType) ? 1.0 : (weatherType === 'drizzle' ? 0.4 : 0.0);
         this.snowLevel = ['snow', 'heavy_snow'].includes(weatherType) ? 1.0 : 0.0;
         this.lightningPhase = 0;
+      } else {
+        // Periodic refresh — cross-fade so the change is smooth
+        this.scheduleWeatherChange(weatherType, newAlpha);
       }
 
       this.realWeatherFetched = true;
@@ -281,12 +290,42 @@ export class Weather {
     };
   }
 
+  /**
+   * Schedule a cross-fade to a new weather type.
+   * If the type is unchanged, just adjust the target intensity immediately.
+   * Otherwise, fade the current weather out to near-zero first, then switch type
+   * and fade the new weather in — so particles never pop on/off harshly.
+   */
+  private scheduleWeatherChange(newType: WeatherType, newTargetAlpha: number) {
+    if (newType === this.current) {
+      // Same type — just nudge intensity, no cross-fade needed
+      this.targetAlpha = newTargetAlpha;
+      this.pendingWeather = null;
+      this.isFadingOut = false;
+      return;
+    }
+    this.pendingWeather = newType;
+    this.pendingTargetAlpha = newTargetAlpha;
+    this.isFadingOut = true;
+    this.targetAlpha = 0; // begin fading the current weather out
+  }
+
   /** Advance weather state — call once per frame */
   update() {
     if (!this.initialised) return;
 
-    // Smooth transition
-    this.alpha += (this.targetAlpha - this.alpha) * 0.0025;
+    // Phase 1: fading OUT the old weather type — use a moderately fast lerp
+    // Phase 2: once switched, fade the new weather IN at the normal slow rate
+    const lerpRate = this.isFadingOut ? 0.006 : 0.0025;
+    this.alpha += (this.targetAlpha - this.alpha) * lerpRate;
+
+    // When the outgoing weather has faded to near-invisible, flip to the pending type
+    if (this.isFadingOut && this.pendingWeather !== null && this.alpha < 0.04) {
+      this.current = this.pendingWeather;
+      this.targetAlpha = this.pendingTargetAlpha;
+      this.pendingWeather = null;
+      this.isFadingOut = false;
+    }
 
     // Dynamic puddle and snow level accumulators
     if (this.current === 'rain' || this.current === 'thunderstorm') {
@@ -326,10 +365,13 @@ export class Weather {
         this.fetchWeather();
       }
     } else {
-      // Fallback: random weather cycling
-      this.transitionTimer--;
-      if (this.transitionTimer <= 0) {
-        this.cycleWeather();
+      // Fallback: random weather cycling — pause timer while a cross-fade is in progress
+      // so we don't trigger the next cycle mid-transition
+      if (!this.isFadingOut) {
+        this.transitionTimer--;
+        if (this.transitionTimer <= 0) {
+          this.cycleWeather();
+        }
       }
     }
 
@@ -390,47 +432,38 @@ export class Weather {
   private cycleWeather() {
     // Weighted distribution across all 10 weather types.
     // Rarer events (thunderstorm, hail, heavy snow) are brief; common ones last longer.
+    // scheduleWeatherChange fades the current weather out before switching type.
     const roll = Math.random();
 
     if (roll < 0.28) {
-      this.current = 'clear';
-      this.targetAlpha = 0;
+      this.scheduleWeatherChange('clear', 0);
       this.transitionTimer = 1800 + Math.random() * 3600;   // 30–90 s
     } else if (roll < 0.50) {
-      this.current = 'cloudy';
-      this.targetAlpha = 0.4;
+      this.scheduleWeatherChange('cloudy', 0.4);
       this.transitionTimer = 1200 + Math.random() * 2400;   // 20–60 s
     } else if (roll < 0.64) {
-      this.current = 'drizzle';
-      this.targetAlpha = 0.55;
+      this.scheduleWeatherChange('drizzle', 0.55);
       this.transitionTimer = 900  + Math.random() * 1500;   // 15–40 s
     } else if (roll < 0.76) {
-      this.current = 'rain';
-      this.targetAlpha = 0.85;
+      this.scheduleWeatherChange('rain', 0.85);
       this.transitionTimer = 600  + Math.random() * 1800;   // 10–40 s
     } else if (roll < 0.84) {
-      this.current = 'fog';
-      this.targetAlpha = 0.45;
+      this.scheduleWeatherChange('fog', 0.45);
       this.transitionTimer = 1200 + Math.random() * 2400;   // 20–60 s
     } else if (roll < 0.90) {
-      this.current = 'heavy_rain';
-      this.targetAlpha = 1.0;
+      this.scheduleWeatherChange('heavy_rain', 1.0);
       this.transitionTimer = 480  + Math.random() * 960;    // 8–24 s
     } else if (roll < 0.94) {
-      this.current = 'snow';
-      this.targetAlpha = 0.80;
+      this.scheduleWeatherChange('snow', 0.80);
       this.transitionTimer = 900  + Math.random() * 1500;   // 15–40 s
     } else if (roll < 0.97) {
-      this.current = 'thunderstorm';
-      this.targetAlpha = 1.0;
+      this.scheduleWeatherChange('thunderstorm', 1.0);
       this.transitionTimer = 480  + Math.random() * 960;    // 8–24 s
     } else if (roll < 0.99) {
-      this.current = 'heavy_snow';
-      this.targetAlpha = 1.0;
+      this.scheduleWeatherChange('heavy_snow', 1.0);
       this.transitionTimer = 600  + Math.random() * 1200;   // 10–30 s
     } else {
-      this.current = 'hail';
-      this.targetAlpha = 1.0;
+      this.scheduleWeatherChange('hail', 1.0);
       this.transitionTimer = 240  + Math.random() * 480;    // 4–12 s
     }
   }
