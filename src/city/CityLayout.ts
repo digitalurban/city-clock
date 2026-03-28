@@ -155,6 +155,15 @@ export class CityLayout {
   constructionSite: ConstructionSiteDef | null = null;
   activeEvent: CityEvent | null = null;
 
+  // Chimney smoke source positions (top of each chimney)
+  chimneyPositions: { x: number; y: number }[] = [];
+
+  // Market stall positions (active on weekends / market days)
+  marketStalls: { x: number; y: number; awningColor: string; produceColors: string[] }[] = [];
+
+  // Cached awning shelter positions (standing under venue awnings)
+  awningSheltPositions: { x: number; y: number }[] = [];
+
   // Which grid cells are plaza (col, row)
   plazaCells: Set<string> = new Set();
   // Block types for generating varied city content
@@ -241,6 +250,9 @@ export class CityLayout {
     this.generateVenues(offsetX, offsetY, cellSize, validPlazaCols, validPlazaRows);
     this.generatePlazaFurniture();
     this.generateStreetLights(offsetX, offsetY, cellSize);
+    this.generateChimneyPositions();
+    this.generateMarketStalls();
+    this.generateAwningSheltPositions();
   }
 
   private assignBlockTypes(offsetX: number, offsetY: number, cellSize: number, plazaCols: number[], plazaRows: number[]) {
@@ -1823,6 +1835,129 @@ export class CityLayout {
         y >= h.y - margin && y <= h.y + h.h + margin) return true;
     }
     return false;
+  }
+
+  /** Collect the top position of every chimney for smoke emission */
+  private generateChimneyPositions() {
+    for (const h of this.houses) {
+      if (seededRandom(h.seed + 2000) > 0.35) {
+        const chimX = h.x + h.w * (0.7 + seededRandom(h.seed + 2010) * 0.2);
+        const chimY = h.y + h.h * 0.15; // top of chimney rectangle
+        this.chimneyPositions.push({ x: chimX, y: chimY });
+      }
+    }
+  }
+
+  /** True when the market should be active (weekends, or ~30% of weekdays) */
+  isMarketDay(): boolean {
+    const d = new Date();
+    const day = d.getDay(); // 0=Sun, 6=Sat
+    if (day === 0 || day === 6) return true;
+    // Deterministic weekday roll — changes each calendar day
+    const seed = d.getFullYear() * 10000 + d.getMonth() * 100 + d.getDate();
+    return seededRandom(seed) < 0.3;
+  }
+
+  /** Place 8 market stalls in two rows inside the delivery perimeter */
+  private generateMarketStalls() {
+    const dp = this.deliveryPerimeter;
+    const cx = (dp.leftX + dp.rightX) / 2;
+    const cy = (dp.topY + dp.bottomY) / 2;
+
+    const awningColors = ['#e63946','#f4a261','#e9c46a','#2a9d8f','#457b9d','#9b5de5','#f72585','#4cc9f0'];
+    const produceSets = [
+      ['#e63946','#f4a261','#a8dadc'],
+      ['#81b29a','#f4e285','#d62828'],
+      ['#ffb703','#fb8500','#8ecae6'],
+      ['#e9c46a','#f4a261','#e63946'],
+    ];
+
+    const cols = 4;
+    const xSpacing = 52;
+    const ySpacing = 42;
+
+    for (let row = 0; row < 2; row++) {
+      for (let col = 0; col < cols; col++) {
+        const idx = row * cols + col;
+        const sx = cx - (cols * xSpacing) / 2 + col * xSpacing + xSpacing / 2 - 10;
+        const sy = cy - ySpacing / 2 + row * ySpacing - 7;
+        this.marketStalls.push({
+          x: sx,
+          y: sy,
+          awningColor: awningColors[idx % awningColors.length],
+          produceColors: produceSets[idx % produceSets.length],
+        });
+      }
+    }
+  }
+
+  /** Draw market stalls — called each frame in the dynamic layer */
+  drawMarket(ctx: CanvasRenderingContext2D, nightAlpha: number) {
+    if (!this.isMarketDay()) return;
+    const hour = new Date().getHours();
+    if (hour < 8 || hour >= 19) return; // market closed at night
+
+    const dark = 1 - nightAlpha * 0.45;
+    const sw = 20, sh = 14;
+
+    for (const stall of this.marketStalls) {
+      const { x, y } = stall;
+
+      // Drop shadow for depth
+      ctx.fillStyle = 'rgba(0,0,0,0.18)';
+      ctx.fillRect(x + 3, y + 3, sw, sh);
+
+      // Awning canopy (viewed from above)
+      const ar = parseInt(stall.awningColor.slice(1, 3), 16);
+      const ag = parseInt(stall.awningColor.slice(3, 5), 16);
+      const ab = parseInt(stall.awningColor.slice(5, 7), 16);
+      ctx.fillStyle = `rgb(${Math.floor(ar * dark)},${Math.floor(ag * dark)},${Math.floor(ab * dark)})`;
+      ctx.fillRect(x, y, sw, sh);
+
+      // Lighter awning stripes
+      ctx.fillStyle = `rgba(255,255,255,${0.22 * dark})`;
+      for (let sx = 0; sx < sw; sx += 5) {
+        ctx.fillRect(x + sx, y, 2.5, sh);
+      }
+
+      // Produce items along the front edge
+      for (let i = 0; i < stall.produceColors.length; i++) {
+        const pr = parseInt(stall.produceColors[i].slice(1, 3), 16);
+        const pg = parseInt(stall.produceColors[i].slice(3, 5), 16);
+        const pb = parseInt(stall.produceColors[i].slice(5, 7), 16);
+        ctx.fillStyle = `rgb(${Math.floor(pr * dark)},${Math.floor(pg * dark)},${Math.floor(pb * dark)})`;
+        ctx.beginPath();
+        ctx.arc(x + 3 + i * 5, y + sh - 2, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Outline
+      ctx.strokeStyle = 'rgba(0,0,0,0.28)';
+      ctx.lineWidth = 0.8;
+      ctx.strokeRect(x, y, sw, sh);
+    }
+  }
+
+  /** Shelter positions just inside each venue awning — pedestrians retreat here in heavy rain */
+  private generateAwningSheltPositions() {
+    const aw = 14;
+    for (const v of this.venues) {
+      const count = (v.facingPlaza === 'top' || v.facingPlaza === 'bottom') ? 3 : 2;
+      for (let i = 0; i < count; i++) {
+        const t = (i + 1) / (count + 1);
+        let sx: number, sy: number;
+        if (v.facingPlaza === 'bottom') {
+          sx = v.x + v.w * t; sy = v.y + v.h + aw * 0.5;
+        } else if (v.facingPlaza === 'top') {
+          sx = v.x + v.w * t; sy = v.y - aw * 0.5;
+        } else if (v.facingPlaza === 'right') {
+          sx = v.x + v.w + aw * 0.5; sy = v.y + v.h * t;
+        } else {
+          sx = v.x - aw * 0.5; sy = v.y + v.h * t;
+        }
+        this.awningSheltPositions.push({ x: sx, y: sy });
+      }
+    }
   }
 }
 

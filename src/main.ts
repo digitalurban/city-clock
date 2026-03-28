@@ -2,6 +2,7 @@ import { CityLayout } from './city/CityLayout';
 import { Pedestrian, clearPedestrianState } from './entities/Pedestrian';
 import { Car } from './entities/Car';
 import { Bird, Flock, createFlock, createSparrowFlock, updateBirdFeeder, birdFeederActive, birdFeederX, birdFeederY } from './entities/Bird';
+import { ChimneySmoke } from './rendering/ChimneySmoke';
 import { ClockManager } from './clock/ClockManager';
 import { DayNightCycle } from './rendering/DayNightCycle';
 import { Weather } from './rendering/Weather';
@@ -15,6 +16,7 @@ let pedestrians: Pedestrian[] = [];
 let cars: Car[] = [];
 let flocks: Flock[] = [];
 let sparrowFlocks: Flock[] = [];
+const chimneySmoke = new ChimneySmoke();
 const clockManager = new ClockManager();
 const dayNight = new DayNightCycle();
 const weather = new Weather();
@@ -524,6 +526,9 @@ function resize() {
   // Sparrow flocks — start with one
   sparrowFlocks = [createSparrowFlock(layout)];
 
+  // Chimney smoke sources
+  chimneySmoke.setSources(layout.chimneyPositions);
+
   // Init weather with world dimensions
   weather.init(worldW, worldH);
 
@@ -618,6 +623,13 @@ function loop(timestamp: number = 0) {
   if (staticCanvas) {
     ctx.drawImage(staticCanvas, 0, 0, layout.width, layout.height);
   }
+
+  // Chimney smoke — above rooftops, below everything else
+  chimneySmoke.update();
+  chimneySmoke.draw(ctx);
+
+  // Market stalls — drawn in plaza before pedestrians
+  layout.drawMarket(ctx, nightAlpha);
 
   // Update clock targets
   const plazaCX = layout.plazaBounds.x + layout.plazaBounds.w / 2;
@@ -739,8 +751,8 @@ function loop(timestamp: number = 0) {
     }
   }
 
-  // Spawn new flock occasionally (max 3 active flocks)
-  if (flocks.length < 3 && Math.random() < 0.0003) {
+  // Spawn new flock occasionally (max 1 active seagull flock)
+  if (flocks.length < 1 && Math.random() < 0.0003) {
     flocks.push(createFlock(layout));
   }
   // Spawn sparrow flocks more frequently (max 4 active flocks)

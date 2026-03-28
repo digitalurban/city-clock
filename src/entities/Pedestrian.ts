@@ -100,6 +100,15 @@ export class Pedestrian {
   isWindowShopping: boolean = false;
   windowShopTimer: number = 0;
 
+  // Rain sheltering — standing under a venue awning
+  isSheltering: boolean = false;
+  shelterX: number = 0;
+  shelterY: number = 0;
+
+  // Market browsing — wandering between market stalls
+  isBrowsingMarket: boolean = false;
+  marketBrowseTimer: number = 0;
+
   // Group walking
   groupLeader: Pedestrian | null = null;
   groupFollowers: Pedestrian[] = [];
@@ -293,7 +302,13 @@ export class Pedestrian {
       this.sitX = seat.x;
       this.sitY = seat.y;
       this.sitTimer = 0;
-      this.sitDuration = 600 + Math.floor(Math.random() * 600);
+      // Longer sits during morning coffee and lunch rush
+      const hour = new Date().getHours() + new Date().getMinutes() / 60 + this.scheduleJitter;
+      let sitMult = 1.0;
+      if (hour >= 8 && hour < 9.5) sitMult = 1.4;   // morning coffee
+      if (hour >= 12 && hour < 13.5) sitMult = 1.8;  // lunch
+      if (hour >= 17.5 && hour < 20) sitMult = 1.5;  // after-work drinks
+      this.sitDuration = Math.floor((600 + Math.random() * 600) * sitMult);
       this.waypointX = seat.x;
       this.waypointY = seat.y;
       this.waypointTimer = 0;
@@ -393,7 +408,8 @@ export class Pedestrian {
 
       const isBusy = this.isSitting || this.isBenchSitting || this.socialMode
         || this.isQueuing || this.isWindowShopping || this.isCheckingPhone || this.isTakingPhoto
-        || this.isGoingHome || this.isAtHome || this.isAtWorkplace;
+        || this.isGoingHome || this.isAtHome || this.isAtWorkplace
+        || this.isSheltering || this.isBrowsingMarket;
 
       // --- Social chat mode ---
       if (this.socialMode) {
@@ -463,6 +479,54 @@ export class Pedestrian {
           ay += sdy * 0.1;
           this.vx *= 0.8;
           this.vy *= 0.8;
+        }
+      }
+
+      // --- Rain sheltering under awnings ---
+      if (this.isSheltering) {
+        const isHeavyRain = weatherType === 'rain' || weatherType === 'heavy_rain'
+          || weatherType === 'thunderstorm' || weatherType === 'hail';
+        if (!isHeavyRain || weatherIntensity < 0.35 || this.clockTarget || isDancing) {
+          // Weather eased or overridden — resume normal life
+          this.isSheltering = false;
+          const wp = layout.getRandomSidewalkWaypoint();
+          this.waypointX = wp.x;
+          this.waypointY = wp.y;
+          this.waypointTimer = 0;
+        } else {
+          const sdx = this.shelterX - this.x;
+          const sdy = this.shelterY - this.y;
+          ax += sdx * 0.12;
+          ay += sdy * 0.12;
+          this.vx *= 0.78;
+          this.vy *= 0.78;
+          // Face inward (toward the venue wall)
+          if (Math.abs(sdx) + Math.abs(sdy) < 5) {
+            const pb = layout.plazaBounds;
+            const toCenterX = (pb.x + pb.w / 2) - this.x;
+            const toCenterY = (pb.y + pb.h / 2) - this.y;
+            this.angle = Math.atan2(-toCenterY, -toCenterX); // face away from center (toward wall)
+          }
+        }
+      }
+
+      // --- Market browsing ---
+      if (this.isBrowsingMarket) {
+        this.marketBrowseTimer++;
+        const stallDuration = 180 + Math.random() * 240; // ~3-7 seconds per stall
+        if (this.marketBrowseTimer >= stallDuration || this.clockTarget || isDancing) {
+          this.isBrowsingMarket = false;
+          const wp = layout.getRandomSidewalkWaypoint();
+          this.waypointX = wp.x;
+          this.waypointY = wp.y;
+          this.waypointTimer = 0;
+        } else {
+          const sdx = this.waypointX - this.x;
+          const sdy = this.waypointY - this.y;
+          ax += sdx * 0.04;
+          ay += sdy * 0.04;
+          this.vx *= 0.88;
+          this.vy *= 0.88;
         }
       }
 
@@ -745,10 +809,55 @@ export class Pedestrian {
               }
             }
 
-            // Venue sitting — prefer cafes/restaurants
+            // Increase venue-visit probability during morning coffee and lunch rush
+            const nowHour = new Date().getHours() + new Date().getMinutes() / 60 + this.scheduleJitter;
+            const isMorningRush = nowHour >= 8 && nowHour < 9.5;
+            const isLunchRush = nowHour >= 12 && nowHour < 13.5;
+            const venueRollThreshold = (isMorningRush || isLunchRush) ? 0.22 : 0.12;
+
+            // Trigger rain sheltering — seek awning if in plaza during heavy rain
+            if (!scheduledAction && !this.isClockEligible && !this.isSheltering
+              && !this.isRidingBicycle && layout.isInPlaza(this.x, this.y)) {
+              const isHeavyRain = weatherType === 'rain' || weatherType === 'heavy_rain'
+                || weatherType === 'thunderstorm' || weatherType === 'hail';
+              if (isHeavyRain && weatherIntensity > 0.45) {
+                let nearest: { x: number; y: number } | null = null;
+                let nearestDist = 250;
+                for (const s of layout.awningSheltPositions) {
+                  const d = Math.hypot(s.x - this.x, s.y - this.y);
+                  if (d < nearestDist) { nearestDist = d; nearest = s; }
+                }
+                if (nearest) {
+                  this.isSheltering = true;
+                  this.shelterX = nearest.x;
+                  this.shelterY = nearest.y;
+                  this.waypointX = nearest.x;
+                  this.waypointY = nearest.y;
+                  this.waypointTimer = 0;
+                  this.thoughtBubble = 'idea';
+                  this.thoughtTimer = 90;
+                }
+              }
+            }
+
+            // Trigger market browsing — wander to a stall when market is active
+            if (!scheduledAction && !this.isClockEligible && !this.isBrowsingMarket
+              && layout.isMarketDay() && layout.isInPlaza(this.x, this.y)
+              && !isDancing && roll >= 0.35 && roll < 0.42) {
+              if (layout.marketStalls.length > 0) {
+                const stall = layout.marketStalls[Math.floor(Math.random() * layout.marketStalls.length)];
+                this.isBrowsingMarket = true;
+                this.marketBrowseTimer = 0;
+                this.waypointX = stall.x + 10;
+                this.waypointY = stall.y + 7;
+                this.waypointTimer = 0;
+              }
+            }
+
+            // Venue sitting — prefer cafes/restaurants, boosted during rush hours
             if (scheduledAction) {
               // Schedule already set the waypoint — skip random activity selection
-            } else if (!this.isClockEligible && roll < 0.12) {
+            } else if (!this.isClockEligible && roll < venueRollThreshold) {
               const cafeVenues = layout.venues.filter(v => v.type === 'cafe' || v.type === 'restaurant');
               const pool = cafeVenues.length > 0 ? cafeVenues : layout.venues;
               const venue = pool[Math.floor(Math.random() * pool.length)];
@@ -758,7 +867,8 @@ export class Pedestrian {
                 this.sitX = seat.x;
                 this.sitY = seat.y;
                 this.sitTimer = 0;
-                this.sitDuration = 600 + Math.random() * 600;
+                const sitMult = isMorningRush ? 1.4 : isLunchRush ? 1.8 : 1.0;
+                this.sitDuration = Math.floor((600 + Math.random() * 600) * sitMult);
                 this.waypointX = seat.x;
                 this.waypointY = seat.y;
                 this.waypointTimer = 0;
