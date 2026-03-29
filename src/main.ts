@@ -991,25 +991,7 @@ function loop(timestamp: number = 0) {
   // Wet road sheen
   weather.drawWetSheen(ctx, canvas.width, canvas.height);
 
-  // WebGL2 bloom — MUST run before film grain.
-  // texSubImage2D reads the main canvas as bloom input. If grain were applied first,
-  // near-threshold pixels would flicker in/out of bloom as the grain pattern changes
-  // (~15fps grain update × bloom threshold edge = visible glow shimmer on surfaces).
-  // Running bloom on the grain-free canvas keeps bloom sources stable.
-  if (postProcess.supported) {
-    postProcess.render(canvas, nightAlpha);
-    // Use 'lighter' (additive blend) NOT 'screen'.
-    // 'screen' is a CSS blend mode and is software-rendered in Canvas 2D,
-    // causing inconsistent GPU/software path switching between frames — the
-    // "flickering clear overlay" symptom. 'lighter' is a standard Porter-Duff
-    // mode and is always GPU-accelerated: result = src + dst (clamped).
-    // For bloom, black pixels add 0 (no effect) and bright glow pixels add
-    // their colour — visually identical to screen at typical bloom intensities.
-    ctx.save();
-    ctx.globalCompositeOperation = 'lighter';
-    ctx.drawImage(postProcess.getCanvas(), 0, 0);
-    ctx.restore();
-  }
+  // Bloom disabled for flicker diagnosis.
 
   // Film grain — drawn AFTER bloom so grain noise is never fed into the bloom
   // extractor. Use source-over (GPU-accelerated); overlay is software-rendered.
