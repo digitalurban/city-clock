@@ -80,12 +80,10 @@ export class PostProcess {
       antialias: false,
       depth: false,
       stencil: false,
-      // false: the EMA temporal accumulator was removed (no temporal smoothing).
-      // preserveDrawingBuffer:true forced Safari's Metal backend to copy the entire
-      // framebuffer before presenting every frame — expensive on all Safari variants.
-      // Without EMA we write a fresh bloom result each frame so we don't need to
-      // read back the previous frame's content.
-      preserveDrawingBuffer: false,
+      // true: allows main.ts to read the last bloom result on throttled frames
+      // (frames where render() is skipped). Bloom only runs every 2nd frame so
+      // the preserve cost is amortised — cheaper overall than texSubImage2D every frame.
+      preserveDrawingBuffer: true,
     }) as WebGL2RenderingContext | null;
 
     if (!gl) throw new Error('WebGL2 not available');
@@ -250,7 +248,8 @@ void main() {
 
   get supported(): boolean { return this._supported; }
 
-  /** The offscreen WebGL canvas holding the latest bloom frame. */
+  /** The WebGL overlay canvas holding the last rendered bloom frame.
+   *  preserveDrawingBuffer:true ensures it is valid on throttled (skipped) frames. */
   getCanvas(): HTMLCanvasElement { return this.overlayCanvas; }
 
 
@@ -303,8 +302,10 @@ void main() {
     // to bloom, so 5 shader passes would waste GPU for invisible output.
     if (t < 0.12) return;
 
-    // Strength: subtle golden warmth at dusk (t≈0.15-0.4), growing to full glow at night
-    const bloomStrength = 0.12 + Math.pow(t, 1.4) * 1.3;
+    // Strength: subtle golden warmth at dusk (t≈0.15-0.4), growing to full glow at night.
+    // No temporal EMA means full instantaneous strength every frame — kept lower than
+    // the old EMA value to avoid over-brightness from peak sources.
+    const bloomStrength = 0.04 + Math.pow(t, 1.4) * 0.40;
     // Threshold: very high at dusk (only direct light sources glow),
     // drops at night to let lit windows and lamp halos bloom too.
     const threshold = Math.max(0.52, 0.90 - t * 0.40);

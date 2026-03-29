@@ -42,6 +42,7 @@ const grainCanvas = (() => {
 let grainPattern: CanvasPattern | null = null; // created lazily after ctx is ready
 let grainOffset = { x: 0, y: 0 };
 let grainFrame = 0; // throttle grain updates to ~15fps so it reads as texture, not noise
+let bloomFrame = 0; // throttle bloom render to every 2nd frame — halves texSubImage2D cost
 
 let layout: CityLayout;
 let pedestrians: Pedestrian[] = [];
@@ -1000,8 +1001,12 @@ function loop(timestamp: number = 0) {
   weather.drawWetSheen(ctx, canvas.width, canvas.height);
 
   // WebGL2 bloom — MUST run before film grain.
+  // Throttle to every 2nd frame: halves the expensive texSubImage2D Canvas2D→WebGL
+  // upload (Safari's Metal pipeline has no fast-path for this cross-context copy).
+  // getCanvas() returns the 2D cache canvas which retains the previous result.
   if (postProcess.supported) {
-    postProcess.render(canvas, nightAlpha);
+    bloomFrame++;
+    if (bloomFrame % 2 === 0) postProcess.render(canvas, nightAlpha);
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
     ctx.drawImage(postProcess.getCanvas(), 0, 0);
