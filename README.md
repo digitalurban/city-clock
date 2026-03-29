@@ -38,7 +38,7 @@ A procedurally generated top-down city where pedestrians form a digital clock in
 - **Emergency vehicles** - police cars, ambulances and fire trucks with flashing sirens.
 - **Traffic system** - cars navigate the road network with traffic lights, braking for pedestrians and each other, smooth quadratic Bézier arc turns at junctions, and anti-gridlock logic.
 - **Day/night cycle** - real-time lighting based on system clock; deep dark-blue night sky with procedural stars and a crescent moon; street lights and plaza lamps cast distinct warm pools through the darkness; building windows glow in three colour temperatures (incandescent, daylight, TV-blue) on realistic occupancy schedules; car headlight beams cut through the night; all rendered in a correct depth order so light sources punch through the darkness rather than being dimmed by it.
-- **Weather** - procedural clouds with realistic multi-lobe shapes, 3D shading, and ground shadows drifting across the city.
+- **Weather** - procedural clouds with realistic multi-lobe shapes, 3D shading, and ground shadows drifting across the city. Fog renders as animated layered noise tendrils that drift in opposite directions rather than a flat overlay. Roads develop a specular wet sheen during rain that pulses slowly with shifting highlights
 - **Zoom and pan** - scroll-wheel zoom, click-drag pan, touch pinch and drag on mobile. The static city layer rebuilds at the current zoom level 300 ms after each gesture settles, so the background is always sharp at any magnification
 - **Adjustable population** - settings panel to control traffic (10-300) and people (112-500) counts live
 - **iOS PWA** - add to home screen on Safari for fullscreen standalone experience; handles orientation changes and visualViewport resizing
@@ -125,7 +125,8 @@ Dynamic live weather powered by the Open-Meteo API, with all 10 weather types fu
   - Widespread reflective puddles with sky and building silhouette reflections, ripple rings, and splash effects that dry gradually over time
   - Ground accumulative snow cover creates spreading white patches
   - Jagged lightning flash overlays during thunderstorms and hail
-  - Fog renders as a distinct grey-white screen overlay separate from the cloud layer
+  - Animated fog tendrils — two sin-wave noise layers scroll in opposite directions, creating organic wisps rather than a flat grey overlay
+  - Wet road sheen — a slowly shifting screen-blend specular gradient scales with puddle level, giving roads a convincing reflective quality during and after rain
 - **Responsive Pedestrians:** 100% of pedestrians deploy colourful umbrellas in rain or snow, sprint for venue awnings in heavy rain, and adjust walking pace by condition (drizzle slows slightly; hail triggers a full sprint; snow causes careful shuffling)
 
 ### Day/Night Atmosphere
@@ -145,15 +146,21 @@ Several passes work together to give the city depth and visual polish:
 - **Plaza paving** — a two-tone checkerboard floor (40px tiles), visible grout lines, a double inset perimeter border, and a central compass rose (concentric rings, 8 spokes, 4 cardinal lines) baked into the static canvas at zero runtime cost
 - **Road kerb lines** — a thin white edge stroke around every road rectangle defines the curb/gutter boundary and gives the road network visual structure
 - **Screen vignette** — a radial gradient from transparent at the centre to 36% black at the screen edges, drawn last in screen space; frames the city, gives it weight, and makes the plaza pop as the focal point
+- **Film grain** — a pre-generated 256×256 noise canvas is tiled over the full screen each frame at a random sub-pixel offset using `overlay` blend, adding tactile texture that's subtly stronger at night
+- **WebGL2 bloom** — a second canvas sits on top with `mix-blend-mode: screen`. Each frame bright pixels are extracted (threshold lowers from 0.92 at noon to 0.55 at midnight), blurred with a 4-pass separable Gaussian at ¼ resolution, and composited back. Street lamps, lit windows, car headlights and plaza lanterns bleed light into their surroundings — a noticeable halo effect at night, subtle on daytime bright areas. Falls back silently on devices without WebGL2
+- **Procedural audio** — rain (pink noise filtered to frequency bands matching drizzle → thunderstorm intensity), city hum (low-frequency drone), bird song (procedural chirp sequences active 5–9am), and on-demand thunder synthesis triggered by the lightning phase. AudioContext is created lazily on first user interaction to satisfy browser autoplay policies
 - **Time-of-day atmosphere** — morning mist (5–9am), golden hour amber (17–20h), and Sunday quiet blue tint, all composited in world space before the main dynamic layer
 
 ### Rendering Architecture
 
-1. **Static canvas** - roads, sidewalks, crosswalks, plaza (with decorative paving), buildings, houses, venues, parks, stars and moon pre-rendered to an offscreen canvas. Rebuilt when lighting changes *or* when zoom drifts more than 0.18 from the level it was last rendered at (debounced 300 ms after gesture settles). Canvas size is capped to stay within browser/iOS texture limits (~4096 px per dimension)
+1. **Static canvas** - roads, sidewalks, crosswalks, plaza (with decorative paving), building shadows, buildings, houses, venues, parks, stars and moon pre-rendered to an offscreen canvas. Rebuilt when lighting changes *or* when zoom drifts more than 0.18 from the level it was last rendered at (debounced 300 ms after gesture settles). Canvas size is capped to stay within browser/iOS texture limits (~4096 px per dimension)
 2. **Dynamic layer** - venue name labels (re-rasterised every frame at the current zoom for crisp text at any magnification), atmosphere overlays, chimney smoke, roadside bins, market stalls, newspaper stand, busker pitch, cars, pedestrians, dogs, dropped packages, construction crane, bird shadows, animated tree sway, and birds (drawn above weather with parallax height)
 3. **Light pass** - street lights, plaza lamp glows, and car headlight beams drawn after the night overlay so they punch through the darkness correctly
-4. **Vignette pass** - screen-space radial gradient drawn last over everything to frame the scene
-5. **DPR-aware** - canvas resolution scales with devicePixelRatio (capped at 2x) for crisp rendering on Retina displays; static canvas uses `imageSmoothingQuality = 'high'` for any residual upscaling during active zoom gestures
+4. **Atmosphere pass** - fog tendrils (two drifting noise layers) and wet road sheen composited in screen space after world-space weather
+5. **Film grain pass** - 256×256 tiled noise canvas with animated offset, `overlay` blend at ~4.5–7.5% opacity
+6. **WebGL2 bloom pass** - main canvas uploaded as texture to a sibling WebGL2 canvas; bright-extract → 4× Gaussian blur at ¼ res → composite output with `mix-blend-mode: screen`
+7. **Vignette pass** - screen-space radial gradient drawn last over everything to frame the scene
+8. **DPR-aware** - canvas resolution scales with devicePixelRatio (capped at 2x) for crisp rendering on Retina displays; static canvas uses `imageSmoothingQuality = 'high'` for any residual upscaling during active zoom gestures
 
 ### Battery & Performance
 
@@ -162,13 +169,16 @@ City Clock is designed to run efficiently as a always-on wallpaper or bedside cl
 - **Native 60fps** - the render loop runs at the display's native refresh rate for smooth animation; all timers and speeds are tuned for 60fps
 - **Visibility pause** - the loop stops entirely when the tab is hidden or the screen is off (via the Page Visibility API), dropping power draw to near zero when no one is watching
 - **Cloud caching** - each cloud is pre-rendered to an offscreen canvas and cached; only rebuilt when storm intensity changes the cloud colour. Eliminates ~200 `createRadialGradient` calls per frame
+- **Bloom early-out** - the WebGL2 bloom pass clears to transparent and skips all shader passes during full daylight (strength floor 0.18 ensures it still fires for headlights and bright awnings). FBOs are allocated at ¼ screen resolution to keep GPU memory and fill-rate cost minimal (~1–2 ms per frame)
 - **Idle particle skip** - the 2000-particle rain pool is only iterated while `alpha > 0.01`; fully settled clear weather skips the loop entirely. During cross-fade transitions the pool keeps animating so particles fade out naturally rather than disappearing mid-fall
 - **Single `Date.now()` per frame** - shared time value computed once before the particle loop rather than per-particle
 
 ## Tech Stack
 
 - **TypeScript** + **Vite** for development and bundling
-- **HTML Canvas 2D** for all rendering (no WebGL, no libraries)
+- **HTML Canvas 2D** for all city rendering — roads, buildings, pedestrians, weather, lighting
+- **WebGL2** for the post-processing bloom pass (sibling overlay canvas, graceful fallback)
+- **Web Audio API** for procedural ambient sound
 - Zero runtime dependencies
 
 ## Running Locally

@@ -6,10 +6,36 @@ import { ChimneySmoke } from './rendering/ChimneySmoke';
 import { ClockManager } from './clock/ClockManager';
 import { DayNightCycle } from './rendering/DayNightCycle';
 import { Weather } from './rendering/Weather';
+import { PostProcess } from './rendering/PostProcess';
+import { AudioEngine } from './rendering/AudioEngine';
 import { TOTAL_PEDESTRIANS, CLOCK_ELIGIBLE_COUNT, TOTAL_CARS, setTotalPedestrians, setTotalCars } from './utils/constants';
 
 const canvas = document.getElementById('cityCanvas') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d', { alpha: false })!;
+
+// --- Post-processing bloom overlay ---
+const postProcess = new PostProcess(canvas);
+
+// --- Procedural audio ---
+const audioEngine = new AudioEngine();
+document.addEventListener('click', () => audioEngine.resume(), { once: true });
+document.addEventListener('touchstart', () => audioEngine.resume(), { once: true });
+
+// --- Film grain canvas (pre-generated) ---
+const grainCanvas = (() => {
+  const gc = document.createElement('canvas');
+  gc.width = gc.height = 256;
+  const gx = gc.getContext('2d')!;
+  const img = gx.createImageData(256, 256);
+  for (let i = 0; i < img.data.length; i += 4) {
+    const v = Math.floor(Math.random() * 255);
+    img.data[i] = img.data[i + 1] = img.data[i + 2] = v;
+    img.data[i + 3] = 255;
+  }
+  gx.putImageData(img, 0, 0);
+  return gc;
+})();
+let grainOffset = { x: 0, y: 0 };
 
 let layout: CityLayout;
 let pedestrians: Pedestrian[] = [];
@@ -611,6 +637,7 @@ function buildStaticCanvas(nightAlpha: number) {
   layout.drawParks(sctx, nightAlpha);
 
   layout.drawPlazaBenches(sctx, nightAlpha);
+  layout.drawShadows(sctx, nightAlpha);
   layout.drawBuildings(sctx, nightAlpha);
   layout.drawHouses(sctx, nightAlpha);
   layout.drawVenues(sctx, nightAlpha);
@@ -901,6 +928,12 @@ function loop(timestamp: number = 0) {
   // Weather effects in world space
   weather.drawWorldEffects(ctx, nightAlpha);
 
+  // Fog tendrils (screen space, after world effects)
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  weather.drawFogTendrils(ctx, canvas.width / dpr, canvas.height / dpr, nightAlpha);
+  // Restore world transform for sparrow/seagull flocks
+  ctx.setTransform(dpr * zoom, 0, 0, dpr * zoom, panX * dpr, panY * dpr);
+
   // Sparrow flocks — drawn below seagulls (lower altitude)
   for (const flock of sparrowFlocks) {
     if (!flock.active) continue;
@@ -933,6 +966,26 @@ function loop(timestamp: number = 0) {
   // Weather screen overlay
   weather.drawScreenOverlay(ctx, canvas.width, canvas.height);
 
+  // Wet road sheen
+  weather.drawWetSheen(ctx, canvas.width / dpr, canvas.height / dpr);
+
+  // Film grain (subtle, animated)
+  grainOffset.x = Math.random() * 256;
+  grainOffset.y = Math.random() * 256;
+  ctx.save();
+  ctx.globalAlpha = 0.045 + nightAlpha * 0.03;
+  ctx.globalCompositeOperation = 'overlay';
+  const gw = canvas.width / dpr, gh = canvas.height / dpr;
+  for (let gx2 = -256 + (grainOffset.x % 256); gx2 < gw; gx2 += 256) {
+    for (let gy2 = -256 + (grainOffset.y % 256); gy2 < gh; gy2 += 256) {
+      ctx.drawImage(grainCanvas, gx2, gy2);
+    }
+  }
+  ctx.restore();
+
+  // WebGL2 bloom (reads from main canvas, composites on overlay)
+  postProcess.render(canvas, nightAlpha);
+
   // Vignette — subtle radial darkening at the screen edges to frame the scene
   {
     const vw = canvas.width, vh = canvas.height;
@@ -943,11 +996,23 @@ function loop(timestamp: number = 0) {
     ctx.fillRect(0, 0, vw, vh);
   }
 
+  // Update audio
+  if (audioEngine.isActive) {
+    const _now = new Date();
+    const hour = _now.getHours() + _now.getMinutes() / 60;
+    audioEngine.update(weather.type, weather.intensity, nightAlpha, hour);
+    // Trigger thunder on lightning
+    if (weather.type === 'thunderstorm' && Math.random() < 0.003) {
+      audioEngine.triggerThunder(Math.random() * 1.5);
+    }
+  }
+
   requestAnimationFrame(loop);
 }
 
 window.addEventListener('resize', () => {
   resize();
+  postProcess.resize(canvas.width, canvas.height);
 });
 
 // iOS: viewport dimensions may not update immediately on rotation

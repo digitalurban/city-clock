@@ -1243,6 +1243,34 @@ export class CityLayout {
     });
   }
 
+  drawShadows(ctx: CanvasRenderingContext2D, nightAlpha: number) {
+    const shadow = this.getShadowOffset();
+    if (shadow.alpha < 0.01) return;
+    const alpha = shadow.alpha * (1 - nightAlpha * 0.8) * 0.45;
+    if (alpha < 0.01) return;
+    ctx.save();
+    ctx.fillStyle = `rgba(30, 25, 20, ${alpha})`;
+    // Building shadows
+    for (const b of this.buildings) {
+      ctx.beginPath();
+      ctx.rect(b.x + shadow.dx, b.y + shadow.dy, b.w, b.h);
+      ctx.fill();
+    }
+    // House shadows
+    for (const h of this.houses) {
+      ctx.beginPath();
+      ctx.rect(h.x + shadow.dx, h.y + shadow.dy, h.w, h.h);
+      ctx.fill();
+    }
+    // Venue shadows
+    for (const v of this.venues) {
+      ctx.beginPath();
+      ctx.rect(v.x + shadow.dx, v.y + shadow.dy, v.w, v.h);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
   drawBuildings(ctx: CanvasRenderingContext2D, nightAlpha: number) {
     const shadow = this.getShadowOffset();
     for (const b of this.buildings) {

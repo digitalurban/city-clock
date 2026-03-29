@@ -104,6 +104,12 @@ export class Weather {
   private snowLevel: number = 0;
   private lightningPhase: number = 0;
 
+  // Fog noise system
+  private fogNoiseCanvas: HTMLCanvasElement | null = null;
+  private fogNoiseCtx: CanvasRenderingContext2D | null = null;
+  private fogOffset1 = { x: 0, y: 0 };
+  private fogOffset2 = { x: 0, y: 0 };
+
   // Real weather from Open-Meteo
   public useRealWeather: boolean = false;
   private realWeatherFetched: boolean = false;
@@ -253,6 +259,8 @@ export class Weather {
         rotation: Math.random() * Math.PI,
       });
     }
+
+    this.buildFogNoise();
   }
 
   private newDrop(): RainDrop {
@@ -426,6 +434,12 @@ export class Weather {
         cloud.x = -cloud.w;
         cloud.y = Math.random() * this.worldH * 0.85;
       }
+    }
+
+    // Animate fog layers
+    if (this.current === 'fog') {
+      this.fogOffset1.x += 0.12; this.fogOffset1.y += 0.05;
+      this.fogOffset2.x -= 0.07; this.fogOffset2.y += 0.09;
     }
   }
 
@@ -730,5 +744,77 @@ export class Weather {
         ctx.fillRect(0, 0, screenW, screenH);
       }
     }
+  }
+
+  private buildFogNoise() {
+    const size = 512;
+    const c = document.createElement('canvas');
+    c.width = c.height = size;
+    const ctx = c.getContext('2d')!;
+    // Build layered smooth noise using sin/cos octaves
+    const img = ctx.createImageData(size, size);
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        // Two octaves of smooth noise using sin waves
+        const v1 = Math.sin(x * 0.04 + 1.3) * Math.cos(y * 0.05 + 0.7);
+        const v2 = Math.sin(x * 0.09 - 0.5) * Math.cos(y * 0.08 + 2.1);
+        const v3 = Math.sin(x * 0.15 + y * 0.12) * 0.5;
+        const n = (v1 * 0.5 + v2 * 0.3 + v3 * 0.2 + 1) * 0.5; // 0-1
+        const a = Math.floor(n * 255);
+        const idx = (y * size + x) * 4;
+        img.data[idx] = img.data[idx + 1] = img.data[idx + 2] = 200;
+        img.data[idx + 3] = a;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    this.fogNoiseCanvas = c;
+    this.fogNoiseCtx = ctx;
+  }
+
+  drawFogTendrils(ctx: CanvasRenderingContext2D, screenW: number, screenH: number, nightAlpha: number) {
+    if (!this.fogNoiseCanvas || this.current !== 'fog' || this.alpha < 0.1) return;
+    const fogAlpha = Math.min(1, (this.alpha - 0.1) / 0.35) * 0.55 * (1 - nightAlpha * 0.3);
+    if (fogAlpha < 0.01) return;
+    ctx.save();
+    // Layer 1: slow drift
+    ctx.globalAlpha = fogAlpha * 0.6;
+    ctx.globalCompositeOperation = 'source-over';
+    const n = this.fogNoiseCanvas;
+    const sx1 = this.fogOffset1.x % 512;
+    const sy1 = this.fogOffset1.y % 512;
+    // Tile the noise canvas across the screen
+    for (let tx = -512; tx < screenW + 512; tx += 512) {
+      for (let ty = -512; ty < screenH + 512; ty += 512) {
+        ctx.drawImage(n, tx + sx1, ty + sy1);
+      }
+    }
+    // Layer 2: faster, different direction
+    ctx.globalAlpha = fogAlpha * 0.4;
+    const sx2 = this.fogOffset2.x % 512;
+    const sy2 = this.fogOffset2.y % 512;
+    for (let tx = -512; tx < screenW + 512; tx += 512) {
+      for (let ty = -512; ty < screenH + 512; ty += 512) {
+        ctx.drawImage(n, tx + sx2, ty + sy2);
+      }
+    }
+    ctx.restore();
+  }
+
+  drawWetSheen(ctx: CanvasRenderingContext2D, screenW: number, screenH: number) {
+    const wetness = this.puddleLevel * Math.min(1, this.alpha * 2);
+    if (wetness < 0.02) return;
+    // Subtle horizontal specular bands that drift slowly over wet roads
+    const time = Date.now() / 4000;
+    ctx.save();
+    ctx.globalAlpha = wetness * 0.06;
+    ctx.globalCompositeOperation = 'screen';
+    const grad = ctx.createLinearGradient(0, 0, screenW, 0);
+    grad.addColorStop(0, 'rgba(100,130,180,0)');
+    grad.addColorStop(0.3 + Math.sin(time) * 0.1, 'rgba(140,170,220,1)');
+    grad.addColorStop(0.7 + Math.cos(time * 0.7) * 0.1, 'rgba(100,130,180,1)');
+    grad.addColorStop(1, 'rgba(100,130,180,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, screenW, screenH);
+    ctx.restore();
   }
 }
