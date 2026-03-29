@@ -22,7 +22,10 @@ const audioEngine = new AudioEngine();
 document.addEventListener('click', () => audioEngine.resume(), { once: true });
 document.addEventListener('touchstart', () => audioEngine.resume(), { once: true });
 
-// --- Film grain canvas (pre-generated) ---
+// --- Film grain — single CanvasPattern tile, offset via setTransform ---
+// Using createPattern + one fillRect instead of tiling drawImage calls.
+// On mobile Safari, each drawImage call is expensive; one fillRect with a
+// repeating pattern is GPU-accelerated and has no per-tile overhead.
 const grainCanvas = (() => {
   const gc = document.createElement('canvas');
   gc.width = gc.height = 256;
@@ -36,8 +39,9 @@ const grainCanvas = (() => {
   gx.putImageData(img, 0, 0);
   return gc;
 })();
+let grainPattern: CanvasPattern | null = null; // created lazily after ctx is ready
 let grainOffset = { x: 0, y: 0 };
-let grainFrame = 0; // throttle grain updates to ~20fps so it doesn't shimmer
+let grainFrame = 0; // throttle grain updates to ~15fps so it reads as texture, not noise
 
 let layout: CityLayout;
 let pedestrians: Pedestrian[] = [];
@@ -724,10 +728,11 @@ function loop(timestamp: number = 0) {
   // Apply zoom + pan + DPR transform
   ctx.setTransform(dpr * zoom, 0, 0, dpr * zoom, panX * dpr, panY * dpr);
 
-  // Draw cached static city — use high-quality smoothing for any residual upscale
+  // Draw cached static city — medium smoothing is indistinguishable at normal zoom
+  // and avoids Safari forcing software Lanczos resampling on the 8MP static canvas.
   if (staticCanvas) {
     ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
+    ctx.imageSmoothingQuality = 'medium';
     ctx.drawImage(staticCanvas, 0, 0, layout.width, layout.height);
   }
 
@@ -1013,15 +1018,15 @@ function loop(timestamp: number = 0) {
     grainOffset.x = Math.random() * 256;
     grainOffset.y = Math.random() * 256;
   }
+  if (!grainPattern) grainPattern = ctx.createPattern(grainCanvas, 'repeat')!;
+  const grainMatrix = new DOMMatrix();
+  grainMatrix.translateSelf(grainOffset.x % 256, grainOffset.y % 256);
+  grainPattern.setTransform(grainMatrix);
   ctx.save();
   ctx.globalAlpha = 0.025 + nightAlpha * 0.02;
   ctx.globalCompositeOperation = 'source-over';
-  const gw = canvas.width, gh = canvas.height;
-  for (let gx2 = -256 + (grainOffset.x % 256); gx2 < gw; gx2 += 256) {
-    for (let gy2 = -256 + (grainOffset.y % 256); gy2 < gh; gy2 += 256) {
-      ctx.drawImage(grainCanvas, gx2, gy2);
-    }
-  }
+  ctx.fillStyle = grainPattern;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.restore();
 
   // Vignette — subtle radial darkening at the screen edges to frame the scene
