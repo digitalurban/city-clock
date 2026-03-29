@@ -255,6 +255,11 @@ void main() {
   /** The offscreen WebGL canvas holding the latest bloom frame. */
   getCanvas(): HTMLCanvasElement { return this.overlayCanvas; }
 
+  /** Clear the temporal accumulator so the next frame starts bloom fresh.
+   *  Call whenever the scene has shifted (zoom/pan changed) so old bloom
+   *  halos don't ghost at stale screen positions. */
+  resetAccumulator() { this._bloomTAInitialised = false; }
+
   resize(w: number, h: number) {
     if (!this._supported || !this.gl) return;
 
