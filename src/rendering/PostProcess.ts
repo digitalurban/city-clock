@@ -14,9 +14,6 @@ export class PostProcess {
 
   // texSubImage2D is cheaper than texImage2D after first upload (no realloc)
   private _texSceneInitialised = false;
-  // Temporal bloom accumulator: overlay canvas retains previous frame (preserveDrawingBuffer:true).
-  // On first frame / after resize we clear it so the EMA starts from zero.
-  private _bloomTAInitialised = false;
 
   // Shaders / programs
   private progExtract: WebGLProgram | null = null;
@@ -83,11 +80,12 @@ export class PostProcess {
       antialias: false,
       depth: false,
       stencil: false,
-      // MUST be true: with false the back-buffer content is undefined after the
-      // browser presents the canvas. Even offscreen, some implementations clear
-      // it immediately, causing the ctx.drawImage() read to see stale/black
-      // pixels every other frame — the "flickering clear overlay" symptom.
-      preserveDrawingBuffer: true,
+      // false: the EMA temporal accumulator was removed (no temporal smoothing).
+      // preserveDrawingBuffer:true forced Safari's Metal backend to copy the entire
+      // framebuffer before presenting every frame — expensive on all Safari variants.
+      // Without EMA we write a fresh bloom result each frame so we don't need to
+      // read back the previous frame's content.
+      preserveDrawingBuffer: false,
     }) as WebGL2RenderingContext | null;
 
     if (!gl) throw new Error('WebGL2 not available');
@@ -255,10 +253,6 @@ void main() {
   /** The offscreen WebGL canvas holding the latest bloom frame. */
   getCanvas(): HTMLCanvasElement { return this.overlayCanvas; }
 
-  /** Clear the temporal accumulator so the next frame starts bloom fresh.
-   *  Call whenever the scene has shifted (zoom/pan changed) so old bloom
-   *  halos don't ghost at stale screen positions. */
-  resetAccumulator() { this._bloomTAInitialised = false; }
 
   resize(w: number, h: number) {
     if (!this._supported || !this.gl) return;
@@ -298,7 +292,6 @@ void main() {
     if (srcCanvas.width !== this.fullW || srcCanvas.height !== this.fullH) {
       this.resize(srcCanvas.width, srcCanvas.height);
       this._texSceneInitialised = false; // must reallocate after resize
-      this._bloomTAInitialised = false; // must clear overlay so EMA starts fresh
     }
 
     // 2. Compute bloom strength and threshold.
@@ -308,15 +301,7 @@ void main() {
 
     // Skip during true midday (before dusk starts) — no visible bright sources
     // to bloom, so 5 shader passes would waste GPU for invisible output.
-    if (t < 0.12) {
-      const gl = this.gl;
-      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-      gl.viewport(0, 0, this.overlayCanvas.width, this.overlayCanvas.height);
-      gl.clearColor(0, 0, 0, 0);
-      gl.clear(gl.COLOR_BUFFER_BIT);
-      this._bloomTAInitialised = false; // reset so EMA starts clean at next dusk
-      return;
-    }
+    if (t < 0.12) return;
 
     // Strength: subtle golden warmth at dusk (t≈0.15-0.4), growing to full glow at night
     const bloomStrength = 0.12 + Math.pow(t, 1.4) * 1.3;
@@ -380,34 +365,13 @@ void main() {
     // Pass 5: blur V wider
     blurPass(this.texBlurA, this.fboBlurB, 0, 1.5 / hh);
 
-    // ── Pass 6: composite → overlay canvas (temporal EMA blend) ─────────────
-    // preserveDrawingBuffer:true means the overlay retains last frame's bloom.
-    // We blend: output = 0.25*current + 0.75*previous (EMA, τ≈4 frames).
-    // This smooths out frame-to-frame variation from moving objects crossing
-    // near-threshold light sources — no extra FBO needed.
+    // ── Pass 6: composite → overlay canvas ──────────────────────────────────
+    // No temporal EMA — write the current frame's bloom directly. Avoids the
+    // need for preserveDrawingBuffer (which forced Safari Metal to copy the
+    // entire framebuffer before every present, a significant per-frame cost).
+    // Alpha is forced to 1.0 so Canvas2D 'lighter' composite reads RGB directly.
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, this.overlayCanvas.width, this.overlayCanvas.height);
-
-    if (!this._bloomTAInitialised) {
-      // First frame or post-resize: clear so EMA doesn't start from garbage
-      gl.clearColor(0, 0, 0, 0);
-      gl.clear(gl.COLOR_BUFFER_BIT);
-      this._bloomTAInitialised = true;
-    }
-
-    // EMA blend: RGB = 0.10*current + 0.90*previous (τ ≈ 9 frames).
-    // Lower current-frame weight (was 0.25) damps frame-to-frame variation from
-    // moving bright sources (car headlights, venue glows) without ghosting badly —
-    // at 60 fps, τ=9 frames ≈ 150ms, below the ~200ms flicker-fusion threshold.
-    // Alpha is forced to 1.0 (ONE, ZERO) so Canvas2D drawImage reads RGB directly.
-    gl.enable(gl.BLEND);
-    gl.blendColor(0, 0, 0, 0.10);
-    gl.blendFuncSeparate(
-      gl.CONSTANT_ALPHA,         // RGB src factor: 0.25
-      gl.ONE_MINUS_CONSTANT_ALPHA, // RGB dst factor: 0.75
-      gl.ONE,                    // Alpha src factor: keep shader's 1.0
-      gl.ZERO                    // Alpha dst factor: discard old alpha
-    );
 
     gl.useProgram(this.progComposite);
     gl.activeTexture(gl.TEXTURE0);
@@ -415,8 +379,6 @@ void main() {
     gl.uniform1i(this.uBloom, 0);
     gl.uniform1f(this.uStrength, bloomStrength);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-
-    gl.disable(gl.BLEND);
 
     gl.bindVertexArray(null);
   }

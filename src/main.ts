@@ -77,10 +77,6 @@ function scheduleStaticRebuild() {
 let zoom = 1.0;
 let panX = 0;
 let panY = 0;
-// Track previous frame's zoom/pan to detect scene movement for bloom reset
-let _prevZoom = zoom;
-let _prevPanX = panX;
-let _prevPanY = panY;
 let minZoom = 0.5;
 const MAX_ZOOM = 5.0;
 
@@ -1004,21 +1000,13 @@ function loop(timestamp: number = 0) {
   weather.drawWetSheen(ctx, canvas.width, canvas.height);
 
   // WebGL2 bloom — MUST run before film grain.
-  // Reset temporal accumulator if the scene moved (zoom/pan changed) so old
-  // bloom halos don't ghost at stale screen positions during pinch/pan.
   if (postProcess.supported) {
-    if (zoom !== _prevZoom || panX !== _prevPanX || panY !== _prevPanY) {
-      postProcess.resetAccumulator();
-    }
     postProcess.render(canvas, nightAlpha);
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
     ctx.drawImage(postProcess.getCanvas(), 0, 0);
     ctx.restore();
   }
-  _prevZoom = zoom;
-  _prevPanX = panX;
-  _prevPanY = panY;
 
   // Film grain — drawn AFTER bloom so grain noise is never fed into the bloom
   // extractor. Use source-over (GPU-accelerated); overlay is software-rendered.
