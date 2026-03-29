@@ -48,14 +48,13 @@ export class PostProcess {
   private uStrength: WebGLUniformLocation | null = null;
 
   constructor(mainCanvas: HTMLCanvasElement) {
-    // Create overlay canvas
+    // Keep the WebGL canvas purely offscreen — never added to the DOM.
+    // CSS mix-blend-mode forces the browser compositor to blend two GPU layers
+    // every frame, which is expensive. Instead, main.ts reads the bloom output
+    // via getCanvas() and composites it onto the main canvas with a JS
+    // ctx.drawImage(...) call using globalCompositeOperation='screen', which
+    // lets the GPU handle the copy without CSS compositor overhead.
     const oc = document.createElement('canvas');
-    oc.style.cssText =
-      'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;mix-blend-mode:screen;z-index:1';
-    // Insert as sibling after mainCanvas
-    if (mainCanvas.parentNode) {
-      mainCanvas.parentNode.insertBefore(oc, mainCanvas.nextSibling);
-    }
     this.overlayCanvas = oc;
 
     try {
@@ -235,9 +234,10 @@ void main() {
 
   // ── Public API ─────────────────────────────────────────────────────────────
 
-  get supported(): boolean {
-    return this._supported;
-  }
+  get supported(): boolean { return this._supported; }
+
+  /** The offscreen WebGL canvas holding the latest bloom frame. */
+  getCanvas(): HTMLCanvasElement { return this.overlayCanvas; }
 
   resize(w: number, h: number) {
     if (!this._supported || !this.gl) return;
@@ -279,13 +279,24 @@ void main() {
     }
 
     // 2. Compute bloom strength and threshold.
-    // A small floor (0.18) keeps the effect alive during the day so car
-    // headlights, bright venue awnings and the sun-lit plaza show a subtle
-    // glow. At full night the strength rises to ~1.4 for strong light bleed.
     const t = nightAlpha / 0.6; // 0 = noon, 1 = full night
+
+    // Skip the entire pipeline during full daylight — threshold of 0.92 means
+    // almost nothing passes the bright-extract stage anyway, so running 5 shader
+    // passes would burn GPU time for invisible output. Kicks in at dusk (~5pm).
+    if (t < 0.08) {
+      // Clear the overlay so any stale bloom from last night doesn't linger.
+      const gl = this.gl;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, 0, this.overlayCanvas.width, this.overlayCanvas.height);
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      return;
+    }
+
     const bloomStrength = 0.18 + Math.pow(t, 1.1) * 1.2;
-    // High threshold during the day (only the very brightest pixels bloom);
-    // lower at night so lit windows and lamp halos are included.
+    // High threshold at dusk (only the very brightest pixels bloom);
+    // lower at full night so lit windows and lamp halos are included.
     const threshold = Math.max(0.55, 0.92 - t * 0.42);
 
     const gl = this.gl;

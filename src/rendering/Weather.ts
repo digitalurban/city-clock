@@ -806,8 +806,9 @@ export class Weather {
     // Subtle horizontal specular bands that drift slowly over wet roads
     const time = Date.now() / 4000;
     ctx.save();
-    ctx.globalAlpha = wetness * 0.06;
-    ctx.globalCompositeOperation = 'screen';
+    // Use source-over not 'screen' — non-standard blend modes are software-rendered.
+    ctx.globalAlpha = wetness * 0.07;
+    ctx.globalCompositeOperation = 'source-over';
     const grad = ctx.createLinearGradient(0, 0, screenW, 0);
     grad.addColorStop(0, 'rgba(100,130,180,0)');
     grad.addColorStop(0.3 + Math.sin(time) * 0.1, 'rgba(140,170,220,1)');

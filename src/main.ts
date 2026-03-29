@@ -969,12 +969,14 @@ function loop(timestamp: number = 0) {
   // Wet road sheen
   weather.drawWetSheen(ctx, canvas.width / dpr, canvas.height / dpr);
 
-  // Film grain (subtle, animated)
+  // Film grain (subtle, animated).
+  // Use source-over, NOT overlay — 'overlay' is software-rendered on most
+  // platforms and adds ~3-5 ms per frame. source-over is GPU-accelerated.
   grainOffset.x = Math.random() * 256;
   grainOffset.y = Math.random() * 256;
   ctx.save();
-  ctx.globalAlpha = 0.045 + nightAlpha * 0.03;
-  ctx.globalCompositeOperation = 'overlay';
+  ctx.globalAlpha = 0.04 + nightAlpha * 0.025;
+  ctx.globalCompositeOperation = 'source-over';
   const gw = canvas.width / dpr, gh = canvas.height / dpr;
   for (let gx2 = -256 + (grainOffset.x % 256); gx2 < gw; gx2 += 256) {
     for (let gy2 = -256 + (grainOffset.y % 256); gy2 < gh; gy2 += 256) {
@@ -983,8 +985,16 @@ function loop(timestamp: number = 0) {
   }
   ctx.restore();
 
-  // WebGL2 bloom (reads from main canvas, composites on overlay)
-  postProcess.render(canvas, nightAlpha);
+  // WebGL2 bloom — render to offscreen WebGL canvas, then composite onto the
+  // main canvas with JS screen blend. This avoids the CSS compositor overhead
+  // of mix-blend-mode:screen which forces separate GPU layer blending every frame.
+  if (postProcess.supported) {
+    postProcess.render(canvas, nightAlpha);
+    ctx.save();
+    ctx.globalCompositeOperation = 'screen';
+    ctx.drawImage(postProcess.getCanvas(), 0, 0);
+    ctx.restore();
+  }
 
   // Vignette — subtle radial darkening at the screen edges to frame the scene
   {
