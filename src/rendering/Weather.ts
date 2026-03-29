@@ -35,6 +35,10 @@ interface Cloud {
   layer: number; // 0 = far background, 1 = mid, 2 = near foreground
   // Cached offscreen render — rebuilt when cloud moves >4px or grey changes
   cachedCanvas?: HTMLCanvasElement;
+  // Pre-rendered black silhouette for the ground shadow. Built alongside
+  // cachedCanvas so the shadow draw is a plain drawImage with globalAlpha —
+  // ctx.filter='brightness(0)' is software-rendered and kills GPU acceleration.
+  cachedShadow?: HTMLCanvasElement;
   cachedGrey?: number;
   cachedX?: number; // x when cache was last built
 }
@@ -695,23 +699,37 @@ export class Weather {
         drawPath();
         oc.stroke();
 
+        // Pre-render a black silhouette for the ground shadow.
+        // ctx.filter='brightness(0)' is software-rendered and kills GPU accel —
+        // instead bake the black shape once here and blit it cheaply each frame.
+        if (!cloud.cachedShadow) cloud.cachedShadow = document.createElement('canvas');
+        cloud.cachedShadow.width = cw;
+        cloud.cachedShadow.height = ch;
+        const sc2 = cloud.cachedShadow.getContext('2d')!;
+        sc2.clearRect(0, 0, cw, ch);
+        sc2.fillStyle = 'rgb(0,0,0)';
+        sc2.beginPath();
+        for (const p of puffs) {
+          sc2.moveTo(ox + p.px + p.r, oy + p.py);
+          sc2.arc(ox + p.px, oy + p.py, p.r, 0, Math.PI * 2);
+        }
+        sc2.fill();
+
         cloud.cachedGrey = grey;
-        cloud.cachedX = cloud.x; // record x at build time (unused but useful for debug)
+        cloud.cachedX = cloud.x;
       }
 
       const hw = cloud.w / 2;
       const hh = cloud.h / 2;
       const pad = 4;
 
-      // Optional ground shadow (cheap — just blit the cache darkened)
-      if (cloud.layer <= 1 && layerAlpha > 0.03) {
+      // Ground shadow — plain drawImage with globalAlpha, no ctx.filter needed
+      if (cloud.layer <= 1 && layerAlpha > 0.03 && cloud.cachedShadow) {
         const shadowOffsetY = cloud.layer === 0 ? 80 : 40;
         const shadowAlpha = layerAlpha * (cloud.layer === 0 ? 0.06 : 0.08);
         ctx.save();
         ctx.globalAlpha = shadowAlpha;
-        ctx.filter = 'brightness(0)'; // silhouette
-        ctx.drawImage(cloud.cachedCanvas!, cloud.x - hw - pad + hw * 0.1, cloud.y - hh - pad + shadowOffsetY);
-        ctx.filter = 'none';
+        ctx.drawImage(cloud.cachedShadow, cloud.x - hw - pad + hw * 0.1, cloud.y - hh - pad + shadowOffsetY);
         ctx.restore();
       }
 

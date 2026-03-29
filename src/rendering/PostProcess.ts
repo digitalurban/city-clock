@@ -12,6 +12,12 @@ export class PostProcess {
   private gl: WebGL2RenderingContext | null = null;
   private overlayCanvas: HTMLCanvasElement;
 
+  // Performance: skip every other frame (bloom changes slowly enough that
+  // 30fps is imperceptible for a glow effect, halving GPU texture upload cost)
+  private _frameSkip = 0;
+  // texSubImage2D is cheaper than texImage2D after first upload (no realloc)
+  private _texSceneInitialised = false;
+
   // Shaders / programs
   private progExtract: WebGLProgram | null = null;
   private progBlur: WebGLProgram | null = null;
@@ -77,6 +83,11 @@ export class PostProcess {
       antialias: false,
       depth: false,
       stencil: false,
+      // MUST be true: with false the back-buffer content is undefined after the
+      // browser presents the canvas. Even offscreen, some implementations clear
+      // it immediately, causing the ctx.drawImage() read to see stale/black
+      // pixels every other frame — the "flickering clear overlay" symptom.
+      preserveDrawingBuffer: true,
     }) as WebGL2RenderingContext | null;
 
     if (!gl) throw new Error('WebGL2 not available');
@@ -273,9 +284,15 @@ void main() {
   render(srcCanvas: HTMLCanvasElement, nightAlpha: number) {
     if (!this._supported || !this.gl) return;
 
+    // Skip every other frame — bloom glow changes slowly enough that 30fps
+    // updates are imperceptible, saving one full texture upload + 5 shader passes.
+    this._frameSkip ^= 1;
+    if (this._frameSkip) return;
+
     // 1. Handle canvas resize
     if (srcCanvas.width !== this.fullW || srcCanvas.height !== this.fullH) {
       this.resize(srcCanvas.width, srcCanvas.height);
+      this._texSceneInitialised = false; // must reallocate after resize
     }
 
     // 2. Compute bloom strength and threshold.
@@ -305,10 +322,17 @@ void main() {
 
     gl.bindVertexArray(this.vao);
 
-    // 3. Upload srcCanvas → texScene
+    // 3. Upload srcCanvas → texScene.
+    // texSubImage2D reuses existing GPU allocation (no realloc) — use it after
+    // the first frame. texImage2D is only needed on first upload or after resize.
     gl.bindTexture(gl.TEXTURE_2D, this.texScene);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, srcCanvas);
+    if (this._texSceneInitialised) {
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, srcCanvas);
+    } else {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, srcCanvas);
+      this._texSceneInitialised = true;
+    }
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
 
     // ── Pass 1: bright extract → fboBright ──────────────────────────────────
