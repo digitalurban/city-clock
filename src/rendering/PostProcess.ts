@@ -12,9 +12,6 @@ export class PostProcess {
   private gl: WebGL2RenderingContext | null = null;
   private overlayCanvas: HTMLCanvasElement;
 
-  // Performance: skip every other frame (bloom changes slowly enough that
-  // 30fps is imperceptible for a glow effect, halving GPU texture upload cost)
-  private _frameSkip = 0;
   // texSubImage2D is cheaper than texImage2D after first upload (no realloc)
   private _texSceneInitialised = false;
 
@@ -144,8 +141,13 @@ out vec4 outColor;
 uniform sampler2D uBloom;
 uniform float uStrength;
 void main() {
-  vec3 bloom = texture(uBloom, vUV).rgb;
-  outColor = vec4(bloom * uStrength, 1.0);
+  vec3 bloom = texture(uBloom, vUV).rgb * uStrength;
+  // Alpha = 1.0 is required. With 'lighter' blend in Canvas 2D, Chrome does NOT
+  // weight raw channel values by alpha before adding — so alpha=0 pixels still
+  // had their RGB added every frame, causing a growing shimmer. With alpha=1
+  // there is no premultiplied-alpha ambiguity: non-bloom pixels are (0,0,0,1)
+  // which adds zero to RGB, and bloom pixels add their colour. Correct result.
+  outColor = vec4(bloom, 1.0);
 }`;
 
     const vs = this.compileShader(gl.VERTEX_SHADER, vsSource);
@@ -283,11 +285,6 @@ void main() {
 
   render(srcCanvas: HTMLCanvasElement, nightAlpha: number) {
     if (!this._supported || !this.gl) return;
-
-    // Skip every other frame — bloom glow changes slowly enough that 30fps
-    // updates are imperceptible, saving one full texture upload + 5 shader passes.
-    this._frameSkip ^= 1;
-    if (this._frameSkip) return;
 
     // 1. Handle canvas resize
     if (srcCanvas.width !== this.fullW || srcCanvas.height !== this.fullH) {

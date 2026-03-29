@@ -36,6 +36,7 @@ const grainCanvas = (() => {
   return gc;
 })();
 let grainOffset = { x: 0, y: 0 };
+let grainFrame = 0; // throttle grain updates to ~20fps so it doesn't shimmer
 
 let layout: CityLayout;
 let pedestrians: Pedestrian[] = [];
@@ -972,10 +973,17 @@ function loop(timestamp: number = 0) {
   // Film grain (subtle, animated).
   // Use source-over, NOT overlay — 'overlay' is software-rendered on most
   // platforms and adds ~3-5 ms per frame. source-over is GPU-accelerated.
-  grainOffset.x = Math.random() * 256;
-  grainOffset.y = Math.random() * 256;
+  // Only advance the grain offset every 4th frame (~15fps). Updating at 60fps
+  // makes every pixel vary every frame — visible as a constant shimmer on flat
+  // surfaces like plaza tiles. 15fps is below the flicker-fusion threshold so
+  // the grain reads as a static film texture rather than boiling noise.
+  grainFrame++;
+  if (grainFrame % 4 === 0) {
+    grainOffset.x = Math.random() * 256;
+    grainOffset.y = Math.random() * 256;
+  }
   ctx.save();
-  ctx.globalAlpha = 0.04 + nightAlpha * 0.025;
+  ctx.globalAlpha = 0.025 + nightAlpha * 0.02;
   ctx.globalCompositeOperation = 'source-over';
   const gw = canvas.width / dpr, gh = canvas.height / dpr;
   for (let gx2 = -256 + (grainOffset.x % 256); gx2 < gw; gx2 += 256) {
@@ -990,8 +998,15 @@ function loop(timestamp: number = 0) {
   // of mix-blend-mode:screen which forces separate GPU layer blending every frame.
   if (postProcess.supported) {
     postProcess.render(canvas, nightAlpha);
+    // Use 'lighter' (additive blend) NOT 'screen'.
+    // 'screen' is a CSS blend mode and is software-rendered in Canvas 2D,
+    // causing inconsistent GPU/software path switching between frames — the
+    // "flickering clear overlay" symptom. 'lighter' is a standard Porter-Duff
+    // mode and is always GPU-accelerated: result = src + dst (clamped).
+    // For bloom, black pixels add 0 (no effect) and bright glow pixels add
+    // their colour — visually identical to screen at typical bloom intensities.
     ctx.save();
-    ctx.globalCompositeOperation = 'screen';
+    ctx.globalCompositeOperation = 'lighter';
     ctx.drawImage(postProcess.getCanvas(), 0, 0);
     ctx.restore();
   }
@@ -1004,6 +1019,27 @@ function loop(timestamp: number = 0) {
     vig.addColorStop(1, 'rgba(0, 0, 0, 0.36)');
     ctx.fillStyle = vig;
     ctx.fillRect(0, 0, vw, vh);
+  }
+
+  // Tilt-shift diorama effect — drawn directly on canvas so no CSS
+  // backdrop-filter div is needed. backdrop-filter over an animating canvas
+  // forces the browser compositor to re-blur every frame, causing flicker.
+  // We replicate the look with two gradient fog bands at top and bottom (18% vh).
+  {
+    const vw = canvas.width, vh = canvas.height;
+    const bandH = vh * 0.18;
+    // Top band: fog colour fades from opaque at edge to transparent inward
+    const fogTop = ctx.createLinearGradient(0, 0, 0, bandH);
+    fogTop.addColorStop(0,   'rgba(200, 210, 220, 0.38)');
+    fogTop.addColorStop(1,   'rgba(200, 210, 220, 0)');
+    ctx.fillStyle = fogTop;
+    ctx.fillRect(0, 0, vw, bandH);
+    // Bottom band
+    const fogBot = ctx.createLinearGradient(0, vh - bandH, 0, vh);
+    fogBot.addColorStop(0,   'rgba(200, 210, 220, 0)');
+    fogBot.addColorStop(1,   'rgba(200, 210, 220, 0.38)');
+    ctx.fillStyle = fogBot;
+    ctx.fillRect(0, vh - bandH, vw, bandH);
   }
 
   // Update audio
