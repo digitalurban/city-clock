@@ -8,7 +8,8 @@ import { DayNightCycle } from './rendering/DayNightCycle';
 import { Weather } from './rendering/Weather';
 import { PostProcess } from './rendering/PostProcess';
 import { AudioEngine } from './rendering/AudioEngine';
-import { TOTAL_PEDESTRIANS, CLOCK_ELIGIBLE_COUNT, TOTAL_CARS, setTotalPedestrians, setTotalCars } from './utils/constants';
+import { TOTAL_PEDESTRIANS, CLOCK_ELIGIBLE_COUNT, TOTAL_CARS, setTotalPedestrians, setTotalCars, SEPARATION_RADIUS } from './utils/constants';
+import { SpatialGrid } from './utils/SpatialGrid';
 
 const canvas = document.getElementById('cityCanvas') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d', { alpha: false })!;
@@ -40,6 +41,8 @@ let grainFrame = 0; // throttle grain updates to ~20fps so it doesn't shimmer
 
 let layout: CityLayout;
 let pedestrians: Pedestrian[] = [];
+// Spatial grid rebuilt each frame for O(n) pedestrian separation (replaces O(n²) brute force)
+let pedGrid: SpatialGrid<Pedestrian> | null = null;
 let cars: Car[] = [];
 let flocks: Flock[] = [];
 let sparrowFlocks: Flock[] = [];
@@ -503,6 +506,14 @@ function adjustPedCount(target: number) {
   setTotalPedestrians(target);
 
   while (pedestrians.length > target) {
+    const p = pedestrians[pedestrians.length - 1];
+    // Stop following this pedestrian before removing it
+    if (p === followedPedestrian) stopFollowing();
+    // Sever all cross-references (groupFollowers, groupLeader, bench, queue)
+    // so the object is immediately eligible for GC. Without this, other
+    // pedestrians hold references to the removed object keeping it alive,
+    // causing heap growth that never recovers even when the slider drops back.
+    p.dispose();
     pedestrians.pop();
   }
   while (pedestrians.length < target) {
@@ -525,6 +536,8 @@ function resize() {
 
   // Create the fixed-grid layout. The constructor defines its own constant dimensions (12x8).
   layout = new CityLayout(width, height);
+  // (Re)create spatial grid sized to layout — cell size = separation radius for tight O(1) cells
+  pedGrid = new SpatialGrid<Pedestrian>(SEPARATION_RADIUS, layout.width);
   const worldW = layout.width;
   const worldH = layout.height;
 
@@ -624,10 +637,6 @@ function buildStaticCanvas(nightAlpha: number) {
   sctx.fillStyle = dayNight.getSkyColor(nightAlpha);
   sctx.fillRect(0, 0, worldW, worldH);
 
-  // Stars and moon drawn before buildings so buildings cover them naturally
-  dayNight.drawStars(sctx, worldW, worldH, nightAlpha);
-  dayNight.drawMoon(sctx, worldW, worldH, nightAlpha);
-
   // Render layers
   layout.drawRoads(sctx, nightAlpha);
   layout.drawSidewalks(sctx, nightAlpha);
@@ -641,6 +650,13 @@ function buildStaticCanvas(nightAlpha: number) {
   layout.drawShadows(sctx, nightAlpha);
   layout.drawBuildings(sctx, nightAlpha);
   layout.drawHouses(sctx, nightAlpha);
+  // House windows — baked into static canvas so lit windows are stable bloom
+  // sources. At deep night all residents are home; using a full set avoids
+  // per-frame occupancy changes that caused bloom shimmer.
+  if (nightAlpha > 0.05) {
+    const allHouseIndices = new Set(layout.houses.map((_, i) => i));
+    layout.drawHouseWindows(sctx, nightAlpha, allHouseIndices);
+  }
   layout.drawVenues(sctx, nightAlpha);
   layout.drawDeliveryLanes(sctx, nightAlpha); // on top of venues so stub is visible
   layout.drawPlazaLampPosts(sctx, nightAlpha);
@@ -829,6 +845,16 @@ function loop(timestamp: number = 0) {
     }
   }
 
+  // Rebuild spatial grid once per frame — O(n), GC-free after warmup (arrays reused)
+  if (pedGrid) { pedGrid.clear(); for (const p of pedestrians) pedGrid.add(p); }
+
+  // Viewport culling bounds in world space (with 60px buffer for thought bubbles / umbrellas)
+  const cullMargin = 60;
+  const visLeft   = (-panX / zoom) - cullMargin;
+  const visTop    = (-panY / zoom) - cullMargin;
+  const visRight  = visLeft + (w / zoom) + cullMargin * 2;
+  const visBottom = visTop  + (h / zoom) + cullMargin * 2;
+
   // Update and draw pedestrians
   for (const p of pedestrians) {
     p.update(
@@ -839,9 +865,13 @@ function loop(timestamp: number = 0) {
       weather.type,
       w,
       h,
-      cars
+      cars,
+      pedGrid ?? undefined
     );
-    p.draw(ctx, nightAlpha, weather.intensity, isDancing);
+    // Skip draw if off-screen (culling) — update still runs for correct simulation
+    if (p.x >= visLeft && p.x <= visRight && p.y >= visTop && p.y <= visBottom) {
+      p.draw(ctx, nightAlpha, weather.intensity, isDancing, zoom);
+    }
   }
 
   // Bird feeder event — occasionally someone tosses crumbs in the plaza
@@ -904,15 +934,6 @@ function loop(timestamp: number = 0) {
   }
   sparrowFlocks = sparrowFlocks.filter(f => f.active);
 
-  // House windows — lit only when a resident is actually home
-  {
-    const occupiedHouses = new Set<number>();
-    for (const p of pedestrians) {
-      if (p.isAtHome && p.assignedHome >= 0) occupiedHouses.add(p.assignedHome);
-    }
-    layout.drawHouseWindows(ctx, nightAlpha, occupiedHouses);
-  }
-
   // Trees on top (canopies)
   layout.drawTrees(ctx, time, nightAlpha);
 
@@ -931,7 +952,7 @@ function loop(timestamp: number = 0) {
 
   // Fog tendrils (screen space, after world effects)
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  weather.drawFogTendrils(ctx, canvas.width / dpr, canvas.height / dpr, nightAlpha);
+  weather.drawFogTendrils(ctx, canvas.width, canvas.height, nightAlpha);
   // Restore world transform for sparrow/seagull flocks
   ctx.setTransform(dpr * zoom, 0, 0, dpr * zoom, panX * dpr, panY * dpr);
 
@@ -968,15 +989,32 @@ function loop(timestamp: number = 0) {
   weather.drawScreenOverlay(ctx, canvas.width, canvas.height);
 
   // Wet road sheen
-  weather.drawWetSheen(ctx, canvas.width / dpr, canvas.height / dpr);
+  weather.drawWetSheen(ctx, canvas.width, canvas.height);
 
-  // Film grain (subtle, animated).
-  // Use source-over, NOT overlay — 'overlay' is software-rendered on most
-  // platforms and adds ~3-5 ms per frame. source-over is GPU-accelerated.
-  // Only advance the grain offset every 4th frame (~15fps). Updating at 60fps
-  // makes every pixel vary every frame — visible as a constant shimmer on flat
-  // surfaces like plaza tiles. 15fps is below the flicker-fusion threshold so
-  // the grain reads as a static film texture rather than boiling noise.
+  // WebGL2 bloom — MUST run before film grain.
+  // texSubImage2D reads the main canvas as bloom input. If grain were applied first,
+  // near-threshold pixels would flicker in/out of bloom as the grain pattern changes
+  // (~15fps grain update × bloom threshold edge = visible glow shimmer on surfaces).
+  // Running bloom on the grain-free canvas keeps bloom sources stable.
+  if (postProcess.supported) {
+    postProcess.render(canvas, nightAlpha);
+    // Use 'lighter' (additive blend) NOT 'screen'.
+    // 'screen' is a CSS blend mode and is software-rendered in Canvas 2D,
+    // causing inconsistent GPU/software path switching between frames — the
+    // "flickering clear overlay" symptom. 'lighter' is a standard Porter-Duff
+    // mode and is always GPU-accelerated: result = src + dst (clamped).
+    // For bloom, black pixels add 0 (no effect) and bright glow pixels add
+    // their colour — visually identical to screen at typical bloom intensities.
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.drawImage(postProcess.getCanvas(), 0, 0);
+    ctx.restore();
+  }
+
+  // Film grain — drawn AFTER bloom so grain noise is never fed into the bloom
+  // extractor. Use source-over (GPU-accelerated); overlay is software-rendered.
+  // Advance offset every 4th frame (~15fps) — below flicker-fusion threshold so
+  // grain reads as static film texture rather than boiling noise.
   grainFrame++;
   if (grainFrame % 4 === 0) {
     grainOffset.x = Math.random() * 256;
@@ -992,24 +1030,6 @@ function loop(timestamp: number = 0) {
     }
   }
   ctx.restore();
-
-  // WebGL2 bloom — render to offscreen WebGL canvas, then composite onto the
-  // main canvas with JS screen blend. This avoids the CSS compositor overhead
-  // of mix-blend-mode:screen which forces separate GPU layer blending every frame.
-  if (postProcess.supported) {
-    postProcess.render(canvas, nightAlpha);
-    // Use 'lighter' (additive blend) NOT 'screen'.
-    // 'screen' is a CSS blend mode and is software-rendered in Canvas 2D,
-    // causing inconsistent GPU/software path switching between frames — the
-    // "flickering clear overlay" symptom. 'lighter' is a standard Porter-Duff
-    // mode and is always GPU-accelerated: result = src + dst (clamped).
-    // For bloom, black pixels add 0 (no effect) and bright glow pixels add
-    // their colour — visually identical to screen at typical bloom intensities.
-    ctx.save();
-    ctx.globalCompositeOperation = 'lighter';
-    ctx.drawImage(postProcess.getCanvas(), 0, 0);
-    ctx.restore();
-  }
 
   // Vignette — subtle radial darkening at the screen edges to frame the scene
   {

@@ -821,17 +821,17 @@ export class Weather {
   drawWetSheen(ctx: CanvasRenderingContext2D, screenW: number, screenH: number) {
     const wetness = this.puddleLevel * Math.min(1, this.alpha * 2);
     if (wetness < 0.02) return;
-    // Subtle horizontal specular bands that drift slowly over wet roads
-    const time = Date.now() / 4000;
     ctx.save();
     // Use source-over not 'screen' — non-standard blend modes are software-rendered.
+    // Static stop positions — animated stops fed the bloom extractor with a
+    // shifting bright band each frame, causing the bloom shimmer.
     ctx.globalAlpha = wetness * 0.07;
     ctx.globalCompositeOperation = 'source-over';
     const grad = ctx.createLinearGradient(0, 0, screenW, 0);
-    grad.addColorStop(0, 'rgba(100,130,180,0)');
-    grad.addColorStop(0.3 + Math.sin(time) * 0.1, 'rgba(140,170,220,1)');
-    grad.addColorStop(0.7 + Math.cos(time * 0.7) * 0.1, 'rgba(100,130,180,1)');
-    grad.addColorStop(1, 'rgba(100,130,180,0)');
+    grad.addColorStop(0,   'rgba(100,130,180,0)');
+    grad.addColorStop(0.3, 'rgba(140,170,220,1)');
+    grad.addColorStop(0.7, 'rgba(100,130,180,1)');
+    grad.addColorStop(1,   'rgba(100,130,180,0)');
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, screenW, screenH);
     ctx.restore();

@@ -18,7 +18,7 @@ A procedurally generated top-down city where pedestrians form a digital clock in
 - **Procedural city** - grid of city blocks, roads, crosswalks, trees, parks and coloured buildings generated to fill the world
 - **Central plaza** - ringed by named venues (cafes, bars, bookshops, flower shops) with outdoor seating, benches, and lamp posts
 - **Pedestrian life** - pedestrians wander sidewalks, visit venues, queue and sit outside, go home to their assigned houses via garden paths, and ride bicycles (~15%). Each has simulated Needs (Energy, Hunger, Social) with thought bubbles guiding their routines
-- **Home life** - every pedestrian (including clock performers) is assigned a specific house. During the day they make 20–40 second home visits; at night (22:00–07:00) their schedule keeps them home until morning. While at home they occasionally step into their garden to putter around — moving slowly between spots, fully visible — before going back inside. House roof-lights glow amber when a resident is home and go dark when the house is empty, updating in real time as people come and go
+- **Home life** - every pedestrian (including clock performers) is assigned a specific house. During the day they make 20–40 second home visits; at night (22:00–07:00) their schedule keeps them home until morning. While at home they occasionally step into their garden to putter around — moving slowly between spots, fully visible — before going back inside. House windows glow warm amber at night, baked into the static lighting layer so they are stable bloom sources
 - **Dog walkers** - ~10% of pedestrians walk dogs on leashes; dogs pull ahead with animated trotting legs, floppy ears, wagging tails, and side-to-side sniffing wander
 - **City birds** - two species share the skies: seagull flocks sweep high across the city and sparrow flocks dart at lower altitude with rapid wing beats and tighter formations. Both use boid flocking (separation, alignment, cohesion) and are drawn with parallax height — shadows on the ground separate from birds soaring above rooftops. Seagulls glide with slow wingbeats and dark wingtips; sparrows are smaller, browner, and flutter continuously. Occasionally a bird feeder event draws both species down to the plaza
 - **Chimney smoke** - soft grey particles drift upward from residential chimneys. Emission rate responds to the season (more smoke in cold months Oct–Mar) and time of day (morning warm-up and evening heating peaks produce denser plumes)
@@ -37,7 +37,7 @@ A procedurally generated top-down city where pedestrians form a digital clock in
 - **Service & Delivery Vehicles** - orange delivery vans enter the plaza, park outside a venue to drop off packages. City buses (red/blue) and garbage trucks (green) navigate the road network with unique behaviours.
 - **Emergency vehicles** - police cars, ambulances and fire trucks with flashing sirens.
 - **Traffic system** - cars navigate the road network with traffic lights, braking for pedestrians and each other, smooth quadratic Bézier arc turns at junctions, and anti-gridlock logic.
-- **Day/night cycle** - real-time lighting based on system clock; deep dark-blue night sky with procedural stars and a crescent moon; street lights and plaza lamps cast distinct warm pools through the darkness; building windows glow in three colour temperatures (incandescent, daylight, TV-blue) on realistic occupancy schedules; car headlight beams cut through the night; all rendered in a correct depth order so light sources punch through the darkness rather than being dimmed by it.
+- **Day/night cycle** - real-time lighting based on system clock; deep dark-blue night sky; street lights and plaza lamps cast distinct warm pools through the darkness; building windows glow warm amber at night; car headlight beams cut through the night; all rendered in correct depth order so light sources punch through the darkness rather than being dimmed by it.
 - **Weather** - procedural clouds with realistic multi-lobe shapes, 3D shading, and ground shadows drifting across the city. Fog renders as animated layered noise tendrils that drift in opposite directions rather than a flat overlay. Roads develop a specular wet sheen during rain that pulses slowly with shifting highlights
 - **Zoom and pan** - scroll-wheel zoom, click-drag pan, touch pinch and drag on mobile. The static city layer rebuilds at the current zoom level 300 ms after each gesture settles, so the background is always sharp at any magnification
 - **Adjustable population** - settings panel to control traffic (10-300) and people (112-500) counts live
@@ -63,7 +63,7 @@ Pedestrians use a steering-behaviours model with multiple activity types:
 - **Separation** - repel nearby pedestrians to avoid clumping
 - **Venue visits** - queue outside cafes and shops, sit at outdoor seating
 - **Going home** - every pedestrian (including the 112 clock performers) has an assigned house. When heading home, each pedestrian follows an A* path computed on a 9px obstacle-aware walkability grid that covers the whole city — routes go around all buildings, houses and venues rather than through them, walking along roads and sidewalks. They arrive via the garden path, step through the front door, and stay inside (fading to near-invisible). During the day visits last 20–40 s; the sleeping schedule (22:00–07:00) keeps them home until morning. While home they occasionally step outside to potter in the garden before returning indoors. When summoned to form the clock, performers cleanly snap out of any home, sitting, or queuing state
-- **House lights** - roof skylights switch on when a resident is home and off when they leave; evaluated live each frame against the full pedestrian list so lights track actual occupancy
+- **House lights** - windows glow warm amber at night; baked into the static canvas so they are stable bloom sources rather than toggling per-frame
 - **Bicycle riding** - ~15% of pedestrians ride bicycles at 2.5x walking speed
 - **Building and venue avoidance** - steering forces keep pedestrians on sidewalks and paths with velocity damping to prevent oscillation at road edges
 - **Pathfinding** - a 9px walkability grid is precomputed at startup by testing every cell against all buildings, houses and venues. When a pedestrian needs to navigate home, an 8-directional A* search (cardinal + diagonal, no corner-cutting) finds the shortest clear route through the city. Collinear waypoints are thinned so the pedestrian walks in long straight stretches rather than micro-stepping
@@ -98,7 +98,7 @@ Real-time based on system clock:
 - **9pm-5am**: Night (60% darkness)
 - **5am-8am**: Dawn
 
-At night: a deep blue-black sky reveals procedural stars and a crescent moon above the rooftops. Buildings darken significantly with scattered lit windows in three colour temperatures (warm incandescent, cool daylight, blue TV glow) on realistic occupancy schedules. Street lights and plaza lamps cast focused warm pools through the darkness. Car headlight beams sweep ahead of each vehicle. All light sources are composited after the dark overlay so they genuinely cut through the night rather than being muted by it.
+At night: a deep blue-black sky. Buildings darken significantly with warm amber windows glowing consistently. Street lights and plaza lamps cast focused warm pools through the darkness. Car headlight beams sweep ahead of each vehicle. All light sources are composited after the dark overlay so they genuinely cut through the night rather than being muted by it.
 
 ### Weather
 
@@ -126,7 +126,7 @@ Dynamic live weather powered by the Open-Meteo API, with all 10 weather types fu
   - Ground accumulative snow cover creates spreading white patches
   - Jagged lightning flash overlays during thunderstorms and hail
   - Animated fog tendrils — two sin-wave noise layers scroll in opposite directions, creating organic wisps rather than a flat grey overlay
-  - Wet road sheen — a slowly shifting screen-blend specular gradient scales with puddle level, giving roads a convincing reflective quality during and after rain
+  - Wet road sheen — a specular gradient scales with puddle level, giving roads a convincing reflective quality during and after rain
 - **Responsive Pedestrians:** 100% of pedestrians deploy colourful umbrellas in rain or snow, sprint for venue awnings in heavy rain, and adjust walking pace by condition (drizzle slows slightly; hail triggers a full sprint; snow causes careful shuffling)
 
 ### Day/Night Atmosphere
@@ -146,19 +146,19 @@ Several passes work together to give the city depth and visual polish:
 - **Plaza paving** — a two-tone checkerboard floor (40px tiles), visible grout lines, a double inset perimeter border, and a central compass rose (concentric rings, 8 spokes, 4 cardinal lines) baked into the static canvas at zero runtime cost
 - **Road kerb lines** — a thin white edge stroke around every road rectangle defines the curb/gutter boundary and gives the road network visual structure
 - **Screen vignette** — a radial gradient from transparent at the centre to 36% black at the screen edges, drawn last in screen space; frames the city, gives it weight, and makes the plaza pop as the focal point
-- **Film grain** — a pre-generated 256×256 noise canvas is tiled over the full screen each frame at a random sub-pixel offset using `overlay` blend, adding tactile texture that's subtly stronger at night
-- **WebGL2 bloom** — a second canvas sits on top with `mix-blend-mode: screen`. Each frame bright pixels are extracted (threshold lowers from 0.92 at noon to 0.55 at midnight), blurred with a 4-pass separable Gaussian at ¼ resolution, and composited back. Street lamps, lit windows, car headlights and plaza lanterns bleed light into their surroundings — a noticeable halo effect at night, subtle on daytime bright areas. Falls back silently on devices without WebGL2
+- **Film grain** — a pre-generated 256×256 noise canvas is tiled over the full screen at a random offset using `source-over` blend. Offset advances every 4th frame (~15 fps) — below the flicker-fusion threshold so the grain reads as static film texture rather than boiling noise. Subtly stronger at night
+- **WebGL2 bloom** — an offscreen WebGL2 canvas (not in the DOM) extracts bright pixels each frame (threshold drops from 0.90 at dusk to 0.52 at full night), blurs them with a 4-pass separable Gaussian at ¼ resolution, and composites the result onto the main canvas using additive (`'lighter'`) blending. A temporal EMA (τ ≈ 9 frames) blends each new bloom result with the retained previous frame, smoothing frame-to-frame variation from moving light sources. Street lamps, lit windows, car headlights and plaza lanterns bleed warm light into their surroundings. Falls back silently on devices without WebGL2
 - **Procedural audio** — rain (pink noise filtered to frequency bands matching drizzle → thunderstorm intensity), city hum (low-frequency drone), bird song (procedural chirp sequences active 5–9am), and on-demand thunder synthesis triggered by the lightning phase. AudioContext is created lazily on first user interaction to satisfy browser autoplay policies
 - **Time-of-day atmosphere** — morning mist (5–9am), golden hour amber (17–20h), and Sunday quiet blue tint, all composited in world space before the main dynamic layer
 
 ### Rendering Architecture
 
-1. **Static canvas** - roads, sidewalks, crosswalks, plaza (with decorative paving), building shadows, buildings, houses, venues, parks, stars and moon pre-rendered to an offscreen canvas. Rebuilt when lighting changes *or* when zoom drifts more than 0.18 from the level it was last rendered at (debounced 300 ms after gesture settles). Canvas size is capped to stay within browser/iOS texture limits (~4096 px per dimension)
+1. **Static canvas** - roads, sidewalks, crosswalks, plaza (with decorative paving), building shadows, buildings, houses, house windows (all lit at night as stable bloom sources), venues, and parks pre-rendered to an offscreen canvas. Rebuilt when lighting changes *or* when zoom drifts more than 0.18 from the level it was last rendered at (debounced 300 ms after gesture settles). Canvas size is capped to stay within browser/iOS texture limits (~4096 px per dimension)
 2. **Dynamic layer** - venue name labels (re-rasterised every frame at the current zoom for crisp text at any magnification), atmosphere overlays, chimney smoke, roadside bins, market stalls, newspaper stand, busker pitch, cars, pedestrians, dogs, dropped packages, construction crane, bird shadows, animated tree sway, and birds (drawn above weather with parallax height)
 3. **Light pass** - street lights, plaza lamp glows, and car headlight beams drawn after the night overlay so they punch through the darkness correctly
 4. **Atmosphere pass** - fog tendrils (two drifting noise layers) and wet road sheen composited in screen space after world-space weather
-5. **Film grain pass** - 256×256 tiled noise canvas with animated offset, `overlay` blend at ~4.5–7.5% opacity
-6. **WebGL2 bloom pass** - main canvas uploaded as texture to a sibling WebGL2 canvas; bright-extract → 4× Gaussian blur at ¼ res → composite output with `mix-blend-mode: screen`
+5. **Film grain pass** - 256×256 tiled noise canvas with offset updated every 4th frame (~15 fps), `source-over` blend at ~2.5–4.5% opacity
+6. **WebGL2 bloom pass** - main canvas uploaded as texture to an offscreen WebGL2 canvas; bright-extract → 4× Gaussian blur at ¼ res → temporal EMA blend (τ ≈ 9 frames) → composited onto main canvas with additive `'lighter'` blend
 7. **Vignette pass** - screen-space radial gradient drawn last over everything to frame the scene
 8. **DPR-aware** - canvas resolution scales with devicePixelRatio (capped at 2x) for crisp rendering on Retina displays; static canvas uses `imageSmoothingQuality = 'high'` for any residual upscaling during active zoom gestures
 

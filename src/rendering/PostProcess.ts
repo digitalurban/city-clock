@@ -14,6 +14,9 @@ export class PostProcess {
 
   // texSubImage2D is cheaper than texImage2D after first upload (no realloc)
   private _texSceneInitialised = false;
+  // Temporal bloom accumulator: overlay canvas retains previous frame (preserveDrawingBuffer:true).
+  // On first frame / after resize we clear it so the EMA starts from zero.
+  private _bloomTAInitialised = false;
 
   // Shaders / programs
   private progExtract: WebGLProgram | null = null;
@@ -290,28 +293,31 @@ void main() {
     if (srcCanvas.width !== this.fullW || srcCanvas.height !== this.fullH) {
       this.resize(srcCanvas.width, srcCanvas.height);
       this._texSceneInitialised = false; // must reallocate after resize
+      this._bloomTAInitialised = false; // must clear overlay so EMA starts fresh
     }
 
     // 2. Compute bloom strength and threshold.
-    const t = nightAlpha / 0.6; // 0 = noon, 1 = full night
+    // t = 0 → noon (no bloom), t = 1 → full night (full bloom).
+    // Split at t=0.5 (dusk/dawn) — below that is day, above is night.
+    const t = Math.min(nightAlpha / 0.6, 1.0);
 
-    // Skip the entire pipeline during full daylight — threshold of 0.92 means
-    // almost nothing passes the bright-extract stage anyway, so running 5 shader
-    // passes would burn GPU time for invisible output. Kicks in at dusk (~5pm).
-    if (t < 0.08) {
-      // Clear the overlay so any stale bloom from last night doesn't linger.
+    // Skip during true midday (before dusk starts) — no visible bright sources
+    // to bloom, so 5 shader passes would waste GPU for invisible output.
+    if (t < 0.12) {
       const gl = this.gl;
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       gl.viewport(0, 0, this.overlayCanvas.width, this.overlayCanvas.height);
       gl.clearColor(0, 0, 0, 0);
       gl.clear(gl.COLOR_BUFFER_BIT);
+      this._bloomTAInitialised = false; // reset so EMA starts clean at next dusk
       return;
     }
 
-    const bloomStrength = 0.18 + Math.pow(t, 1.1) * 1.2;
-    // High threshold at dusk (only the very brightest pixels bloom);
-    // lower at full night so lit windows and lamp halos are included.
-    const threshold = Math.max(0.55, 0.92 - t * 0.42);
+    // Strength: subtle golden warmth at dusk (t≈0.15-0.4), growing to full glow at night
+    const bloomStrength = 0.12 + Math.pow(t, 1.4) * 1.3;
+    // Threshold: very high at dusk (only direct light sources glow),
+    // drops at night to let lit windows and lamp halos bloom too.
+    const threshold = Math.max(0.52, 0.90 - t * 0.40);
 
     const gl = this.gl;
     const hw = this.halfW;
@@ -369,17 +375,43 @@ void main() {
     // Pass 5: blur V wider
     blurPass(this.texBlurA, this.fboBlurB, 0, 1.5 / hh);
 
-    // ── Pass 6: composite → overlay canvas ──────────────────────────────────
+    // ── Pass 6: composite → overlay canvas (temporal EMA blend) ─────────────
+    // preserveDrawingBuffer:true means the overlay retains last frame's bloom.
+    // We blend: output = 0.25*current + 0.75*previous (EMA, τ≈4 frames).
+    // This smooths out frame-to-frame variation from moving objects crossing
+    // near-threshold light sources — no extra FBO needed.
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, this.overlayCanvas.width, this.overlayCanvas.height);
-    gl.clearColor(0, 0, 0, 0);
-    gl.clear(gl.COLOR_BUFFER_BIT);
+
+    if (!this._bloomTAInitialised) {
+      // First frame or post-resize: clear so EMA doesn't start from garbage
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      this._bloomTAInitialised = true;
+    }
+
+    // EMA blend: RGB = 0.10*current + 0.90*previous (τ ≈ 9 frames).
+    // Lower current-frame weight (was 0.25) damps frame-to-frame variation from
+    // moving bright sources (car headlights, venue glows) without ghosting badly —
+    // at 60 fps, τ=9 frames ≈ 150ms, below the ~200ms flicker-fusion threshold.
+    // Alpha is forced to 1.0 (ONE, ZERO) so Canvas2D drawImage reads RGB directly.
+    gl.enable(gl.BLEND);
+    gl.blendColor(0, 0, 0, 0.10);
+    gl.blendFuncSeparate(
+      gl.CONSTANT_ALPHA,         // RGB src factor: 0.25
+      gl.ONE_MINUS_CONSTANT_ALPHA, // RGB dst factor: 0.75
+      gl.ONE,                    // Alpha src factor: keep shader's 1.0
+      gl.ZERO                    // Alpha dst factor: discard old alpha
+    );
+
     gl.useProgram(this.progComposite);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.texBlurB);
     gl.uniform1i(this.uBloom, 0);
     gl.uniform1f(this.uStrength, bloomStrength);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+    gl.disable(gl.BLEND);
 
     gl.bindVertexArray(null);
   }

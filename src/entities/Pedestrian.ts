@@ -1,6 +1,7 @@
 import { PEDESTRIAN_BASE_SPEED, PEDESTRIAN_MAX_FORCE, SEPARATION_RADIUS, PEDESTRIAN_COLORS } from '../utils/constants';
 import type { CityLayout, VenueDef, PlazaBenchDef } from '../city/CityLayout';
 import type { Car } from './Car';
+import type { SpatialGrid } from '../utils/SpatialGrid';
 
 // Pedestrian first names
 const PEDESTRIAN_NAMES = [
@@ -391,6 +392,44 @@ export class Pedestrian {
     }
   }
 
+  /**
+   * Sever all cross-references so this pedestrian can be garbage-collected
+   * immediately when removed from the pedestrians array.
+   * Must be called before popping from the array — without it, groupFollowers
+   * arrays and venueQueues keep the object alive, causing memory growth that
+   * never recovers even when the slider is reduced.
+   */
+  dispose(): void {
+    // Group: unlink followers so they can find a new leader
+    for (const follower of this.groupFollowers) {
+      follower.groupLeader = null;
+    }
+    this.groupFollowers = [];
+    // Group: unlink from leader's followers list
+    if (this.groupLeader) {
+      const idx = this.groupLeader.groupFollowers.indexOf(this);
+      if (idx >= 0) this.groupLeader.groupFollowers.splice(idx, 1);
+      this.groupLeader = null;
+    }
+    // Bench: free the slot for another pedestrian
+    if (this.isBenchSitting && this.benchRef) {
+      occupiedBenches.delete(this.benchRef);
+      this.benchRef = null;
+      this.isBenchSitting = false;
+    }
+    // Queue: remove from venue queue
+    if (this.isQueuing && this.queueVenue) {
+      const q = venueQueues.get(this.queueVenue);
+      if (q) {
+        const qi = q.indexOf(this);
+        if (qi >= 0) q.splice(qi, 1);
+        if (q.length === 0) venueQueues.delete(this.queueVenue);
+      }
+      this.isQueuing = false;
+      this.queueVenue = null;
+    }
+  }
+
   update(
     pedestrians: Pedestrian[],
     layout: CityLayout,
@@ -399,7 +438,8 @@ export class Pedestrian {
     weatherType: string = 'clear',
     width: number,
     height: number,
-    cars: Car[] = []
+    cars: Car[] = [],
+    pedGrid?: SpatialGrid<Pedestrian>
   ) {
     this.currentWeatherType = weatherType;
     let ax = 0;
@@ -515,11 +555,11 @@ export class Pedestrian {
             if (other === this || other.isClockEligible) continue;
             const dx = other.x - this.x;
             const dy = other.y - this.y;
-            const d = Math.sqrt(dx * dx + dy * dy);
-            if (d < 60 && d < nearDist) {
-              nearDist = d;
-              nearDx = dx / d;
-              nearDy = dy / d;
+            const dSq = dx * dx + dy * dy;
+            if (dSq < 3600 && dSq < nearDist * nearDist) { // 60² = 3600
+              nearDist = Math.sqrt(dSq);
+              nearDx = dx / nearDist;
+              nearDy = dy / nearDist;
             }
           }
           if (nearDist < 60 && nearDist > 12) {
@@ -1223,8 +1263,8 @@ export class Pedestrian {
               for (const other of pedestrians) {
                 if (other === this || other.groupLeader || other.groupFollowers.length > 0) continue;
                 if (other.isSitting || other.isBenchSitting || other.isQueuing || other.isWindowShopping || other.socialMode) continue;
-                const d = Math.hypot(other.x - this.x, other.y - this.y);
-                if (d < 60) nearbyFree.push(other);
+                const dSq = (other.x - this.x) ** 2 + (other.y - this.y) ** 2;
+                if (dSq < 3600) nearbyFree.push(other); // 60² = 3600
                 if (nearbyFree.length >= 2) break;
               }
               if (nearbyFree.length > 0) {
@@ -1337,11 +1377,11 @@ export class Pedestrian {
       }
 
       if (!this.socialMode) {
-        // 2. Separation — skip distant pedestrians early using squared distance
+        // 2. Separation — use spatial grid for O(n) instead of O(n²)
         let sepX = 0, sepY = 0, sepCount = 0;
         const sepRadSq = SEPARATION_RADIUS * SEPARATION_RADIUS;
-        for (const other of pedestrians) {
-          if (other === this) continue;
+        const sepQuery = (other: Pedestrian) => {
+          if (other === this) return;
           const dx = this.x - other.x;
           const dy = this.y - other.y;
           const distSq = dx * dx + dy * dy;
@@ -1351,6 +1391,11 @@ export class Pedestrian {
             sepY += dy / dist;
             sepCount++;
           }
+        };
+        if (pedGrid) {
+          pedGrid.query(this.x, this.y, SEPARATION_RADIUS, sepQuery);
+        } else {
+          for (const other of pedestrians) sepQuery(other);
         }
         if (sepCount > 0) {
           ax += (sepX / sepCount) * this.maxForce * 3.0;
@@ -1463,13 +1508,16 @@ export class Pedestrian {
       for (const car of cars) {
         const cdx = this.x - car.x;
         const cdy = this.y - car.y;
-        const cdist = Math.hypot(cdx, cdy);
+        const cdistSq = cdx * cdx + cdy * cdy;
+        if (cdistSq >= 4225) continue; // 65² — cheapest possible reject, avoids sqrt + inPlaza
+        const cdist = Math.sqrt(cdistSq);
+        if (cdist === 0) continue;
         const inPlaza = car.x > pb.x && car.x < pb.x + pb.w &&
                         car.y > pb.y && car.y < pb.y + pb.h;
         const isDeliveryInPlaza = car.carType === 'delivery' && inPlaza;
         const FLEE_RADIUS = isDeliveryInPlaza ? 65 : 45;
         const fleeMult = isDeliveryInPlaza ? 40 : 20;
-        if (cdist < FLEE_RADIUS && cdist > 0) {
+        if (cdist < FLEE_RADIUS) {
           const strength = ((FLEE_RADIUS - cdist) / FLEE_RADIUS) * this.maxForce * fleeMult;
           ax += (cdx / cdist) * strength;
           ay += (cdy / cdist) * strength;
@@ -1596,7 +1644,8 @@ export class Pedestrian {
     ctx: CanvasRenderingContext2D,
     nightAlpha: number,
     weatherIntensity: number,
-    isDancing: boolean
+    isDancing: boolean,
+    zoom: number = 1
   ) {
     ctx.save();
     ctx.translate(this.x, this.y);
@@ -1609,6 +1658,16 @@ export class Pedestrian {
     }
 
     const s = this.size * 5.5;
+
+    // LOD — if pedestrian is < 4 CSS pixels on screen, draw a simple coloured dot
+    if (s * zoom < 4) {
+      ctx.fillStyle = this.color;
+      ctx.beginPath();
+      ctx.arc(0, 0, s * 0.65, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+      return;
+    }
     const speed = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
     let legSwing = (this.isSitting || this.socialMode)
       ? 0
