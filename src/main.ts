@@ -991,12 +991,23 @@ function loop(timestamp: number = 0) {
   // Wet road sheen
   weather.drawWetSheen(ctx, canvas.width, canvas.height);
 
-  // Bloom disabled for flicker diagnosis.
+  // WebGL2 bloom — MUST run before film grain.
+  if (postProcess.supported) {
+    postProcess.render(canvas, nightAlpha);
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.drawImage(postProcess.getCanvas(), 0, 0);
+    ctx.restore();
+  }
 
   // Film grain — drawn AFTER bloom so grain noise is never fed into the bloom
   // extractor. Use source-over (GPU-accelerated); overlay is software-rendered.
   // Advance offset every 4th frame (~15fps) — below flicker-fusion threshold so
   // grain reads as static film texture rather than boiling noise.
+  // IMPORTANT: use canvas.width/canvas.height (physical pixels), NOT divided by dpr.
+  // At DPR=2 the loop runs in physical pixel space (identity transform) — dividing
+  // by dpr caused grain to only tile the top-left quarter of the canvas, leaving a
+  // hard seam at ~54% width / ~55% height that flickered every 4th frame.
   grainFrame++;
   if (grainFrame % 4 === 0) {
     grainOffset.x = Math.random() * 256;
@@ -1005,7 +1016,7 @@ function loop(timestamp: number = 0) {
   ctx.save();
   ctx.globalAlpha = 0.025 + nightAlpha * 0.02;
   ctx.globalCompositeOperation = 'source-over';
-  const gw = canvas.width / dpr, gh = canvas.height / dpr;
+  const gw = canvas.width, gh = canvas.height;
   for (let gx2 = -256 + (grainOffset.x % 256); gx2 < gw; gx2 += 256) {
     for (let gy2 = -256 + (grainOffset.y % 256); gy2 < gh; gy2 += 256) {
       ctx.drawImage(grainCanvas, gx2, gy2);
