@@ -1524,21 +1524,6 @@ export class Pedestrian {
         }
       }
 
-      // 6b. Fountain repulsion — pedestrians walk around each basin
-      const FOUNTAIN_RADIUS = 26;
-      const FOUNTAIN_RADIUS_SQ = FOUNTAIN_RADIUS * FOUNTAIN_RADIUS;
-      for (const f of layout.fountains) {
-        const fdx = this.x - f.x;
-        const fdy = this.y - f.y;
-        const fdistSq = fdx * fdx + fdy * fdy;
-        if (fdistSq < FOUNTAIN_RADIUS_SQ && fdistSq > 0) {
-          const fdist = Math.sqrt(fdistSq);
-          const strength = ((FOUNTAIN_RADIUS - fdist) / FOUNTAIN_RADIUS) * this.maxForce * 12;
-          ax += (fdx / fdist) * strength;
-          ay += (fdy / fdist) * strength;
-        }
-      }
-
       // 7. Road repulsion — keep pedestrians on sidewalks (skip plaza, crosswalks, clock mode)
       // Use distance-proportional force to prevent harsh wobble at road edges
       if (!this.clockTarget && !this.clockDismissTarget &&
@@ -1561,6 +1546,28 @@ export class Pedestrian {
               break;
             }
           }
+        }
+      }
+    }
+
+    // Fountain repulsion — applies to ALL modes (clock, dismiss, autonomous).
+    // Two-zone: hard push inside the stone rim (r < 14), gentle guide just outside (14–20).
+    // Keeping the outer radius tight (20 px) lets pedestrians walk freely between the two basins.
+    {
+      const RIM   = 14; // basin stone-rim radius in world px
+      const GUIDE = 20; // soft-guide outer edge
+      for (const f of layout.fountains) {
+        const fdx = this.x - f.x;
+        const fdy = this.y - f.y;
+        const fdistSq = fdx * fdx + fdy * fdy;
+        if (fdistSq < GUIDE * GUIDE && fdistSq > 0) {
+          const fdist = Math.sqrt(fdistSq);
+          // Inside rim → strong correction; outside rim → gentle guide
+          const mult = fdist < RIM
+            ? this.maxForce * 30                            // hard: don't enter the basin
+            : this.maxForce * 5 * ((GUIDE - fdist) / (GUIDE - RIM)); // soft: nudge around rim
+          ax += (fdx / fdist) * mult;
+          ay += (fdy / fdist) * mult;
         }
       }
     }
@@ -1939,6 +1946,9 @@ export class Pedestrian {
       ctx.globalAlpha = prevAlpha;
     }
 
+    // Clear any accumulated path so it cannot bleed into the next ctx.stroke() call
+    // outside this draw() — ctx.save/restore does NOT restore the canvas path.
+    ctx.beginPath();
     ctx.restore();
 
     // Draw dog (in world space, after restoring owner transform)

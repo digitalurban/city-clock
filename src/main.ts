@@ -190,6 +190,7 @@ let dragMoved = false; // true if pointer moved enough to be a drag (not a click
 
 canvas.addEventListener('mousedown', (e) => {
   ensureAudioUnlocked();
+  audioEngine.resume();
   isDragging = true;
   dragMoved = false;
   dragStartX = e.clientX;
@@ -246,6 +247,7 @@ canvas.addEventListener('dblclick', () => {
 // Separate touchstart to record tap position for distance check
 canvas.addEventListener('touchstart', (e) => {
   ensureAudioUnlocked();
+  audioEngine.resume();
   if (e.touches.length === 1) {
     const t = e.touches[0];
     const now = Date.now();
@@ -390,6 +392,13 @@ function createOptionsUI() {
 
   panel.innerHTML = `
     <div style="font-size: 14px; font-weight: 600; margin-bottom: 12px; color: #aab;">City Options</div>
+    <div style="margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between;">
+      <span>Sound</span>
+      <button id="audio-toggle" style="
+        background: #4a9eff; color: white; border: none; border-radius: 20px;
+        padding: 4px 14px; cursor: pointer; font-size: 13px; font-weight: bold;
+        min-width: 64px; transition: background 0.2s;">🔊 On</button>
+    </div>
     <div style="margin-bottom: 10px;">
       <label style="display: flex; justify-content: space-between; margin-bottom: 4px;">
         <span>Traffic</span>
@@ -510,6 +519,16 @@ function createOptionsUI() {
         alarmStatusLabel.textContent = alarmTime;
       }
     }
+  });
+
+  // Audio toggle
+  const audioToggleBtn = panel.querySelector('#audio-toggle') as HTMLButtonElement;
+  audioToggleBtn.addEventListener('click', () => {
+    ensureAudioUnlocked();
+    const nowMuted = !audioEngine.muted;
+    audioEngine.setMuted(nowMuted);
+    audioToggleBtn.textContent = nowMuted ? '🔇 Off' : '🔊 On';
+    audioToggleBtn.style.background = nowMuted ? '#555' : '#4a9eff';
   });
 
   // Prevent canvas interactions when interacting with sliders
@@ -798,6 +817,10 @@ function loop(timestamp: number = 0) {
   layout.updateBusker();
   layout.drawBusker(ctx, nightAlpha, zoom);
 
+  // Bandstand — only visible while the alarm is active
+  layout.updateBandstand();
+  layout.drawBandstand(ctx, nightAlpha, zoom);
+
   // Update clock targets
   const plazaCX = layout.plazaBounds.x + layout.plazaBounds.w / 2;
   const plazaCY = layout.plazaBounds.y + layout.plazaBounds.h / 2;
@@ -825,6 +848,7 @@ function loop(timestamp: number = 0) {
       isAlarmActive = true;
       isDancing = true;
       alarmAudio.play().catch(e => console.error("Audio play failed:", e));
+      layout.startBandstand();
 
       // Show alarm options container
       let alarmControls = document.getElementById('alarm-controls');
@@ -861,6 +885,7 @@ function loop(timestamp: number = 0) {
           isAlarmActive = false;
           isDancing = false;
           alarmAudio.pause();
+          layout.stopBandstand();
           alarmControls!.style.display = 'none';
 
           // Add 9 minutes
@@ -877,6 +902,7 @@ function loop(timestamp: number = 0) {
           isAlarmActive = false;
           isDancing = false;
           alarmAudio.pause();
+          layout.stopBandstand();
           alarmTime = null; // Clear the alarm
           alarmControls!.style.display = 'none';
 
@@ -1089,8 +1115,7 @@ function loop(timestamp: number = 0) {
   if (audioEngine.isActive) {
     const _now = new Date();
     const hour = _now.getHours() + _now.getMinutes() / 60;
-    audioEngine.update(weather.type, weather.intensity, nightAlpha, hour);
-    // Trigger thunder on lightning
+    audioEngine.update(weather.type, weather.intensity, nightAlpha, hour, layout.fountainActive);
     if (weather.type === 'thunderstorm' && Math.random() < 0.003) {
       audioEngine.triggerThunder(Math.random() * 1.5);
     }

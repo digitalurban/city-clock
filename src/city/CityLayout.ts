@@ -199,6 +199,13 @@ export class CityLayout {
   fountainTimer: number = 900;  // frames until first activation (~15s)
   private fountainParticles: { x: number; y: number; vx: number; vy: number; alpha: number; fy: number }[] = [];
 
+  // ── Bandstand (appears when the alarm fires) ─────────────────────────────
+  bandstandActive: boolean = false;
+  bandstandX: number = 0;
+  bandstandY: number = 0;
+  private bandMembers: (Pedestrian & { instrument: string })[] = [];
+  private bandNotes: { x: number; y: number; vy: number; alpha: number; char: string }[] = [];
+
   // ── Newspaper stand ────────────────────────────────────────────────────
   newsstandX: number = 0;
   newsstandY: number = 0;
@@ -1895,6 +1902,7 @@ export class CityLayout {
 
   drawEvent(ctx: CanvasRenderingContext2D, nightAlpha: number, zoom: number = 1) {
     if (!this.activeEvent || !this.eventPed) return;
+    ctx.beginPath(); // guard against stale path from previous draw call
 
     const ex = this.activeEvent.x;
     const ey = this.activeEvent.y;
@@ -2052,17 +2060,93 @@ export class CityLayout {
   /** Draw the static basins — call from buildStaticCanvas. */
   drawFountainBasin(ctx: CanvasRenderingContext2D, nightAlpha: number) {
     const dark = 1 - nightAlpha * 0.4;
-    for (const f of this.fountains) {
-      // Outer basin rim (stone)
+    const nightBloom = 1 - nightAlpha * 0.55; // flowers dim at night
+
+    // Flower / leaf data — fixed per-fountain, seeded by index so they're stable
+    // 8 planting spots evenly around radius 20, each gets a leaf + optional flower
+    const PLANT_R = 20;      // distance from fountain centre
+    const PLANT_COUNT = 8;
+    const FLOWER_COLORS = [
+      [255, 80, 100],   // rose pink
+      [255, 160, 40],   // amber
+      [255, 220, 50],   // yellow
+      [180, 100, 220],  // lavender
+      [255, 120, 60],   // coral
+      [220, 255, 80],   // lime (bud)
+    ];
+
+    for (let fi = 0; fi < this.fountains.length; fi++) {
+      const f = this.fountains[fi];
+
+      // ── Greenery ring (drawn first, behind basin) ──────────────────────
+      for (let i = 0; i < PLANT_COUNT; i++) {
+        const angle = (i / PLANT_COUNT) * Math.PI * 2 + fi * 0.4;
+        const px = f.x + Math.cos(angle) * PLANT_R;
+        const py = f.y + Math.sin(angle) * PLANT_R;
+
+        // Stem — thin green line from ground up
+        const stemLen = 4.5 + (i % 3) * 1.2;
+        ctx.strokeStyle = `rgba(${Math.floor(60 * dark)},${Math.floor(130 * dark)},${Math.floor(50 * dark)},${0.85 * nightBloom})`;
+        ctx.lineWidth = 0.8;
+        ctx.beginPath();
+        ctx.moveTo(px, py + stemLen * 0.4);
+        ctx.lineTo(px, py - stemLen);
+        ctx.stroke();
+
+        // Leaf — small ellipse tilted sideways
+        const leafAngle = angle + Math.PI / 2 + (i % 2 === 0 ? 0.3 : -0.3);
+        ctx.save();
+        ctx.translate(px, py);
+        ctx.rotate(leafAngle);
+        ctx.fillStyle = `rgba(${Math.floor(55 * dark)},${Math.floor(145 * dark)},${Math.floor(55 * dark)},${0.8 * nightBloom})`;
+        ctx.beginPath();
+        ctx.ellipse(0, 0, 1.2, 3.5, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+
+        // Flower head — every other plant gets a bloom, alternating colour
+        if (i % 2 === 0) {
+          const col = FLOWER_COLORS[(i / 2 + fi * 3) % FLOWER_COLORS.length];
+          const petalR = 2.0 + (i % 3) * 0.4;
+
+          // 5 petals
+          for (let p = 0; p < 5; p++) {
+            const pa = (p / 5) * Math.PI * 2;
+            ctx.fillStyle = `rgba(${Math.floor(col[0] * dark)},${Math.floor(col[1] * dark)},${Math.floor(col[2] * dark)},${0.85 * nightBloom})`;
+            ctx.beginPath();
+            ctx.ellipse(
+              px + Math.cos(pa) * petalR * 0.9,
+              py - stemLen + Math.sin(pa) * petalR * 0.9,
+              petalR * 0.7, petalR * 0.5, pa, 0, Math.PI * 2
+            );
+            ctx.fill();
+          }
+          // Centre dot
+          ctx.fillStyle = `rgba(255,230,${Math.floor(80 * dark)},${0.9 * nightBloom})`;
+          ctx.beginPath();
+          ctx.arc(px, py - stemLen, 1.1, 0, Math.PI * 2);
+          ctx.fill();
+        } else {
+          // Bud — closed teardrop on non-flower plants
+          ctx.fillStyle = `rgba(${Math.floor(80 * dark)},${Math.floor(160 * dark)},${Math.floor(70 * dark)},${0.7 * nightBloom})`;
+          ctx.beginPath();
+          ctx.arc(px, py - stemLen, 1.4, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+      // ── Basin rim (stone) ───────────────────────────────────────────────
       ctx.fillStyle = `rgb(${Math.floor(185 * dark)},${Math.floor(178 * dark)},${Math.floor(165 * dark)})`;
       ctx.beginPath();
       ctx.arc(f.x, f.y, 14, 0, Math.PI * 2);
       ctx.fill();
+
       // Water pool inside
       ctx.fillStyle = `rgba(${Math.floor(100 * dark)},${Math.floor(160 * dark)},${Math.floor(210 * dark)},0.85)`;
       ctx.beginPath();
       ctx.arc(f.x, f.y, 10, 0, Math.PI * 2);
       ctx.fill();
+
       // Central pillar
       ctx.fillStyle = `rgb(${Math.floor(165 * dark)},${Math.floor(158 * dark)},${Math.floor(145 * dark)})`;
       ctx.beginPath();
@@ -2076,10 +2160,10 @@ export class CityLayout {
     this.fountainTimer--;
     if (this.fountainTimer <= 0) {
       this.fountainActive = !this.fountainActive;
-      // On for ~10–20s, off for ~15–30s
+      // On for ~30–45 s, off for ~5 min (300 s) with slight random variation
       this.fountainTimer = this.fountainActive
-        ? 600 + Math.floor(Math.random() * 600)
-        : 900 + Math.floor(Math.random() * 900);
+        ? 1800 + Math.floor(Math.random() * 900)    // 30–45 s at 60 fps
+        : 17400 + Math.floor(Math.random() * 1800); // ~4.8–5.3 min at 60 fps
       if (!this.fountainActive) this.fountainParticles.length = 0;
     }
 
@@ -2131,8 +2215,262 @@ export class CityLayout {
     ctx.restore();
   }
 
+  // ── Bandstand ────────────────────────────────────────────────────────────
+
+  startBandstand() {
+    if (this.bandstandActive) return;
+    const pb = this.plazaBounds;
+    // Position at the upper-right quarter of the plaza, away from the clock digits
+    this.bandstandX = pb.x + pb.w * 0.80;
+    this.bandstandY = pb.y + pb.h * 0.22;
+    this.bandstandActive = true;
+    this.bandMembers = [];
+    this.bandNotes = [];
+
+    const instruments = ['singer', 'guitar', 'bass', 'drums', 'keys'];
+    const spacing = 14;
+    const count = instruments.length;
+    for (let i = 0; i < count; i++) {
+      const offset = (i - (count - 1) / 2) * spacing;
+      const ped = new Pedestrian(this, 9100 + i, 0) as Pedestrian & { instrument: string };
+      ped.vx = ped.vy = 0;
+      ped.x = this.bandstandX + offset;
+      ped.y = this.bandstandY;
+      ped.angle = Math.PI * 0.5; // face the audience (downward in world space)
+      ped.instrument = instruments[i];
+      this.bandMembers.push(ped);
+    }
+  }
+
+  stopBandstand() {
+    this.bandstandActive = false;
+    this.bandMembers = [];
+    this.bandNotes = [];
+  }
+
+  updateBandstand() {
+    if (!this.bandstandActive) return;
+    // Emit floating notes from random band members
+    if (Math.random() < 0.18 && this.bandNotes.length < 30) {
+      const member = this.bandMembers[Math.floor(Math.random() * this.bandMembers.length)];
+      this.bandNotes.push({
+        x: member.x + (Math.random() - 0.5) * 10,
+        y: member.y - 10,
+        vy: -(0.28 + Math.random() * 0.22),
+        alpha: 0.85 + Math.random() * 0.15,
+        char: ['♪', '♫', '♬', '♩'][Math.floor(Math.random() * 4)],
+      });
+    }
+    for (let i = this.bandNotes.length - 1; i >= 0; i--) {
+      const n = this.bandNotes[i];
+      n.y += n.vy;
+      n.x += Math.sin(n.y * 0.09) * 0.35;
+      n.alpha -= 0.009;
+      if (n.alpha <= 0) this.bandNotes.splice(i, 1);
+    }
+  }
+
+  drawBandstand(ctx: CanvasRenderingContext2D, nightAlpha: number, zoom: number = 1) {
+    if (!this.bandstandActive || this.bandMembers.length === 0) return;
+    ctx.beginPath();
+
+    const dark = 1 - nightAlpha * 0.45;
+    const bx = this.bandstandX;
+    const by = this.bandstandY;
+    const pw = 88, ph = 18;
+
+    ctx.save();
+
+    // ── Platform drop-shadow ──────────────────────────────────────────────
+    ctx.fillStyle = 'rgba(0,0,0,0.22)';
+    ctx.beginPath();
+    for (let k = 0; k < 8; k++) {
+      const a = (k / 8) * Math.PI * 2;
+      const rx = pw / 2 + 4, ry = ph / 2 + 8;
+      k === 0 ? ctx.moveTo(bx + Math.cos(a) * rx + 3, by + Math.sin(a) * ry + 4)
+              : ctx.lineTo(bx + Math.cos(a) * rx + 3, by + Math.sin(a) * ry + 4);
+    }
+    ctx.closePath();
+    ctx.fill();
+
+    // ── Octagonal platform ────────────────────────────────────────────────
+    ctx.fillStyle = `rgb(${Math.floor(185 * dark)},${Math.floor(142 * dark)},${Math.floor(88 * dark)})`;
+    ctx.beginPath();
+    for (let k = 0; k < 8; k++) {
+      const a = (k / 8) * Math.PI * 2;
+      const rx = pw / 2, ry = ph / 2 + 6;
+      k === 0 ? ctx.moveTo(bx + Math.cos(a) * rx, by + Math.sin(a) * ry)
+              : ctx.lineTo(bx + Math.cos(a) * rx, by + Math.sin(a) * ry);
+    }
+    ctx.closePath();
+    ctx.fill();
+
+    // Plank grain lines
+    ctx.strokeStyle = `rgba(0,0,0,${0.12 * dark})`;
+    ctx.lineWidth = 0.7;
+    for (let lx = -pw / 2 + 10; lx < pw / 2; lx += 11) {
+      ctx.beginPath();
+      ctx.moveTo(bx + lx, by - ph / 2 - 2);
+      ctx.lineTo(bx + lx, by + ph / 2 + 2);
+      ctx.stroke();
+    }
+
+    // Platform raised-edge band (front facing)
+    ctx.fillStyle = `rgb(${Math.floor(148 * dark)},${Math.floor(108 * dark)},${Math.floor(58 * dark)})`;
+    ctx.fillRect(bx - pw / 2, by + ph / 2 + 4, pw, 5);
+
+    // ── Steps (front-centre) ──────────────────────────────────────────────
+    ctx.fillStyle = `rgb(${Math.floor(168 * dark)},${Math.floor(130 * dark)},${Math.floor(78 * dark)})`;
+    ctx.fillRect(bx - 12, by + ph / 2 + 9, 24, 4);
+    ctx.fillStyle = `rgb(${Math.floor(178 * dark)},${Math.floor(140 * dark)},${Math.floor(88 * dark)})`;
+    ctx.fillRect(bx - 8, by + ph / 2 + 13, 16, 3);
+
+    // ── Canopy (curved back-wall seen from above) ─────────────────────────
+    ctx.strokeStyle = `rgba(${Math.floor(210 * dark)},${Math.floor(210 * dark)},${Math.floor(210 * dark)},0.55)`;
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.arc(bx, by, pw / 2 - 2, Math.PI * 1.1, Math.PI * 1.9);
+    ctx.stroke();
+
+    // ── Support pillars ───────────────────────────────────────────────────
+    const pillarAngles = [Math.PI * 1.15, Math.PI * 1.5, Math.PI * 1.85];
+    for (const pa of pillarAngles) {
+      ctx.fillStyle = `rgb(${Math.floor(210 * dark)},${Math.floor(210 * dark)},${Math.floor(210 * dark)})`;
+      ctx.beginPath();
+      ctx.arc(bx + Math.cos(pa) * (pw / 2 - 2), by + Math.sin(pa) * (ph / 2 + 5), 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // ── Bunting — small coloured triangles between pillars ────────────────
+    const buntingColors = ['#e63946', '#f4a261', '#2a9d8f', '#e9c46a', '#264653'];
+    const buntingPoints: { x: number; y: number }[] = pillarAngles.map(pa => ({
+      x: bx + Math.cos(pa) * (pw / 2 - 2),
+      y: by + Math.sin(pa) * (ph / 2 + 5),
+    }));
+    for (let seg = 0; seg < buntingPoints.length - 1; seg++) {
+      const p0 = buntingPoints[seg], p1 = buntingPoints[seg + 1];
+      const flags = 4;
+      for (let f = 0; f < flags; f++) {
+        const t0 = f / flags, t1 = (f + 0.5) / flags;
+        const mx = p0.x + (p1.x - p0.x) * ((t0 + t1) / 2);
+        const my = p0.y + (p1.y - p0.y) * ((t0 + t1) / 2) + 4;
+        const lx = p0.x + (p1.x - p0.x) * t0;
+        const ly = p0.y + (p1.y - p0.y) * t0;
+        const rx = p0.x + (p1.x - p0.x) * t1;
+        const ry = p0.y + (p1.y - p0.y) * t1;
+        const col = buntingColors[(seg * flags + f) % buntingColors.length];
+        const r = parseInt(col.slice(1, 3), 16), g = parseInt(col.slice(3, 5), 16), b = parseInt(col.slice(5, 7), 16);
+        ctx.fillStyle = `rgba(${Math.floor(r * dark)},${Math.floor(g * dark)},${Math.floor(b * dark)},${0.8 * dark})`;
+        ctx.beginPath();
+        ctx.moveTo(lx, ly);
+        ctx.lineTo(rx, ry);
+        ctx.lineTo(mx, my);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+
+    ctx.restore();
+
+    // ── Band members (drawn as pedestrians dancing) ───────────────────────
+    for (const ped of this.bandMembers) {
+      ped.draw(ctx, nightAlpha, 0, true /* isDancing */, zoom);
+    }
+
+    // ── Instrument overlays ────────────────────────────────────────────────
+    for (const ped of this.bandMembers) {
+      const s = ped.size * 5.5;
+      ctx.save();
+      ctx.translate(ped.x, ped.y);
+
+      switch (ped.instrument) {
+        case 'singer':
+          // Mic stand — slim vertical rod with ball head
+          ctx.strokeStyle = `rgba(${Math.floor(70 * dark)},${Math.floor(70 * dark)},${Math.floor(70 * dark)},0.9)`;
+          ctx.lineWidth = 1.1;
+          ctx.beginPath();
+          ctx.moveTo(0, s * 0.4);
+          ctx.lineTo(0, -s * 1.1);
+          ctx.stroke();
+          ctx.fillStyle = `rgba(${Math.floor(50 * dark)},${Math.floor(50 * dark)},${Math.floor(50 * dark)},0.9)`;
+          ctx.beginPath();
+          ctx.arc(0, -s * 1.1, s * 0.28, 0, Math.PI * 2);
+          ctx.fill();
+          break;
+
+        case 'guitar':
+          // Guitar body + neck, held across
+          ctx.fillStyle = `rgb(${Math.floor(165 * dark)},${Math.floor(88 * dark)},${Math.floor(38 * dark)})`;
+          ctx.fillRect(-s * 0.9, -s * 0.38, s * 1.85, s * 0.44);
+          ctx.fillStyle = `rgb(${Math.floor(130 * dark)},${Math.floor(68 * dark)},${Math.floor(28 * dark)})`;
+          ctx.fillRect(s * 0.85, -s * 0.52, s * 0.52, s * 0.2);
+          break;
+
+        case 'bass':
+          // Slightly larger / squarer bass guitar
+          ctx.fillStyle = `rgb(${Math.floor(40 * dark)},${Math.floor(80 * dark)},${Math.floor(165 * dark)})`;
+          ctx.fillRect(-s * 1.0, -s * 0.38, s * 2.0, s * 0.44);
+          ctx.fillStyle = `rgb(${Math.floor(28 * dark)},${Math.floor(60 * dark)},${Math.floor(130 * dark)})`;
+          ctx.fillRect(s * 0.9, -s * 0.52, s * 0.52, s * 0.2);
+          break;
+
+        case 'drums': {
+          // Snare drum + hi-hat circle in front
+          const t = Date.now() * 0.004;
+          ctx.fillStyle = `rgba(${Math.floor(210 * dark)},${Math.floor(55 * dark)},${Math.floor(55 * dark)},0.85)`;
+          ctx.beginPath();
+          ctx.ellipse(0, s * 0.55, s * 0.72, s * 0.36, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = `rgba(${Math.floor(160 * dark)},${Math.floor(35 * dark)},${Math.floor(35 * dark)},0.75)`;
+          ctx.lineWidth = 0.9;
+          ctx.beginPath();
+          ctx.ellipse(0, s * 0.55, s * 0.72, s * 0.36, 0, 0, Math.PI * 2);
+          ctx.stroke();
+          // Two animated drumsticks
+          const stickAngle = Math.sin(t * 3) * 0.4;
+          ctx.strokeStyle = `rgba(${Math.floor(200 * dark)},${Math.floor(165 * dark)},${Math.floor(100 * dark)},0.9)`;
+          ctx.lineWidth = 1.1;
+          ctx.beginPath();
+          ctx.moveTo(-s * 0.25, -s * 0.1);
+          ctx.lineTo(-s * 0.15 + Math.cos(stickAngle) * s * 0.5, s * 0.3 + Math.sin(stickAngle) * s * 0.3);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(s * 0.25, -s * 0.1);
+          ctx.lineTo(s * 0.15 - Math.cos(stickAngle) * s * 0.5, s * 0.3 + Math.sin(stickAngle) * s * 0.3);
+          ctx.stroke();
+          break;
+        }
+
+        case 'keys':
+          // Keyboard — white rectangle with black keys on top
+          ctx.fillStyle = `rgba(${Math.floor(238 * dark)},${Math.floor(238 * dark)},${Math.floor(238 * dark)},0.92)`;
+          ctx.fillRect(-s * 1.15, -s * 0.12, s * 2.3, s * 0.42);
+          ctx.strokeStyle = `rgba(0,0,0,${0.3 * dark})`;
+          ctx.lineWidth = 0.5;
+          ctx.strokeRect(-s * 1.15, -s * 0.12, s * 2.3, s * 0.42);
+          ctx.fillStyle = `rgba(0,0,0,${0.75 * dark})`;
+          for (let k = 0; k < 6; k++) {
+            ctx.fillRect(-s * 0.95 + k * s * 0.36, -s * 0.12, s * 0.22, s * 0.26);
+          }
+          break;
+      }
+      ctx.restore();
+    }
+
+    // ── Floating music notes ───────────────────────────────────────────────
+    ctx.save();
+    ctx.font = '9px serif';
+    ctx.textAlign = 'center';
+    for (const n of this.bandNotes) {
+      ctx.fillStyle = `rgba(60,45,180,${n.alpha * (1 - nightAlpha * 0.7)})`;
+      ctx.fillText(n.char, n.x, n.y);
+    }
+    ctx.restore();
+  }
+
   drawBusker(ctx: CanvasRenderingContext2D, nightAlpha: number, zoom: number = 1) {
     if (!this.buskerActive || !this.buskerPed) return;
+    ctx.beginPath(); // guard against stale path from previous draw call
     const dark = 1 - nightAlpha * 0.5;
     const t = Date.now() / 1000;
 
