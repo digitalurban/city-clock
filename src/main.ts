@@ -6,7 +6,7 @@ import { ChimneySmoke } from './rendering/ChimneySmoke';
 import { ClockManager } from './clock/ClockManager';
 import { DayNightCycle } from './rendering/DayNightCycle';
 import { Weather } from './rendering/Weather';
-import { PostProcess } from './rendering/PostProcess';
+// import { PostProcess } from './rendering/PostProcess';
 import { AudioEngine } from './rendering/AudioEngine';
 import { TOTAL_PEDESTRIANS, CLOCK_ELIGIBLE_COUNT, TOTAL_CARS, setTotalPedestrians, setTotalCars, SEPARATION_RADIUS } from './utils/constants';
 import { SpatialGrid } from './utils/SpatialGrid';
@@ -14,8 +14,8 @@ import { SpatialGrid } from './utils/SpatialGrid';
 const canvas = document.getElementById('cityCanvas') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d', { alpha: false })!;
 
-// --- Post-processing bloom overlay ---
-const postProcess = new PostProcess(canvas);
+// --- Post-processing bloom overlay (disabled — WebGL2 texSubImage2D is slow on Safari) ---
+// const postProcess = new PostProcess(canvas);
 
 // --- Procedural audio ---
 const audioEngine = new AudioEngine();
@@ -42,7 +42,36 @@ const grainCanvas = (() => {
 let grainPattern: CanvasPattern | null = null; // created lazily after ctx is ready
 let grainOffset = { x: 0, y: 0 };
 let grainFrame = 0; // throttle grain updates to ~15fps so it reads as texture, not noise
-let bloomFrame = 0; // throttle bloom render to every 2nd frame — halves texSubImage2D cost
+
+// Cached screen-space gradients — rebuilt only on resize, not every frame.
+// Creating new gradient objects each frame is CPU-heavy on Safari (not GPU-accelerated).
+let cachedVignette: CanvasGradient | null = null;
+let cachedTiltTop: CanvasGradient | null = null;
+let cachedTiltBot: CanvasGradient | null = null;
+let cachedWetSheen: CanvasGradient | null = null;
+let cachedGradientW = 0;
+let cachedGradientH = 0;
+
+function rebuildCachedGradients() {
+  const vw = canvas.width, vh = canvas.height;
+  cachedVignette = ctx.createRadialGradient(vw / 2, vh / 2, vh * 0.18, vw / 2, vh / 2, vw * 0.72);
+  cachedVignette.addColorStop(0, 'rgba(0, 0, 0, 0)');
+  cachedVignette.addColorStop(1, 'rgba(0, 0, 0, 0.36)');
+  const bandH = vh * 0.18;
+  cachedTiltTop = ctx.createLinearGradient(0, 0, 0, bandH);
+  cachedTiltTop.addColorStop(0, 'rgba(200, 210, 220, 0.38)');
+  cachedTiltTop.addColorStop(1, 'rgba(200, 210, 220, 0)');
+  cachedTiltBot = ctx.createLinearGradient(0, vh - bandH, 0, vh);
+  cachedTiltBot.addColorStop(0, 'rgba(200, 210, 220, 0)');
+  cachedTiltBot.addColorStop(1, 'rgba(200, 210, 220, 0.38)');
+  cachedWetSheen = ctx.createLinearGradient(0, 0, vw, 0);
+  cachedWetSheen.addColorStop(0,   'rgba(100,130,180,0)');
+  cachedWetSheen.addColorStop(0.3, 'rgba(140,170,220,1)');
+  cachedWetSheen.addColorStop(0.7, 'rgba(100,130,180,1)');
+  cachedWetSheen.addColorStop(1,   'rgba(100,130,180,0)');
+  cachedGradientW = vw;
+  cachedGradientH = vh;
+}
 
 let layout: CityLayout;
 let pedestrians: Pedestrian[] = [];
@@ -997,21 +1026,11 @@ function loop(timestamp: number = 0) {
   // Weather screen overlay
   weather.drawScreenOverlay(ctx, canvas.width, canvas.height);
 
-  // Wet road sheen
-  weather.drawWetSheen(ctx, canvas.width, canvas.height);
+  // Wet road sheen — pass cached gradient so Weather doesn't create one per frame
+  weather.drawWetSheen(ctx, canvas.width, canvas.height, cachedWetSheen);
 
-  // WebGL2 bloom — MUST run before film grain.
-  // Throttle to every 2nd frame: halves the expensive texSubImage2D Canvas2D→WebGL
-  // upload (Safari's Metal pipeline has no fast-path for this cross-context copy).
-  // getCanvas() returns the 2D cache canvas which retains the previous result.
-  if (postProcess.supported) {
-    bloomFrame++;
-    if (bloomFrame % 2 === 0) postProcess.render(canvas, nightAlpha);
-    ctx.save();
-    ctx.globalCompositeOperation = 'lighter';
-    ctx.drawImage(postProcess.getCanvas(), 0, 0);
-    ctx.restore();
-  }
+  // WebGL2 bloom disabled — Safari's Metal backend has no fast-path for the
+  // Canvas2D→WebGL texSubImage2D upload, causing significant per-frame slowdown.
 
   // Film grain — drawn AFTER bloom so grain noise is never fed into the bloom
   // extractor. Use source-over (GPU-accelerated); overlay is software-rendered.
@@ -1037,34 +1056,25 @@ function loop(timestamp: number = 0) {
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.restore();
 
+  // Rebuild cached gradients on first frame or if canvas was resized
+  if (canvas.width !== cachedGradientW || canvas.height !== cachedGradientH) {
+    rebuildCachedGradients();
+  }
+
   // Vignette — subtle radial darkening at the screen edges to frame the scene
   {
     const vw = canvas.width, vh = canvas.height;
-    const vig = ctx.createRadialGradient(vw / 2, vh / 2, vh * 0.18, vw / 2, vh / 2, vw * 0.72);
-    vig.addColorStop(0, 'rgba(0, 0, 0, 0)');
-    vig.addColorStop(1, 'rgba(0, 0, 0, 0.36)');
-    ctx.fillStyle = vig;
+    ctx.fillStyle = cachedVignette!;
     ctx.fillRect(0, 0, vw, vh);
   }
 
-  // Tilt-shift diorama effect — drawn directly on canvas so no CSS
-  // backdrop-filter div is needed. backdrop-filter over an animating canvas
-  // forces the browser compositor to re-blur every frame, causing flicker.
-  // We replicate the look with two gradient fog bands at top and bottom (18% vh).
+  // Tilt-shift diorama effect — fog bands at top and bottom (18% vh)
   {
     const vw = canvas.width, vh = canvas.height;
     const bandH = vh * 0.18;
-    // Top band: fog colour fades from opaque at edge to transparent inward
-    const fogTop = ctx.createLinearGradient(0, 0, 0, bandH);
-    fogTop.addColorStop(0,   'rgba(200, 210, 220, 0.38)');
-    fogTop.addColorStop(1,   'rgba(200, 210, 220, 0)');
-    ctx.fillStyle = fogTop;
+    ctx.fillStyle = cachedTiltTop!;
     ctx.fillRect(0, 0, vw, bandH);
-    // Bottom band
-    const fogBot = ctx.createLinearGradient(0, vh - bandH, 0, vh);
-    fogBot.addColorStop(0,   'rgba(200, 210, 220, 0)');
-    fogBot.addColorStop(1,   'rgba(200, 210, 220, 0.38)');
-    ctx.fillStyle = fogBot;
+    ctx.fillStyle = cachedTiltBot!;
     ctx.fillRect(0, vh - bandH, vw, bandH);
   }
 
@@ -1084,7 +1094,8 @@ function loop(timestamp: number = 0) {
 
 window.addEventListener('resize', () => {
   resize();
-  postProcess.resize(canvas.width, canvas.height);
+  rebuildCachedGradients();
+  // postProcess.resize(canvas.width, canvas.height);
 });
 
 // iOS: viewport dimensions may not update immediately on rotation

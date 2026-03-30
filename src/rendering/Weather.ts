@@ -818,21 +818,21 @@ export class Weather {
     ctx.restore();
   }
 
-  drawWetSheen(ctx: CanvasRenderingContext2D, screenW: number, screenH: number) {
+  drawWetSheen(ctx: CanvasRenderingContext2D, screenW: number, screenH: number, cachedGrad?: CanvasGradient | null) {
     const wetness = this.puddleLevel * Math.min(1, this.alpha * 2);
     if (wetness < 0.02) return;
     ctx.save();
-    // Use source-over not 'screen' — non-standard blend modes are software-rendered.
-    // Static stop positions — animated stops fed the bloom extractor with a
-    // shifting bright band each frame, causing the bloom shimmer.
     ctx.globalAlpha = wetness * 0.07;
     ctx.globalCompositeOperation = 'source-over';
-    const grad = ctx.createLinearGradient(0, 0, screenW, 0);
-    grad.addColorStop(0,   'rgba(100,130,180,0)');
-    grad.addColorStop(0.3, 'rgba(140,170,220,1)');
-    grad.addColorStop(0.7, 'rgba(100,130,180,1)');
-    grad.addColorStop(1,   'rgba(100,130,180,0)');
-    ctx.fillStyle = grad;
+    // Use caller-supplied cached gradient when available to avoid per-frame allocation
+    ctx.fillStyle = cachedGrad ?? ctx.createLinearGradient(0, 0, screenW, 0);
+    if (!cachedGrad) {
+      const g = ctx.fillStyle as CanvasGradient;
+      g.addColorStop(0,   'rgba(100,130,180,0)');
+      g.addColorStop(0.3, 'rgba(140,170,220,1)');
+      g.addColorStop(0.7, 'rgba(100,130,180,1)');
+      g.addColorStop(1,   'rgba(100,130,180,0)');
+    }
     ctx.fillRect(0, 0, screenW, screenH);
     ctx.restore();
   }
