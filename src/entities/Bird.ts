@@ -150,7 +150,7 @@ export class Bird {
     this.vy = 0;
     this.wingPhase = Math.random() * Math.PI * 2;
     this.idOffset = Math.random() * 100;
-    this.size = 0.9 + Math.random() * 0.25;
+    this.size = 0.6 + Math.random() * 0.15;
     this.height = 0.5 + Math.random() * 0.4;
   }
 

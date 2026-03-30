@@ -192,6 +192,13 @@ export class CityLayout {
   coinParticles: { sx: number; sy: number; tx: number; ty: number; t: number; alpha: number }[] = [];
   buskerNotes: { x: number; y: number; vy: number; alpha: number; char: string }[] = [];
 
+  // ── Fountain ────────────────────────────────────────────────────────────
+  fountainX: number = 0;
+  fountainY: number = 0;
+  fountainActive: boolean = false;
+  fountainTimer: number = 900;  // frames until first activation (~15s)
+  private fountainParticles: { x: number; y: number; vx: number; vy: number; alpha: number }[] = [];
+
   // ── Newspaper stand ────────────────────────────────────────────────────
   newsstandX: number = 0;
   newsstandY: number = 0;
@@ -1958,6 +1965,10 @@ export class CityLayout {
     // Newsstand in the lower-left plaza corner, near pedestrian flow
     this.newsstandX = pb.x + 38;
     this.newsstandY = pb.y + pb.h - 60;
+    // Fountain sits at the plaza centre
+    this.fountainX = pb.x + pb.w / 2;
+    this.fountainY = pb.y + pb.h / 2;
+
     // Create a dedicated pedestrian instance for the busker figure
     this.buskerPed = new Pedestrian(this, 9000, 0);
     this.buskerPed.vx = this.buskerPed.vy = 0;
@@ -2026,6 +2037,85 @@ export class CityLayout {
       t: 0,
       alpha: 1,
     });
+  }
+
+  // ── Fountain ─────────────────────────────────────────────────────────────
+
+  /** Draw the static basin — call from buildStaticCanvas. */
+  drawFountainBasin(ctx: CanvasRenderingContext2D, nightAlpha: number) {
+    const x = this.fountainX, y = this.fountainY;
+    const dark = 1 - nightAlpha * 0.4;
+    // Outer basin rim (stone)
+    ctx.fillStyle = `rgb(${Math.floor(185 * dark)},${Math.floor(178 * dark)},${Math.floor(165 * dark)})`;
+    ctx.beginPath();
+    ctx.arc(x, y, 22, 0, Math.PI * 2);
+    ctx.fill();
+    // Water pool inside
+    ctx.fillStyle = `rgba(${Math.floor(100 * dark)},${Math.floor(160 * dark)},${Math.floor(210 * dark)},0.85)`;
+    ctx.beginPath();
+    ctx.arc(x, y, 17, 0, Math.PI * 2);
+    ctx.fill();
+    // Central pillar
+    ctx.fillStyle = `rgb(${Math.floor(165 * dark)},${Math.floor(158 * dark)},${Math.floor(145 * dark)})`;
+    ctx.beginPath();
+    ctx.arc(x, y, 5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  /** Update fountain on/off cycle and advance water particles. */
+  updateFountain() {
+    this.fountainTimer--;
+    if (this.fountainTimer <= 0) {
+      this.fountainActive = !this.fountainActive;
+      // On for ~10–20s, off for ~15–30s
+      this.fountainTimer = this.fountainActive
+        ? 600 + Math.floor(Math.random() * 600)
+        : 900 + Math.floor(Math.random() * 900);
+      if (!this.fountainActive) this.fountainParticles.length = 0;
+    }
+
+    if (!this.fountainActive) return;
+
+    // Emit new jets — 3 streams at evenly-spaced angles
+    if (this.fountainParticles.length < 60) {
+      for (let j = 0; j < 3; j++) {
+        const angle = (j / 3) * Math.PI * 2 + Date.now() * 0.0008;
+        const speed = 0.9 + Math.random() * 0.4;
+        this.fountainParticles.push({
+          x: this.fountainX,
+          y: this.fountainY,
+          vx: Math.cos(angle) * speed,
+          vy: -1.6 - Math.random() * 0.6, // upward
+          alpha: 0.75 + Math.random() * 0.2,
+        });
+      }
+    }
+
+    // Advance particles with gravity
+    for (let i = this.fountainParticles.length - 1; i >= 0; i--) {
+      const p = this.fountainParticles[i];
+      p.x  += p.vx;
+      p.y  += p.vy;
+      p.vy += 0.06; // gravity
+      p.alpha -= 0.018;
+      if (p.alpha <= 0 || p.y > this.fountainY + 5) {
+        this.fountainParticles.splice(i, 1);
+      }
+    }
+  }
+
+  /** Draw animated water spray — call from the dynamic render loop. */
+  drawFountainSpray(ctx: CanvasRenderingContext2D, nightAlpha: number) {
+    if (!this.fountainActive || this.fountainParticles.length === 0) return;
+    const dark = 1 - nightAlpha * 0.3;
+    ctx.save();
+    for (const p of this.fountainParticles) {
+      ctx.fillStyle = `rgba(${Math.floor(160 * dark)},${Math.floor(210 * dark)},${Math.floor(240 * dark)},${p.alpha})`;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 1.4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
   }
 
   drawBusker(ctx: CanvasRenderingContext2D, nightAlpha: number, zoom: number = 1) {

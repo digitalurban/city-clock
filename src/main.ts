@@ -683,6 +683,7 @@ function buildStaticCanvas(nightAlpha: number) {
   layout.drawParks(sctx, nightAlpha);
 
   layout.drawPlazaBenches(sctx, nightAlpha);
+  layout.drawFountainBasin(sctx, nightAlpha);
   layout.drawShadows(sctx, nightAlpha);
   layout.drawBuildings(sctx, nightAlpha);
   layout.drawHouses(sctx, nightAlpha);
@@ -788,6 +789,10 @@ function loop(timestamp: number = 0) {
   // Market stalls and morning newsstand — drawn in plaza before pedestrians
   layout.drawMarket(ctx, nightAlpha);
   layout.drawNewstand(ctx, nightAlpha);
+
+  // Fountain — update on/off cycle and draw spray above the static basin
+  layout.updateFountain();
+  layout.drawFountainSpray(ctx, nightAlpha);
 
   // Busker update + draw (after market stalls so they layer correctly)
   layout.updateBusker();
