@@ -1524,6 +1524,20 @@ export class Pedestrian {
         }
       }
 
+      // 6b. Fountain repulsion — pedestrians walk around the basin
+      if (layout.fountainX !== 0 || layout.fountainY !== 0) {
+        const fdx = this.x - layout.fountainX;
+        const fdy = this.y - layout.fountainY;
+        const fdistSq = fdx * fdx + fdy * fdy;
+        const FOUNTAIN_RADIUS = 38;
+        if (fdistSq < FOUNTAIN_RADIUS * FOUNTAIN_RADIUS && fdistSq > 0) {
+          const fdist = Math.sqrt(fdistSq);
+          const strength = ((FOUNTAIN_RADIUS - fdist) / FOUNTAIN_RADIUS) * this.maxForce * 12;
+          ax += (fdx / fdist) * strength;
+          ay += (fdy / fdist) * strength;
+        }
+      }
+
       // 7. Road repulsion — keep pedestrians on sidewalks (skip plaza, crosswalks, clock mode)
       // Use distance-proportional force to prevent harsh wobble at road edges
       if (!this.clockTarget && !this.clockDismissTarget &&
