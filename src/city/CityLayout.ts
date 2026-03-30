@@ -1,4 +1,5 @@
 import { BLOCK_SIZE, ROAD_WIDTH, SIDEWALK_WIDTH, BUILDING_COLORS, HOUSE_COLORS, GARDEN_COLORS } from '../utils/constants';
+import { Pedestrian } from '../entities/Pedestrian';
 
 export interface BuildingDef {
   x: number;
@@ -184,6 +185,8 @@ export class CityLayout {
   buskerActive: boolean = false;
   buskerX: number = 0;
   buskerY: number = 0;
+  buskerPed: Pedestrian | null = null;  // reused pedestrian instance for the busker figure
+  eventPed: Pedestrian | null = null;   // reused pedestrian instance for the event focal person
   buskerTimer: number = 0;
   buskerCooldown: number = 600; // frames until first appearance
   coinParticles: { sx: number; sy: number; tx: number; ty: number; t: number; alpha: number }[] = [];
@@ -1868,6 +1871,10 @@ export class CityLayout {
       radius: type === 'musician' ? 80 : 120,
       timer: 3000 + Math.random() * 3000, // 50 to 100 seconds at 60fps
     };
+    // Create a pedestrian to represent the event focal person
+    this.eventPed = new Pedestrian(this, 9001, 0);
+    this.eventPed.vx = this.eventPed.vy = 0;
+    this.eventPed.angle = 0;
   }
 
   updateEvent() {
@@ -1879,49 +1886,66 @@ export class CityLayout {
     }
   }
 
-  drawEvent(ctx: CanvasRenderingContext2D, nightAlpha: number) {
-    if (!this.activeEvent) return;
+  drawEvent(ctx: CanvasRenderingContext2D, nightAlpha: number, zoom: number = 1) {
+    if (!this.activeEvent || !this.eventPed) return;
 
-    // Draw the event focal point
+    const ex = this.activeEvent.x;
+    const ey = this.activeEvent.y;
+
+    // Subtle gathering-radius indicator
     ctx.save();
-    ctx.translate(this.activeEvent.x, this.activeEvent.y);
-
-    // A small gathering radius debug/visual indicator (subtle)
+    ctx.translate(ex, ey);
     ctx.fillStyle = `rgba(200, 200, 200, ${0.1 - nightAlpha * 0.05})`;
     ctx.beginPath();
     ctx.arc(0, 0, this.activeEvent.radius, 0, Math.PI * 2);
     ctx.fill();
+    ctx.restore();
+
+    // Draw event focal person as a regular pedestrian
+    this.eventPed.x = ex;
+    this.eventPed.y = ey;
+    this.eventPed.draw(ctx, nightAlpha, 0, false, zoom);
 
     const t = Date.now() / 1000;
     const bounce = Math.abs(Math.sin(t * 4)) * 3;
+    const s = this.eventPed.size * 5.5;
+    const dark = 1 - nightAlpha * 0.3;
 
     if (this.activeEvent.type === 'musician') {
-      // Draw a tiny guitar player
-      ctx.fillStyle = `rgba(150, 100, 50, ${1 - nightAlpha * 0.3})`;
-      ctx.fillRect(-4, -6 - bounce, 8, 12); // body
-      ctx.fillStyle = `rgba(220, 180, 140, ${1 - nightAlpha * 0.3})`;
-      ctx.beginPath(); ctx.arc(0, -9 - bounce, 4, 0, Math.PI * 2); ctx.fill(); // head
-      ctx.fillStyle = `rgba(180, 120, 60, ${1 - nightAlpha * 0.3})`;
-      ctx.fillRect(-6, -4 - bounce, 14, 4); // guitar
+      // Guitar held in front, scaled to pedestrian size
+      ctx.save();
+      ctx.translate(ex, ey);
+      ctx.fillStyle = `rgba(180, 120, 60, ${dark})`;
+      ctx.fillRect(-s * 0.9, -s * 0.45, s * 1.8, s * 0.5);
+      ctx.fillStyle = `rgba(140, 88, 38, ${dark})`;
+      ctx.fillRect(s * 0.8, -s * 0.6, s * 0.55, s * 0.22);
+      // Floating music notes
+      ctx.font = `${Math.round(s * 1.4)}px serif`;
+      ctx.textAlign = 'center';
+      ctx.fillStyle = `rgba(70, 55, 190, ${dark * 0.8})`;
+      ctx.fillText('♪', s * 1.5, -s * 1.8 - bounce);
+      ctx.fillText('♫', -s, -s * 2.4 - bounce * 0.6);
+      ctx.restore();
     } else if (this.activeEvent.type === 'protest') {
-      // Draw a person holding a sign
-      ctx.fillStyle = `rgba(100, 150, 200, ${1 - nightAlpha * 0.3})`;
-      ctx.fillRect(-4, -6, 8, 12); // body
-      ctx.fillStyle = `rgba(220, 180, 140, ${1 - nightAlpha * 0.3})`;
-      ctx.beginPath(); ctx.arc(0, -9, 4, 0, Math.PI * 2); ctx.fill(); // head
-
-      // The sign bouncing
-      ctx.strokeStyle = `rgba(80, 60, 40, ${1 - nightAlpha * 0.3})`;
+      // Banner/sign raised above the pedestrian
+      ctx.save();
+      ctx.translate(ex, ey);
+      ctx.strokeStyle = `rgba(80, 60, 40, ${dark})`;
       ctx.lineWidth = 1.5;
-      ctx.beginPath(); ctx.moveTo(4, -2); ctx.lineTo(6, -15 - bounce); ctx.stroke(); // pole
-      ctx.fillStyle = `rgba(255, 255, 255, ${1 - nightAlpha * 0.3})`;
-      ctx.fillRect(0, -22 - bounce, 12, 8); // sign board
-      ctx.fillStyle = `rgba(0, 0, 0, ${1 - nightAlpha * 0.3})`;
-      ctx.fillRect(2, -20 - bounce, 8, 2); // sign text line 1
-      ctx.fillRect(2, -17 - bounce, 6, 2); // sign text line 2
+      ctx.beginPath();
+      ctx.moveTo(s * 0.4, -s * 0.3);
+      ctx.lineTo(s * 0.5, -s * 2.2 - bounce);
+      ctx.stroke();
+      ctx.fillStyle = `rgba(255, 255, 255, ${dark})`;
+      ctx.fillRect(s * 0.1, -s * 3.2 - bounce, s * 1.8, s * 1.0);
+      ctx.strokeStyle = `rgba(180, 30, 30, ${dark})`;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(s * 0.1, -s * 3.2 - bounce, s * 1.8, s * 1.0);
+      ctx.fillStyle = `rgba(0, 0, 0, ${dark})`;
+      ctx.fillRect(s * 0.3, -s * 2.95 - bounce, s * 1.3, s * 0.22);
+      ctx.fillRect(s * 0.3, -s * 2.6 - bounce, s * 1.0, s * 0.22);
+      ctx.restore();
     }
-
-    ctx.restore();
   }
 
   // ── Persistent fixtures: busker pitch + newspaper stand ──────────────
@@ -1934,6 +1958,10 @@ export class CityLayout {
     // Newsstand in the lower-left plaza corner, near pedestrian flow
     this.newsstandX = pb.x + 38;
     this.newsstandY = pb.y + pb.h - 60;
+    // Create a dedicated pedestrian instance for the busker figure
+    this.buskerPed = new Pedestrian(this, 9000, 0);
+    this.buskerPed.vx = this.buskerPed.vy = 0;
+    this.buskerPed.angle = 0; // facing east (toward audience)
   }
 
   /** Call once per frame — manages busker lifecycle, coin arcs and music notes. */
@@ -1999,44 +2027,40 @@ export class CityLayout {
     });
   }
 
-  drawBusker(ctx: CanvasRenderingContext2D, nightAlpha: number) {
-    if (!this.buskerActive) return;
+  drawBusker(ctx: CanvasRenderingContext2D, nightAlpha: number, zoom: number = 1) {
+    if (!this.buskerActive || !this.buskerPed) return;
     const dark = 1 - nightAlpha * 0.5;
     const t = Date.now() / 1000;
-    const bounce = Math.abs(Math.sin(t * 3.5)) * 1.8;
 
+    // Guitar case on the ground — drawn first (below pedestrian)
     ctx.save();
     ctx.translate(this.buskerX, this.buskerY);
-
-    // Guitar case flat on the ground
     ctx.fillStyle = `rgb(${Math.floor(95 * dark)}, ${Math.floor(65 * dark)}, ${Math.floor(38 * dark)})`;
     ctx.fillRect(-9, 5, 18, 8);
     ctx.strokeStyle = `rgba(0,0,0,${0.35 * dark})`;
     ctx.lineWidth = 0.7;
     ctx.strokeRect(-9, 5, 18, 8);
-    // Coins sitting in the case
     ctx.fillStyle = `rgba(${Math.floor(215 * dark)}, ${Math.floor(175 * dark)}, ${Math.floor(45 * dark)}, 0.9)`;
     for (let i = 0; i < 5; i++) {
       ctx.beginPath();
       ctx.arc(-6 + i * 3.2, 9, 1.1, 0, Math.PI * 2);
       ctx.fill();
     }
+    ctx.restore();
 
-    // Torso
-    ctx.fillStyle = `rgb(${Math.floor(75 * dark)}, ${Math.floor(105 * dark)}, ${Math.floor(155 * dark)})`;
-    ctx.fillRect(-4, -7 - bounce, 8, 11);
-    // Head
-    ctx.fillStyle = `rgb(${Math.floor(215 * dark)}, ${Math.floor(175 * dark)}, ${Math.floor(135 * dark)})`;
-    ctx.beginPath();
-    ctx.arc(0, -11 - bounce, 3.8, 0, Math.PI * 2);
-    ctx.fill();
-    // Guitar body
+    // Draw busker as a regular pedestrian
+    this.buskerPed.x = this.buskerX;
+    this.buskerPed.y = this.buskerY;
+    this.buskerPed.draw(ctx, nightAlpha, 0, false, zoom);
+
+    // Guitar overlay drawn on top of the pedestrian
+    const s = this.buskerPed.size * 5.5;
+    ctx.save();
+    ctx.translate(this.buskerX, this.buskerY);
     ctx.fillStyle = `rgb(${Math.floor(155 * dark)}, ${Math.floor(88 * dark)}, ${Math.floor(38 * dark)})`;
-    ctx.fillRect(-7, -4 - bounce, 15, 5);
-    // Guitar neck
+    ctx.fillRect(-s * 0.9, -s * 0.5, s * 1.8, s * 0.55); // guitar body
     ctx.fillStyle = `rgb(${Math.floor(125 * dark)}, ${Math.floor(68 * dark)}, ${Math.floor(28 * dark)})`;
-    ctx.fillRect(6, -5 - bounce, 4, 2);
-
+    ctx.fillRect(s * 0.8, -s * 0.65, s * 0.55, s * 0.25); // guitar neck
     ctx.restore();
 
     // Floating music notes

@@ -789,7 +789,7 @@ function loop(timestamp: number = 0) {
 
   // Busker update + draw (after market stalls so they layer correctly)
   layout.updateBusker();
-  layout.drawBusker(ctx, nightAlpha);
+  layout.drawBusker(ctx, nightAlpha, zoom);
 
   // Update clock targets
   const plazaCX = layout.plazaBounds.x + layout.plazaBounds.w / 2;
@@ -980,7 +980,7 @@ function loop(timestamp: number = 0) {
     layout.startEvent(Math.random() < 0.5 ? 'musician' : 'protest');
   }
   layout.updateEvent();
-  layout.drawEvent(ctx, nightAlpha);
+  layout.drawEvent(ctx, nightAlpha, zoom);
 
   // Traffic lights
   layout.drawTrafficLights(ctx, nightAlpha, trafficPhase);
