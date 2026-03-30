@@ -42,6 +42,8 @@ const grainCanvas = (() => {
 let grainPattern: CanvasPattern | null = null; // created lazily after ctx is ready
 let grainOffset = { x: 0, y: 0 };
 let grainFrame = 0; // throttle grain updates to ~15fps so it reads as texture, not noise
+// Reused DOMMatrix for grain offset — avoids allocating a new object every frame (7k+/min GC pressure)
+const _grainMatrix = new DOMMatrix();
 
 // Cached screen-space gradients — rebuilt only on resize, not every frame.
 // Creating new gradient objects each frame is CPU-heavy on Safari (not GPU-accelerated).
@@ -951,8 +953,8 @@ function loop(timestamp: number = 0) {
       if (allOut || flock.timer > 5000) flock.active = false;
     }
   }
-  // Clean up inactive flocks
-  flocks = flocks.filter(f => f.active);
+  // Clean up inactive flocks — splice in-place to avoid array allocation
+  for (let i = flocks.length - 1; i >= 0; i--) { if (!flocks[i].active) flocks.splice(i, 1); }
 
   // Update sparrow flocks and draw shadows
   for (const flock of sparrowFlocks) {
@@ -970,7 +972,7 @@ function loop(timestamp: number = 0) {
       if (allOut || flock.timer > 5000) flock.active = false;
     }
   }
-  sparrowFlocks = sparrowFlocks.filter(f => f.active);
+  for (let i = sparrowFlocks.length - 1; i >= 0; i--) { if (!sparrowFlocks[i].active) sparrowFlocks.splice(i, 1); }
 
   // Trees on top (canopies)
   layout.drawTrees(ctx, time, nightAlpha);
@@ -1046,9 +1048,9 @@ function loop(timestamp: number = 0) {
     grainOffset.y = Math.random() * 256;
   }
   if (!grainPattern) grainPattern = ctx.createPattern(grainCanvas, 'repeat')!;
-  const grainMatrix = new DOMMatrix();
-  grainMatrix.translateSelf(grainOffset.x % 256, grainOffset.y % 256);
-  grainPattern.setTransform(grainMatrix);
+  _grainMatrix.e = grainOffset.x % 256;
+  _grainMatrix.f = grainOffset.y % 256;
+  grainPattern.setTransform(_grainMatrix);
   ctx.save();
   ctx.globalAlpha = 0.025 + nightAlpha * 0.02;
   ctx.globalCompositeOperation = 'source-over';

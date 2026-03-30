@@ -1998,20 +1998,21 @@ export class CityLayout {
       }
     }
 
-    // Advance coin-arc particles
-    for (const c of this.coinParticles) {
+    // Advance coin-arc particles — splice in-place to avoid per-frame array allocation
+    for (let i = this.coinParticles.length - 1; i >= 0; i--) {
+      const c = this.coinParticles[i];
       c.t += 0.045;
-      if (c.t >= 1) c.alpha = 0;
+      if (c.t >= 1) this.coinParticles.splice(i, 1);
     }
-    this.coinParticles = this.coinParticles.filter(c => c.alpha > 0);
 
-    // Advance music notes
-    for (const n of this.buskerNotes) {
+    // Advance music notes — splice in-place
+    for (let i = this.buskerNotes.length - 1; i >= 0; i--) {
+      const n = this.buskerNotes[i];
       n.y += n.vy;
       n.x += Math.sin(n.y * 0.12) * 0.25;
       n.alpha -= 0.011;
+      if (n.alpha <= 0.01) this.buskerNotes.splice(i, 1);
     }
-    this.buskerNotes = this.buskerNotes.filter(n => n.alpha > 0.01);
   }
 
   /** Spawn a coin arc from a pedestrian toward the guitar case. */
