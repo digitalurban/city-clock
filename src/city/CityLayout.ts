@@ -192,12 +192,12 @@ export class CityLayout {
   coinParticles: { sx: number; sy: number; tx: number; ty: number; t: number; alpha: number }[] = [];
   buskerNotes: { x: number; y: number; vy: number; alpha: number; char: string }[] = [];
 
-  // ── Fountain ────────────────────────────────────────────────────────────
-  fountainX: number = 0;
-  fountainY: number = 0;
+  // ── Fountains ────────────────────────────────────────────────────────────
+  // Two small basins positioned as the colon dots between HH and MM digits
+  fountains: { x: number; y: number }[] = [];
   fountainActive: boolean = false;
   fountainTimer: number = 900;  // frames until first activation (~15s)
-  private fountainParticles: { x: number; y: number; vx: number; vy: number; alpha: number }[] = [];
+  private fountainParticles: { x: number; y: number; vx: number; vy: number; alpha: number; fy: number }[] = [];
 
   // ── Newspaper stand ────────────────────────────────────────────────────
   newsstandX: number = 0;
@@ -1965,9 +1965,17 @@ export class CityLayout {
     // Newsstand in the lower-left plaza corner, near pedestrian flow
     this.newsstandX = pb.x + 38;
     this.newsstandY = pb.y + pb.h - 60;
-    // Fountain sits at the plaza centre
-    this.fountainX = pb.x + pb.w / 2;
-    this.fountainY = pb.y + pb.h / 2;
+    // Two fountains act as the colon dots — positioned to match the clock digit geometry
+    const cx = pb.x + pb.w / 2;
+    const cy = pb.y + pb.h / 2;
+    const usableW = pb.w * 0.55;
+    const w_digit = usableW / (4 + 2 * 0.44 + 0.75);
+    const usableH = pb.h * 0.45;
+    const h_digit = Math.min(usableH, w_digit * 1.6);
+    this.fountains = [
+      { x: cx, y: cy - h_digit / 4 },
+      { x: cx, y: cy + h_digit / 4 },
+    ];
 
     // Create a dedicated pedestrian instance for the busker figure
     this.buskerPed = new Pedestrian(this, 9000, 0);
@@ -2041,25 +2049,26 @@ export class CityLayout {
 
   // ── Fountain ─────────────────────────────────────────────────────────────
 
-  /** Draw the static basin — call from buildStaticCanvas. */
+  /** Draw the static basins — call from buildStaticCanvas. */
   drawFountainBasin(ctx: CanvasRenderingContext2D, nightAlpha: number) {
-    const x = this.fountainX, y = this.fountainY;
     const dark = 1 - nightAlpha * 0.4;
-    // Outer basin rim (stone)
-    ctx.fillStyle = `rgb(${Math.floor(185 * dark)},${Math.floor(178 * dark)},${Math.floor(165 * dark)})`;
-    ctx.beginPath();
-    ctx.arc(x, y, 22, 0, Math.PI * 2);
-    ctx.fill();
-    // Water pool inside
-    ctx.fillStyle = `rgba(${Math.floor(100 * dark)},${Math.floor(160 * dark)},${Math.floor(210 * dark)},0.85)`;
-    ctx.beginPath();
-    ctx.arc(x, y, 17, 0, Math.PI * 2);
-    ctx.fill();
-    // Central pillar
-    ctx.fillStyle = `rgb(${Math.floor(165 * dark)},${Math.floor(158 * dark)},${Math.floor(145 * dark)})`;
-    ctx.beginPath();
-    ctx.arc(x, y, 5, 0, Math.PI * 2);
-    ctx.fill();
+    for (const f of this.fountains) {
+      // Outer basin rim (stone)
+      ctx.fillStyle = `rgb(${Math.floor(185 * dark)},${Math.floor(178 * dark)},${Math.floor(165 * dark)})`;
+      ctx.beginPath();
+      ctx.arc(f.x, f.y, 14, 0, Math.PI * 2);
+      ctx.fill();
+      // Water pool inside
+      ctx.fillStyle = `rgba(${Math.floor(100 * dark)},${Math.floor(160 * dark)},${Math.floor(210 * dark)},0.85)`;
+      ctx.beginPath();
+      ctx.arc(f.x, f.y, 10, 0, Math.PI * 2);
+      ctx.fill();
+      // Central pillar
+      ctx.fillStyle = `rgb(${Math.floor(165 * dark)},${Math.floor(158 * dark)},${Math.floor(145 * dark)})`;
+      ctx.beginPath();
+      ctx.arc(f.x, f.y, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 
   /** Update fountain on/off cycle and advance water particles. */
@@ -2076,18 +2085,22 @@ export class CityLayout {
 
     if (!this.fountainActive) return;
 
-    // Emit new jets — 3 streams at evenly-spaced angles
-    if (this.fountainParticles.length < 60) {
-      for (let j = 0; j < 3; j++) {
-        const angle = (j / 3) * Math.PI * 2 + Date.now() * 0.0008;
-        const speed = 0.9 + Math.random() * 0.4;
-        this.fountainParticles.push({
-          x: this.fountainX,
-          y: this.fountainY,
-          vx: Math.cos(angle) * speed,
-          vy: -1.6 - Math.random() * 0.6, // upward
-          alpha: 0.75 + Math.random() * 0.2,
-        });
+    // Emit new jets from each fountain — 3 streams at evenly-spaced angles
+    if (this.fountainParticles.length < 80) {
+      const now = Date.now() * 0.0008;
+      for (const f of this.fountains) {
+        for (let j = 0; j < 3; j++) {
+          const angle = (j / 3) * Math.PI * 2 + now;
+          const speed = 0.7 + Math.random() * 0.3;
+          this.fountainParticles.push({
+            x: f.x,
+            y: f.y,
+            vx: Math.cos(angle) * speed,
+            vy: -1.3 - Math.random() * 0.5, // upward
+            alpha: 0.75 + Math.random() * 0.2,
+            fy: f.y,
+          });
+        }
       }
     }
 
@@ -2097,8 +2110,8 @@ export class CityLayout {
       p.x  += p.vx;
       p.y  += p.vy;
       p.vy += 0.06; // gravity
-      p.alpha -= 0.018;
-      if (p.alpha <= 0 || p.y > this.fountainY + 5) {
+      p.alpha -= 0.02;
+      if (p.alpha <= 0 || p.y > p.fy + 4) {
         this.fountainParticles.splice(i, 1);
       }
     }

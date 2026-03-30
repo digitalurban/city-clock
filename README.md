@@ -17,7 +17,7 @@ A procedurally generated top-down city where pedestrians form a digital clock in
 - **Double-tap to show time** - Double-tap or double-click anywhere to force the clock formation immediately
 - **Procedural city** - grid of city blocks, roads, crosswalks, trees, parks and coloured buildings generated to fill the world
 - **Central plaza** - ringed by named venues (cafes, bars, bookshops, flower shops) with outdoor seating, benches, and lamp posts
-- **Plaza fountain** - a stone-rimmed basin with central pillar sits in the heart of the plaza. Three water jets cycle on and off (10–20 s active, 15–30 s off), spraying arcing particles with gravity and splash. Pedestrians naturally walk around the basin
+- **Plaza fountains** - two small stone-rimmed basins act as the colon dots in the clock display, positioned to align with the HH:MM digit geometry. Three water jets per basin cycle on and off (10–20 s active, 15–30 s off), spraying arcing particles with gravity. Pedestrians naturally walk around both basins
 - **Pedestrian life** - pedestrians wander sidewalks, visit venues, queue and sit outside, go home to their assigned houses via garden paths, and ride bicycles (~15%). Each has simulated Needs (Energy, Hunger, Social) with thought bubbles guiding their routines
 - **Home life** - every pedestrian (including clock performers) is assigned a specific house. During the day they make 20–40 second home visits; at night (22:00–07:00) their schedule keeps them home until morning. While at home they occasionally step into their garden to putter around — moving slowly between spots, fully visible — before going back inside. House windows glow warm amber at night, baked into the static lighting layer so they are stable light sources
 - **Dog walkers** - ~10% of pedestrians walk dogs on leashes; dogs pull ahead with animated trotting legs, floppy ears, wagging tails, and side-to-side sniffing wander
@@ -66,7 +66,7 @@ Pedestrians use a steering-behaviours model with multiple activity types:
 - **Going home** - every pedestrian (including the 112 clock performers) has an assigned house. When heading home, each pedestrian follows an A* path computed on a 9px obstacle-aware walkability grid that covers the whole city — routes go around all buildings, houses and venues rather than through them, walking along roads and sidewalks. They arrive via the garden path, step through the front door, and stay inside (fading to near-invisible). During the day visits last 20–40 s; the sleeping schedule (22:00–07:00) keeps them home until morning. While home they occasionally step outside to potter in the garden before returning indoors. When summoned to form the clock, performers cleanly snap out of any home, sitting, or queuing state
 - **House lights** - windows glow warm amber at night; baked into the static canvas so they are stable light sources rather than toggling per-frame
 - **Bicycle riding** - ~15% of pedestrians ride bicycles at 2.5x walking speed
-- **Fountain avoidance** - a radial repulsion force keeps pedestrians from walking into the plaza basin; strongest at the stone rim, fading to zero at ~38px radius
+- **Fountain avoidance** - a radial repulsion force keeps pedestrians from walking into either basin; strongest at the stone rim, fading to zero at ~26px radius
 - **Building and venue avoidance** - steering forces keep pedestrians on sidewalks and paths with velocity damping to prevent oscillation at road edges
 - **Pathfinding** - a 9px walkability grid is precomputed at startup by testing every cell against all buildings, houses and venues. When a pedestrian needs to navigate home, an 8-directional A* search (cardinal + diagonal, no corner-cutting) finds the shortest clear route through the city. Collinear waypoints are thinned so the pedestrian walks in long straight stretches rather than micro-stepping
 
@@ -75,7 +75,7 @@ Pedestrians use a steering-behaviours model with multiple activity types:
 The city world is 2x the viewport in each dimension, so zooming out reveals the wider city while the plaza stays centred.
 
 - **Grid layout**: 12×7 grid of 120px blocks + 36px roads
-- **Central plaza**: rectangular plaza occupying the central grid area with venues on all sides and a fountain at the centre
+- **Central plaza**: rectangular plaza occupying the central grid area with venues on all sides and two fountains positioned as the clock's colon separator
 - **Residential areas**: houses with gardens and garden paths connecting to sidewalks
 - **Parks**: green spaces with trees scattered through the city
 - **Road network**: roads at every grid edge with lane markings, crosswalks, and traffic lights at intersections
@@ -154,7 +154,7 @@ Several passes work together to give the city depth and visual polish:
 
 ### Rendering Architecture
 
-1. **Static canvas** - roads, sidewalks, crosswalks, plaza (with decorative paving and fountain basin), building shadows, buildings, houses, house windows (all lit at night), venues, and parks pre-rendered to an offscreen canvas. Rebuilt when lighting changes *or* when zoom drifts more than 0.18 from the level it was last rendered at (debounced 300 ms after gesture settles). Canvas size is capped to stay within browser/iOS texture limits (~4096 px per dimension)
+1. **Static canvas** - roads, sidewalks, crosswalks, plaza (with decorative paving and two fountain basins), building shadows, buildings, houses, house windows (all lit at night), venues, and parks pre-rendered to an offscreen canvas. Rebuilt when lighting changes *or* when zoom drifts more than 0.18 from the level it was last rendered at (debounced 300 ms after gesture settles). Canvas size is capped to stay within browser/iOS texture limits (~4096 px per dimension)
 2. **Dynamic layer** - venue name labels, atmosphere overlays, chimney smoke, roadside bins, market stalls, newspaper stand, busker pitch, fountain spray particles, cars, pedestrians, dogs, dropped packages, construction crane, bird shadows, animated tree sway, and birds (drawn above weather with parallax height)
 3. **Light pass** - street lights, plaza lamp glows, and car headlight beams drawn after the night overlay so they punch through the darkness correctly
 4. **Atmosphere pass** - fog tendrils (two drifting noise layers) and wet road sheen composited in screen space after world-space weather

@@ -1524,13 +1524,14 @@ export class Pedestrian {
         }
       }
 
-      // 6b. Fountain repulsion — pedestrians walk around the basin
-      if (layout.fountainX !== 0 || layout.fountainY !== 0) {
-        const fdx = this.x - layout.fountainX;
-        const fdy = this.y - layout.fountainY;
+      // 6b. Fountain repulsion — pedestrians walk around each basin
+      const FOUNTAIN_RADIUS = 26;
+      const FOUNTAIN_RADIUS_SQ = FOUNTAIN_RADIUS * FOUNTAIN_RADIUS;
+      for (const f of layout.fountains) {
+        const fdx = this.x - f.x;
+        const fdy = this.y - f.y;
         const fdistSq = fdx * fdx + fdy * fdy;
-        const FOUNTAIN_RADIUS = 38;
-        if (fdistSq < FOUNTAIN_RADIUS * FOUNTAIN_RADIUS && fdistSq > 0) {
+        if (fdistSq < FOUNTAIN_RADIUS_SQ && fdistSq > 0) {
           const fdist = Math.sqrt(fdistSq);
           const strength = ((FOUNTAIN_RADIUS - fdist) / FOUNTAIN_RADIUS) * this.maxForce * 12;
           ax += (fdx / fdist) * strength;
