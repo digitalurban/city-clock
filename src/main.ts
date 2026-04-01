@@ -125,39 +125,71 @@ let currentPedCount = TOTAL_PEDESTRIANS;
 let alarmTime: string | null = null;
 let isAlarmActive = false;
 let isDancing = false;
-const alarmAudio = new Audio('./alarm.mp3');
-alarmAudio.loop = true;
-alarmAudio.preload = 'auto';
+
+// Alarm audio — fully synthesised via Web Audio API so it is never blocked by
+// the browser autoplay policy.  The AudioContext is created during the "Set"
+// button click (a user gesture) and kept alive.  All subsequent play() calls
+// on nodes connected to that context succeed from any callback, including rAF.
+let alarmAudioCtx: AudioContext | null = null;
+let alarmRingHandle: ReturnType<typeof setTimeout> | null = null;
+
+/** Synthesise one burst of the alarm: two short beeps, then schedule the next. */
+function ringAlarmBurst() {
+  if (!isAlarmActive || !alarmAudioCtx) return;
+  const ctx = alarmAudioCtx;
+  if (ctx.state === 'suspended') ctx.resume();
+  const t = ctx.currentTime;
+
+  // Two sharp sine beeps — 880 Hz then 1100 Hz
+  [[880, 0], [1100, 0.22]].forEach(([freq, offset]) => {
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = freq;
+    g.gain.setValueAtTime(0, t + offset);
+    g.gain.linearRampToValueAtTime(0.55, t + offset + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.001, t + offset + 0.18);
+    osc.connect(g);
+    g.connect(ctx.destination);
+    osc.start(t + offset);
+    osc.stop(t + offset + 0.2);
+  });
+
+  // Schedule the next burst
+  alarmRingHandle = setTimeout(ringAlarmBurst, 900);
+}
+
+/** Stop the repeating alarm ring. */
+function stopAlarmRing() {
+  if (alarmRingHandle !== null) { clearTimeout(alarmRingHandle); alarmRingHandle = null; }
+}
 
 /**
- * Play a short two-tone confirmation beep using Web Audio API.
- * Must be called inside a user-gesture handler (click, touch).
- * Also primes alarmAudio by playing+immediately pausing it within the same
- * gesture, which unlocks autoplay for when the alarm fires from the render loop.
+ * Called during the "Set" button click (user gesture).
+ * Creates/resumes the AudioContext and plays a confirmation beep.
+ * The context created here is reused when the alarm fires.
  */
 function playAlarmSetBeep() {
-  // Prime alarmAudio within the user gesture so it can play later from rAF
-  alarmAudio.currentTime = 0;
-  alarmAudio.play()
-    .then(() => { alarmAudio.pause(); alarmAudio.currentTime = 0; })
-    .catch(() => {});
-
-  // Synthesise a quick two-tone "set" confirmation beep
   try {
     const AC = window.AudioContext || (window as any).webkitAudioContext;
     if (!AC) return;
-    const ac: AudioContext = new AC();
-    const osc = ac.createOscillator();
-    const gain = ac.createGain();
+    if (!alarmAudioCtx) alarmAudioCtx = new AC();
+    if (alarmAudioCtx.state === 'suspended') alarmAudioCtx.resume();
+    const ctx = alarmAudioCtx;
+    const t = ctx.currentTime;
+
+    // Quick ascending two-tone confirmation chirp
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
     osc.type = 'sine';
-    osc.frequency.setValueAtTime(880, ac.currentTime);
-    osc.frequency.setValueAtTime(1100, ac.currentTime + 0.12);
-    gain.gain.setValueAtTime(0.25, ac.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.28);
-    osc.connect(gain);
-    gain.connect(ac.destination);
-    osc.start();
-    osc.stop(ac.currentTime + 0.28);
+    osc.frequency.setValueAtTime(880, t);
+    osc.frequency.setValueAtTime(1100, t + 0.12);
+    g.gain.setValueAtTime(0.25, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.28);
+    osc.connect(g);
+    g.connect(ctx.destination);
+    osc.start(t);
+    osc.stop(t + 0.3);
   } catch (_) {}
 }
 
@@ -528,8 +560,7 @@ function createOptionsUI() {
       alarmStatusLabel.textContent = 'Off';
       isAlarmActive = false;
       isDancing = false;
-      alarmAudio.pause();
-      alarmAudio.currentTime = 0;
+      stopAlarmRing();
       layout.stopBandstand();
       // Hide the entire alarm-controls overlay so both buttons reappear next time
       const alarmControls = document.getElementById('alarm-controls');
@@ -541,8 +572,8 @@ function createOptionsUI() {
         alarmBtn.textContent = 'Clear';
         alarmBtn.style.background = '#ff4a4a';
         alarmStatusLabel.textContent = alarmTime;
-        // Play confirmation beep AND prime alarmAudio within this user gesture
-        // so the browser permits autoplay when the alarm fires from the render loop.
+        // Confirmation beep — also creates/warms the AudioContext in this
+        // user-gesture handler so it is ready when the alarm fires from rAF.
         playAlarmSetBeep();
       }
     }
@@ -884,11 +915,10 @@ function loop(timestamp: number = 0) {
     if (`${currentH}:${currentM}` === alarmTime) {
       isAlarmActive = true;
       isDancing = true;
-      // Play alarm directly as a plain HTML Audio element — no AudioContext
-      // wrapping needed. The user gesture on the "Set" button already unlocked
-      // autoplay for this page, so play() will succeed from a rAF callback.
-      alarmAudio.currentTime = 0;
-      alarmAudio.play().catch(e => console.warn('[Alarm] play() blocked:', e));
+      // Ring using the Web Audio context that was created during the "Set"
+      // button click — nodes on a user-gesture-created context are never
+      // blocked by autoplay policy, even when called from a rAF callback.
+      ringAlarmBurst();
       layout.startBandstand();
 
       // Show alarm options container
@@ -925,7 +955,7 @@ function loop(timestamp: number = 0) {
         snoozeBtn.addEventListener('click', () => {
           isAlarmActive = false;
           isDancing = false;
-          alarmAudio.pause();
+          stopAlarmRing();
           layout.stopBandstand();
           alarmControls!.style.display = 'none';
 
@@ -942,7 +972,7 @@ function loop(timestamp: number = 0) {
         dismissBtn.addEventListener('click', () => {
           isAlarmActive = false;
           isDancing = false;
-          alarmAudio.pause();
+          stopAlarmRing();
           layout.stopBandstand();
           alarmTime = null; // Clear the alarm
           alarmControls!.style.display = 'none';
