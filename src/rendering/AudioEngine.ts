@@ -133,69 +133,6 @@ export class AudioEngine {
     osc.stop(when + dur + 0.05);
   }
 
-  /** Seagull: long descending glissando with vibrato. */
-  private seagullCall(when: number) {
-    if (!this.ctx || !this.birdGain) return;
-    const ctx = this.ctx;
-    const osc = ctx.createOscillator();
-    osc.type = 'sawtooth';
-    osc.frequency.setValueAtTime(1100, when);
-    osc.frequency.exponentialRampToValueAtTime(680, when + 0.6);
-    osc.frequency.exponentialRampToValueAtTime(820, when + 0.9);
-
-    const vibLFO = ctx.createOscillator();
-    const vibGain = ctx.createGain();
-    vibLFO.frequency.value = 7;
-    vibGain.gain.value = 22;
-    vibLFO.connect(vibGain);
-    vibGain.connect(osc.frequency);
-
-    const hp = ctx.createBiquadFilter();
-    hp.type = 'highpass';
-    hp.frequency.value = 400;
-
-    const env = ctx.createGain();
-    env.gain.setValueAtTime(0, when);
-    env.gain.linearRampToValueAtTime(0.13, when + 0.05);
-    env.gain.setValueAtTime(0.13, when + 0.7);
-    env.gain.exponentialRampToValueAtTime(0.001, when + 1.0);
-
-    osc.connect(hp);
-    hp.connect(env);
-    env.connect(this.birdGain);
-
-    vibLFO.start(when); osc.start(when);
-    vibLFO.stop(when + 1.1); osc.stop(when + 1.1);
-  }
-
-  /** Pigeon coo: low FM tone. */
-  private pigeonCoo(when: number) {
-    if (!this.ctx || !this.birdGain) return;
-    const ctx = this.ctx;
-    const carrier = ctx.createOscillator();
-    const mod = ctx.createOscillator();
-    const modGain = ctx.createGain();
-    carrier.type = 'sine';
-    carrier.frequency.setValueAtTime(280, when);
-    carrier.frequency.linearRampToValueAtTime(295, when + 0.15);
-    carrier.frequency.linearRampToValueAtTime(262, when + 0.42);
-    mod.type = 'sine';
-    mod.frequency.value = 5;
-    modGain.gain.value = 16;
-    mod.connect(modGain);
-    modGain.connect(carrier.frequency);
-
-    const env = ctx.createGain();
-    env.gain.setValueAtTime(0, when);
-    env.gain.linearRampToValueAtTime(0.11, when + 0.05);
-    env.gain.setValueAtTime(0.11, when + 0.3);
-    env.gain.exponentialRampToValueAtTime(0.001, when + 0.5);
-    carrier.connect(env);
-    env.connect(this.birdGain);
-
-    mod.start(when); carrier.start(when);
-    mod.stop(when + 0.6); carrier.stop(when + 0.6);
-  }
 
   // ── Bird scheduling ──────────────────────────────────────────────────────
 
@@ -204,7 +141,7 @@ export class AudioEngine {
     const now = this.ctx.currentTime;
     const roll = Math.random();
 
-    if (roll < 0.40) {
+    if (roll < 0.65) {
       // Sparrow / robin cluster: 2–4 chirps
       const freqs = [1800, 2200, 1600, 2600, 1400, 2000];
       const count = 2 + Math.floor(Math.random() * 3);
@@ -212,21 +149,10 @@ export class AudioEngine {
         const f = freqs[Math.floor(Math.random() * freqs.length)];
         this.chirp(f * (0.85 + Math.random() * 0.3), now + i * (0.07 + Math.random() * 0.09));
       }
-    } else if (roll < 0.58) {
-      // Seagull cry
-      this.seagullCall(now + Math.random() * 0.4);
-    } else if (roll < 0.76) {
-      // Pigeon triple coo
-      const gap = 0.58 + Math.random() * 0.3;
-      for (let i = 0; i < 3; i++) this.pigeonCoo(now + i * gap);
-    } else if (roll < 0.88) {
+    } else {
       // Robin triplet: fast ascending
       const base = 2800 + Math.random() * 400;
       for (let i = 0; i < 3; i++) this.chirp(base * (1 + i * 0.12), now + i * 0.06, 0.08, 1.1, 0.14);
-    } else {
-      // Double seagull exchange
-      this.seagullCall(now);
-      this.seagullCall(now + 1.3 + Math.random() * 0.5);
     }
 
     const delay = 4000 + Math.random() * 7000;
@@ -307,7 +233,7 @@ export class AudioEngine {
     this.rainFilter.frequency.setTargetAtTime(filterFreq, t, 0.8);
 
     // ── Fountain water ────────────────────────────────────────────────────────
-    this.fountainGain!.gain.setTargetAtTime(fountainActive ? 0.20 : 0, t, 0.8);
+    this.fountainGain!.gain.setTargetAtTime(fountainActive ? 0.07 : 0, t, 0.8);
 
     // ── Birds: active from sunrise to late evening ────────────────────────────
     const shouldBird = hour >= 5 && hour <= 21;

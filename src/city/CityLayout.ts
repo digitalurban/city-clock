@@ -2384,6 +2384,7 @@ export class CityLayout {
       }
     }
 
+    ctx.beginPath(); // clear bunting subpath before restore — path is not reset by ctx.restore()
     ctx.restore();
 
     // ── Band members (drawn as pedestrians dancing) ───────────────────────
@@ -2468,6 +2469,10 @@ export class CityLayout {
           }
           break;
       }
+      // Clear accumulated subpaths before restore — ctx.save/restore does NOT
+      // reset the canvas path, so stroked subpaths from instrument drawing
+      // would bleed into subsequent ctx.stroke() calls and produce stray lines.
+      ctx.beginPath();
       ctx.restore();
     }
 

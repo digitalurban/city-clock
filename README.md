@@ -12,22 +12,45 @@ A procedurally generated top-down city where pedestrians form a digital clock in
 
 ## Holidays & Seasonal Events
 
-The plaza automatically decorates itself based on the real-world date. Decorations appear under pedestrians so the city life continues normally around them.
+The plaza automatically decorates itself based on the real-world date. Decorations are drawn in the dynamic layer, beneath pedestrians, so city life continues normally around them. All decorations respect the day/night cycle — colours dim at night, and anything with a light source (candles, fairy lights, bonfire glow) intensifies after dark.
 
-| Event | Dates | Decorations |
-|-------|-------|-------------|
-| **New Year** | Dec 31 & Jan 1 | Spinning gold/silver confetti across the plaza, gold & silver bunting |
-| **Christmas** | Dec 1 – Jan 6 | Christmas tree (upper-left plaza corner) with twinkling baubles and star; fairy lights strung between lamp posts; red & green bunting |
-| **Halloween** | Oct 25 – 31 | Six jack-o'-lanterns around the plaza with triangle eyes, grinning mouths, and flickering candlelight at night; orange & black bunting |
-| **Bonfire Night** | Nov 4 – 6 | Animated bonfire with log pile, three-layer flames (red/orange/yellow), rising sparks, and an orange glow pool at night; orange & yellow bunting |
-| **Valentine's Day** | Feb 13 – 15 | Pulsing red hearts on every lamp post; large drifting pink hearts at the plaza edges; pink & crimson bunting |
-| **St Patrick's Day** | Mar 16 – 18 | Three-leaf shamrock on each lamp post; Irish tricolour (green/white/orange) bunting |
-| **Easter** | Palm Sunday – Easter Monday | Ten pastel Easter eggs (stripe-decorated, clipped ellipses) around the plaza perimeter; pastel rainbow bunting |
-| **May Day** | First Mon in May ±1 day | Maypole with eight rotating coloured ribbons; colourful bunting |
-| **Summer Solstice** | Jun 20 – 22 | Faint sun-ray lines radiating from the plaza centre; flower garlands slowly rotating on every lamp post; gold & amber bunting |
-| **Weekend** | Every Saturday & Sunday | Rainbow bunting strung between all plaza lamp posts |
+When multiple events overlap, higher-priority events take precedence (e.g. New Year overrides Christmas on Dec 31).
 
-Bunting is drawn as a circuit of triangular flags along the string connecting adjacent plaza lamp posts, with a natural catenary droop. Fairy lights twinkle independently on a per-segment phase. All decorations respect the day/night cycle (colours dim at night, candle glows and fairy lights intensify).
+---
+
+### 🎆 New Year — Dec 31 & Jan 1
+Forty-five confetti pieces spin and flutter across the plaza, each rotating at a unique speed and flickering in gold, silver, red, teal, and pink. Gold and silver bunting is strung between all lamp posts.
+
+### 🎄 Christmas — Dec 1 – Jan 6
+A Christmas tree sits in the upper-left corner of the plaza (clear of the clock digit area), built from three triangular tiers of dark green with a yellow five-pointed star on top and seven twinkling coloured baubles (red, blue, yellow, pink, orange, purple). Fairy lights are strung between each pair of adjacent plaza lamp posts — small coloured dots that blink on and off independently on a per-segment sine phase, brightening at night. Red and green bunting circuits the lamp posts.
+
+### 🎃 Halloween — Oct 25 – 31
+Six jack-o'-lanterns are placed around the plaza perimeter — at each corner and at the left and right edges. Each has an orange body with vertical ribbing, triangular eyes, and a curved grin. At night a candle glow pulses inside each one with a fast flicker. Orange and black bunting is strung between lamp posts.
+
+### 🔥 Bonfire Night — Nov 4 – 6
+An animated bonfire burns in the upper-right corner of the plaza. A crossed log pile sits at the base; three flame layers (red outer, orange mid, yellow core) jitter with independent quadratic-curve wobble driven by sine/cosine offsets. Seven rising sparks orbit upward on a looping phase, fading as they climb. At night a radial orange glow pool spreads from the fire. Orange and yellow bunting between lamp posts.
+
+### 💝 Valentine's Day — Feb 13 – 15
+A small red heart pulses on every plaza lamp post, scaling with a slow heartbeat rhythm. Six larger pink hearts drift gently side-to-side at the plaza edges (corners and mid-edges). Pink and crimson bunting between lamp posts.
+
+### ☘️ St Patrick's Day — Mar 16 – 18
+A three-leaf shamrock and short stem is drawn above each plaza lamp post head. Irish tricolour bunting (green / white / orange) circuits the lamp posts.
+
+### 🥚 Easter — Palm Sunday to Easter Monday
+Ten pastel Easter eggs are placed around the plaza perimeter. Each is a tall ellipse in a unique pastel colour (pink, yellow, sky blue, mint, peach, plum, turquoise, bisque, rose, powder blue) with two horizontal stripe bands and a centre dot clipped to the egg shape. Pastel rainbow bunting (pink / lemon / sky blue / mint / salmon / plum) between lamp posts. The Easter date is calculated each year using the Anonymous Gregorian algorithm.
+
+### 🎀 May Day — First Monday in May (±1 day)
+A maypole stands on the left edge of the plaza with a wooden pole and eight coloured ribbons (red, orange, yellow, green, blue, purple, pink, cyan) that slowly rotate and drape in a quadratic curve from the pole top to the ground around it. Rainbow bunting between lamp posts.
+
+### ☀️ Summer Solstice — Jun 20 – 22
+Twelve faint sun-ray lines radiate outward from the plaza centre across the paving (visible in daylight, nearly invisible at night). Five flower petals slowly orbit each plaza lamp post in a slowly rotating garland (pink, yellow, coral, violet, mint). A small golden centre dot sits at the lamp head. Gold and amber bunting between lamp posts.
+
+### 🎊 Weekend — Every Saturday & Sunday
+Full rainbow bunting (red / orange / yellow / green / blue / purple / pink / cyan) is strung between all plaza lamp posts. No other decorations — just a bit of weekend colour.
+
+---
+
+**Bunting** is drawn as triangular flags along the string connecting adjacent lamp posts sorted clockwise around the plaza, with a natural catenary droop (sine arc). Spans wider than 150 px are skipped to avoid crossing the plaza interior. All flag colours dim proportionally with `nightAlpha`.
 
 ## Features
 
