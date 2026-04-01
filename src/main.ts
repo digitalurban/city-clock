@@ -847,6 +847,9 @@ function loop(timestamp: number = 0) {
     if (`${currentH}:${currentM}` === alarmTime) {
       isAlarmActive = true;
       isDancing = true;
+      // Resume the alarm AudioContext first — it may have been suspended since
+      // the user last interacted (Set button click), causing play() to be silent.
+      if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
       alarmAudio.play().catch(e => console.error("Audio play failed:", e));
       layout.startBandstand();
 

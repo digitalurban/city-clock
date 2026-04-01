@@ -1716,6 +1716,10 @@ export class CityLayout {
   drawStreetLights(ctx: CanvasRenderingContext2D, nightAlpha: number) {
     if (nightAlpha < 0.05) return;
     const glowR = 65;
+    // 'screen' composite prevents overlapping glows from accumulating into
+    // an opaque amber fog wash (especially visible in Safari).
+    ctx.save();
+    ctx.globalCompositeOperation = 'screen';
     for (const sl of this.streetLights) {
       const grad = ctx.createRadialGradient(sl.x, sl.y, 0, sl.x, sl.y, glowR);
       grad.addColorStop(0,   `rgba(255, 215, 130, ${nightAlpha * 0.55})`);
@@ -1724,8 +1728,11 @@ export class CityLayout {
       grad.addColorStop(1,   'rgba(255, 190, 80, 0)');
       ctx.fillStyle = grad;
       ctx.fillRect(sl.x - glowR, sl.y - glowR, glowR * 2, glowR * 2);
+    }
+    ctx.restore();
 
-      // Bright lamp point
+    // Bright lamp points drawn with normal composite (not screen) so they stay crisp
+    for (const sl of this.streetLights) {
       ctx.fillStyle = `rgba(255, 248, 200, ${Math.min(1, nightAlpha * 1.8)})`;
       ctx.beginPath();
       ctx.arc(sl.x, sl.y, 3, 0, Math.PI * 2);
@@ -1811,6 +1818,9 @@ export class CityLayout {
 
   drawPlazaLampGlows(ctx: CanvasRenderingContext2D, nightAlpha: number) {
     if (nightAlpha < 0.05) return;
+    // 'screen' composite prevents overlapping glows accumulating into fog in Safari.
+    ctx.save();
+    ctx.globalCompositeOperation = 'screen';
     for (const lamp of this.plazaLamps) {
       const glowR = 55 + nightAlpha * 25;
       const grad = ctx.createRadialGradient(lamp.x, lamp.y, 0, lamp.x, lamp.y, glowR);
@@ -1821,6 +1831,7 @@ export class CityLayout {
       ctx.fillStyle = grad;
       ctx.fillRect(lamp.x - glowR, lamp.y - glowR, glowR * 2, glowR * 2);
     }
+    ctx.restore();
   }
 
   drawTrafficLights(ctx: CanvasRenderingContext2D, nightAlpha: number, trafficPhase: number) {
@@ -2080,59 +2091,59 @@ export class CityLayout {
 
       // ── Greenery ring (drawn first, behind basin) ──────────────────────
       for (let i = 0; i < PLANT_COUNT; i++) {
-        const angle = (i / PLANT_COUNT) * Math.PI * 2 + fi * 0.4;
-        const px = f.x + Math.cos(angle) * PLANT_R;
-        const py = f.y + Math.sin(angle) * PLANT_R;
+          const angle = (i / PLANT_COUNT) * Math.PI * 2 + fi * 0.4;
+          const px = f.x + Math.cos(angle) * PLANT_R;
+          const py = f.y + Math.sin(angle) * PLANT_R;
 
-        // Stem — thin green line from ground up
-        const stemLen = 4.5 + (i % 3) * 1.2;
-        ctx.strokeStyle = `rgba(${Math.floor(60 * dark)},${Math.floor(130 * dark)},${Math.floor(50 * dark)},${0.85 * nightBloom})`;
-        ctx.lineWidth = 0.8;
-        ctx.beginPath();
-        ctx.moveTo(px, py + stemLen * 0.4);
-        ctx.lineTo(px, py - stemLen);
-        ctx.stroke();
+          // Stem — thin green line from ground up
+          const stemLen = 4.5 + (i % 3) * 1.2;
+          ctx.strokeStyle = `rgba(${Math.floor(60 * dark)},${Math.floor(130 * dark)},${Math.floor(50 * dark)},${0.85 * nightBloom})`;
+          ctx.lineWidth = 0.8;
+          ctx.beginPath();
+          ctx.moveTo(px, py + stemLen * 0.4);
+          ctx.lineTo(px, py - stemLen);
+          ctx.stroke();
 
-        // Leaf — small ellipse tilted sideways
-        const leafAngle = angle + Math.PI / 2 + (i % 2 === 0 ? 0.3 : -0.3);
-        ctx.save();
-        ctx.translate(px, py);
-        ctx.rotate(leafAngle);
-        ctx.fillStyle = `rgba(${Math.floor(55 * dark)},${Math.floor(145 * dark)},${Math.floor(55 * dark)},${0.8 * nightBloom})`;
-        ctx.beginPath();
-        ctx.ellipse(0, 0, 1.2, 3.5, 0, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
+          // Leaf — small ellipse tilted sideways
+          const leafAngle = angle + Math.PI / 2 + (i % 2 === 0 ? 0.3 : -0.3);
+          ctx.save();
+          ctx.translate(px, py);
+          ctx.rotate(leafAngle);
+          ctx.fillStyle = `rgba(${Math.floor(55 * dark)},${Math.floor(145 * dark)},${Math.floor(55 * dark)},${0.8 * nightBloom})`;
+          ctx.beginPath();
+          ctx.ellipse(0, 0, 1.2, 3.5, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
 
-        // Flower head — every other plant gets a bloom, alternating colour
-        if (i % 2 === 0) {
-          const col = FLOWER_COLORS[(i / 2 + fi * 3) % FLOWER_COLORS.length];
-          const petalR = 2.0 + (i % 3) * 0.4;
+          // Flower head — every other plant gets a bloom, alternating colour
+          if (i % 2 === 0) {
+            const col = FLOWER_COLORS[(i / 2 + fi * 3) % FLOWER_COLORS.length];
+            const petalR = 2.0 + (i % 3) * 0.4;
 
-          // 5 petals
-          for (let p = 0; p < 5; p++) {
-            const pa = (p / 5) * Math.PI * 2;
-            ctx.fillStyle = `rgba(${Math.floor(col[0] * dark)},${Math.floor(col[1] * dark)},${Math.floor(col[2] * dark)},${0.85 * nightBloom})`;
+            // 5 petals
+            for (let p = 0; p < 5; p++) {
+              const pa = (p / 5) * Math.PI * 2;
+              ctx.fillStyle = `rgba(${Math.floor(col[0] * dark)},${Math.floor(col[1] * dark)},${Math.floor(col[2] * dark)},${0.85 * nightBloom})`;
+              ctx.beginPath();
+              ctx.ellipse(
+                px + Math.cos(pa) * petalR * 0.9,
+                py - stemLen + Math.sin(pa) * petalR * 0.9,
+                petalR * 0.7, petalR * 0.5, pa, 0, Math.PI * 2
+              );
+              ctx.fill();
+            }
+            // Centre dot
+            ctx.fillStyle = `rgba(255,230,${Math.floor(80 * dark)},${0.9 * nightBloom})`;
             ctx.beginPath();
-            ctx.ellipse(
-              px + Math.cos(pa) * petalR * 0.9,
-              py - stemLen + Math.sin(pa) * petalR * 0.9,
-              petalR * 0.7, petalR * 0.5, pa, 0, Math.PI * 2
-            );
+            ctx.arc(px, py - stemLen, 1.1, 0, Math.PI * 2);
+            ctx.fill();
+          } else {
+            // Bud — closed teardrop on non-flower plants
+            ctx.fillStyle = `rgba(${Math.floor(80 * dark)},${Math.floor(160 * dark)},${Math.floor(70 * dark)},${0.7 * nightBloom})`;
+            ctx.beginPath();
+            ctx.arc(px, py - stemLen, 1.4, 0, Math.PI * 2);
             ctx.fill();
           }
-          // Centre dot
-          ctx.fillStyle = `rgba(255,230,${Math.floor(80 * dark)},${0.9 * nightBloom})`;
-          ctx.beginPath();
-          ctx.arc(px, py - stemLen, 1.1, 0, Math.PI * 2);
-          ctx.fill();
-        } else {
-          // Bud — closed teardrop on non-flower plants
-          ctx.fillStyle = `rgba(${Math.floor(80 * dark)},${Math.floor(160 * dark)},${Math.floor(70 * dark)},${0.7 * nightBloom})`;
-          ctx.beginPath();
-          ctx.arc(px, py - stemLen, 1.4, 0, Math.PI * 2);
-          ctx.fill();
-        }
       }
 
       // ── Basin rim (stone) ───────────────────────────────────────────────
@@ -2236,7 +2247,7 @@ export class CityLayout {
       ped.vx = ped.vy = 0;
       ped.x = this.bandstandX + offset;
       ped.y = this.bandstandY;
-      ped.angle = Math.PI * 0.5; // face the audience (downward in world space)
+      ped.angle = Math.PI * 1.5; // face into the square (upward toward plaza centre)
       ped.instrument = instruments[i];
       this.bandMembers.push(ped);
     }
