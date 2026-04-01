@@ -129,21 +129,6 @@ const alarmAudio = new Audio('./alarm.mp3');
 alarmAudio.loop = true;
 alarmAudio.preload = 'auto';
 
-// iOS audio unlock: keep the audio element "warm" on every user gesture
-// so play() works when the alarm fires (not from a gesture context)
-let audioCtx: AudioContext | null = null;
-function ensureAudioUnlocked() {
-  if (!audioCtx) {
-    audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-    // Connect the alarm audio element to the AudioContext
-    const source = audioCtx.createMediaElementSource(alarmAudio);
-    source.connect(audioCtx.destination);
-  }
-  if (audioCtx.state === 'suspended') {
-    audioCtx.resume();
-  }
-}
-
 function clampPan(w: number, h: number) {
   const worldW = layout.width;
   const worldH = layout.height;
@@ -194,7 +179,7 @@ let dragStartPanY = 0;
 let dragMoved = false; // true if pointer moved enough to be a drag (not a click)
 
 canvas.addEventListener('mousedown', (e) => {
-  ensureAudioUnlocked();
+  audioEngine.resume();
   audioEngine.resume();
   isDragging = true;
   dragMoved = false;
@@ -251,7 +236,7 @@ canvas.addEventListener('dblclick', () => {
 });
 // Separate touchstart to record tap position for distance check
 canvas.addEventListener('touchstart', (e) => {
-  ensureAudioUnlocked();
+  audioEngine.resume();
   audioEngine.resume();
   if (e.touches.length === 1) {
     const t = e.touches[0];
@@ -503,7 +488,7 @@ function createOptionsUI() {
   const alarmStatusLabel = panel.querySelector('#alarm-status-label') as HTMLSpanElement;
 
   alarmBtn.addEventListener('click', () => {
-    ensureAudioUnlocked(); // Unlock AudioContext from user gesture
+    audioEngine.resume(); // Unlock ambient AudioContext from user gesture
     if (alarmTime) {
       // Clear alarm
       alarmTime = null;
@@ -513,8 +498,10 @@ function createOptionsUI() {
       isDancing = false;
       alarmAudio.pause();
       alarmAudio.currentTime = 0;
-      const snoozeBtn = document.getElementById('snooze-btn');
-      if (snoozeBtn) snoozeBtn.style.display = 'none';
+      layout.stopBandstand();
+      // Hide the entire alarm-controls overlay so both buttons reappear next time
+      const alarmControls = document.getElementById('alarm-controls');
+      if (alarmControls) alarmControls.style.display = 'none';
       alarmBtn.style.background = '#4a9eff';
     } else {
       if (alarmTimeInput.value) {
@@ -529,7 +516,7 @@ function createOptionsUI() {
   // Audio toggle
   const audioToggleBtn = panel.querySelector('#audio-toggle') as HTMLButtonElement;
   audioToggleBtn.addEventListener('click', () => {
-    ensureAudioUnlocked();
+    audioEngine.resume(); // Unlock AudioContext from user gesture
     const nowMuted = !audioEngine.muted;
     audioEngine.setMuted(nowMuted);
     audioToggleBtn.textContent = nowMuted ? '🔇 Off' : '🔊 On';
@@ -862,10 +849,11 @@ function loop(timestamp: number = 0) {
     if (`${currentH}:${currentM}` === alarmTime) {
       isAlarmActive = true;
       isDancing = true;
-      // Resume the alarm AudioContext first — it may have been suspended since
-      // the user last interacted (Set button click), causing play() to be silent.
-      if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
-      alarmAudio.play().catch(e => console.error("Audio play failed:", e));
+      // Play alarm directly as a plain HTML Audio element — no AudioContext
+      // wrapping needed. The user gesture on the "Set" button already unlocked
+      // autoplay for this page, so play() will succeed from a rAF callback.
+      alarmAudio.currentTime = 0;
+      alarmAudio.play().catch(e => console.warn('[Alarm] play() blocked:', e));
       layout.startBandstand();
 
       // Show alarm options container
@@ -925,11 +913,15 @@ function loop(timestamp: number = 0) {
           alarmControls!.style.display = 'none';
 
           const status = document.getElementById('alarm-status-label');
-          const input = document.getElementById('alarm-time-input') as HTMLInputElement;
-          if (status) status.textContent = 'None';
-          if (input) input.value = ''; // Clear input field
+          const alarmBtnEl = document.getElementById('alarm-btn') as HTMLButtonElement | null;
+          if (status) status.textContent = 'Off';
+          if (alarmBtnEl) { alarmBtnEl.textContent = 'Set'; alarmBtnEl.style.background = '#4a9eff'; }
         });
       }
+      // Always restore snooze visibility (it may have been hidden by a previous
+      // panel-clear or an earlier snooze+dismiss cycle)
+      const snoozeEl = document.getElementById('snooze-btn') as HTMLElement | null;
+      if (snoozeEl) snoozeEl.style.display = '';
       alarmControls.style.display = 'flex';
     }
   }

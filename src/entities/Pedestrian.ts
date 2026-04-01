@@ -2020,6 +2020,9 @@ export class Pedestrian {
       ctx.quadraticCurveTo(-6 * ds, wagAngle * 5 * ds, -7 * ds, wagAngle * 3 * ds);
       ctx.stroke();
 
+      // Clear the tail path before restore — ctx.save/restore does NOT reset the
+      // canvas path, so the tail subpath would bleed into the next ctx.stroke() call.
+      ctx.beginPath();
       ctx.restore();
     }
   }
