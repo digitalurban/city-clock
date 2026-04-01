@@ -10,6 +10,25 @@ A procedurally generated top-down city where pedestrians form a digital clock in
 ![City life around the plaza](screenshots/city-life.jpg)
 *Between clock formations, pedestrians wander the city — visiting venues, riding bicycles, and heading home.*
 
+## Holidays & Seasonal Events
+
+The plaza automatically decorates itself based on the real-world date. Decorations appear under pedestrians so the city life continues normally around them.
+
+| Event | Dates | Decorations |
+|-------|-------|-------------|
+| **New Year** | Dec 31 & Jan 1 | Spinning gold/silver confetti across the plaza, gold & silver bunting |
+| **Christmas** | Dec 1 – Jan 6 | Christmas tree (upper-left plaza corner) with twinkling baubles and star; fairy lights strung between lamp posts; red & green bunting |
+| **Halloween** | Oct 25 – 31 | Six jack-o'-lanterns around the plaza with triangle eyes, grinning mouths, and flickering candlelight at night; orange & black bunting |
+| **Bonfire Night** | Nov 4 – 6 | Animated bonfire with log pile, three-layer flames (red/orange/yellow), rising sparks, and an orange glow pool at night; orange & yellow bunting |
+| **Valentine's Day** | Feb 13 – 15 | Pulsing red hearts on every lamp post; large drifting pink hearts at the plaza edges; pink & crimson bunting |
+| **St Patrick's Day** | Mar 16 – 18 | Three-leaf shamrock on each lamp post; Irish tricolour (green/white/orange) bunting |
+| **Easter** | Palm Sunday – Easter Monday | Ten pastel Easter eggs (stripe-decorated, clipped ellipses) around the plaza perimeter; pastel rainbow bunting |
+| **May Day** | First Mon in May ±1 day | Maypole with eight rotating coloured ribbons; colourful bunting |
+| **Summer Solstice** | Jun 20 – 22 | Faint sun-ray lines radiating from the plaza centre; flower garlands slowly rotating on every lamp post; gold & amber bunting |
+| **Weekend** | Every Saturday & Sunday | Rainbow bunting strung between all plaza lamp posts |
+
+Bunting is drawn as a circuit of triangular flags along the string connecting adjacent plaza lamp posts, with a natural catenary droop. Fairy lights twinkle independently on a per-segment phase. All decorations respect the day/night cycle (colours dim at night, candle glows and fairy lights intensify).
+
 ## Features
 
 - **Live clock** - 112 pedestrians form seven-segment digits showing the current time (HH:MM) for 15 seconds each minute
@@ -34,7 +53,7 @@ A procedurally generated top-down city where pedestrians form a digital clock in
 - **Dynamic City Events** - street protests and performances occasionally spawn in the plaza, drawing nearby crowds of pedestrians to watch and interact. Event characters are rendered as regular pedestrians with contextual overlays (banners, instruments, etc.)
 - **Click to inspect** - tap or click any pedestrian to reveal a frosted-glass pop-up showing their name, current activity, daily schedule phase, and assigned home. Distinguished from a drag by a 4px movement threshold; auto-dismisses after 5 seconds
 - **Follow mode** - the inspector pop-up includes a Follow button. Tapping it hides the pop-up and shows a compact pill chip at the top of the screen (`➤ Name · Activity  ✕`) that updates the pedestrian's activity in real time. Clicking the chip re-opens the full pop-up; dragging the canvas cancels following. Tap ✕ on the chip to stop at any time
-- **Roadside wheelie bins** - ~70% of houses put a small colour-coded wheelie bin out by the kerb (each house has its own lid colour). The garbage truck collects nearby bins when it pulls over, and bins quietly reappear ~5 minutes later once residents wheel them back in
+- **Roadside wheelie bins** - ~70% of houses put a small colour-coded wheelie bin on the kerb strip beside their garden path (each house has its own lid colour). The garbage truck pulls over periodically to collect nearby bins; bins reappear ~5 minutes later once residents wheel them back in
 - **Service & Delivery Vehicles** - orange delivery vans enter the plaza, park outside a venue to drop off packages. City buses (red/blue) and garbage trucks (green) navigate the road network with unique behaviours.
 - **Emergency vehicles** - police cars, ambulances, and fire trucks with flashing light bars and wailing sirens
 - **Traffic system** - cars navigate the road network with traffic lights, braking for pedestrians and each other, smooth quadratic Bézier arc turns at junctions, and anti-gridlock logic.
@@ -87,7 +106,7 @@ Configurable from 10 to 300 vehicles including delivery vans and emergency servi
 
 - **Normal cars** - scan ahead for pedestrians and other cars, brake proportionally; smooth Bézier curve turns at junctions; headlight beams at night
 - **Delivery vans** - navigate to the plaza via a dedicated entry stub road, drive around the plaza perimeter in front of shops, drop visible packages at venue fronts, then exit and rejoin the main road network. Pedestrians flee from delivery trucks inside the plaza.
-- **Specialized Service Vehicles** - city buses that pause at intersections to simulate pickups, and garbage trucks that slowly traverse the city collecting roadside bins as they go.
+- **Specialized Service Vehicles** - city buses that pause at intersections to simulate pickups, and garbage trucks that slowly traverse the city stopping to collect roadside bins.
 - **Emergency vehicles** - police, ambulance and fire trucks with flashing light bars and sirens
 - **Traffic lights** - alternating red/green phases at intersections; cars clear intersections before stopping
 - **Anti-gridlock** - cross-traffic detection prevents deadlocks; stuck vehicles teleport to clear roads after timeout
@@ -155,7 +174,7 @@ Several passes work together to give the city depth and visual polish:
 ### Rendering Architecture
 
 1. **Static canvas** - roads, sidewalks, crosswalks, plaza (with decorative paving and two fountain basins), building shadows, buildings, houses, house windows (all lit at night), venues, and parks pre-rendered to an offscreen canvas. Rebuilt when lighting changes *or* when zoom drifts more than 0.18 from the level it was last rendered at (debounced 300 ms after gesture settles). Canvas size is capped to stay within browser/iOS texture limits (~4096 px per dimension)
-2. **Dynamic layer** - venue name labels, atmosphere overlays, chimney smoke, roadside bins, market stalls, newspaper stand, busker pitch, fountain spray particles, cars, pedestrians, dogs, dropped packages, construction crane, bird shadows, animated tree sway, and birds (drawn above weather with parallax height)
+2. **Dynamic layer** - venue name labels, atmosphere overlays, holiday decorations, chimney smoke, roadside bins, market stalls, newspaper stand, busker pitch, fountain spray particles, cars, pedestrians, dogs, dropped packages, construction crane, bird shadows, animated tree sway, and birds (drawn above weather with parallax height)
 3. **Light pass** - street lights, plaza lamp glows, and car headlight beams drawn after the night overlay using `screen` compositing so overlapping halos brighten toward white rather than accumulating into an opaque fog wash (fixes a Safari-specific rendering artefact)
 4. **Atmosphere pass** - fog tendrils (two drifting noise layers) and wet road sheen composited in screen space after world-space weather
 5. **Film grain pass** - 256×256 tiled noise canvas covering the full physical canvas, `source-over` blend at ~2.5–4.5% opacity, offset advanced every 4th frame

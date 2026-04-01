@@ -8,6 +8,7 @@ import { DayNightCycle } from './rendering/DayNightCycle';
 import { Weather } from './rendering/Weather';
 // import { PostProcess } from './rendering/PostProcess';
 import { AudioEngine } from './rendering/AudioEngine';
+import { getActiveHoliday, drawHolidayDecorations, type Holiday } from './rendering/HolidayDecorations';
 import { TOTAL_PEDESTRIANS, CLOCK_ELIGIBLE_COUNT, TOTAL_CARS, setTotalPedestrians, setTotalCars, SEPARATION_RADIUS } from './utils/constants';
 import { SpatialGrid } from './utils/SpatialGrid';
 
@@ -87,8 +88,12 @@ const clockManager = new ClockManager();
 const dayNight = new DayNightCycle();
 const weather = new Weather();
 
-// Traffic light phase: cycles 0→1 over ~8 seconds
+/// Traffic light phase: cycles 0→1 over ~8 seconds
 let trafficPhase = 0;
+
+// Holiday decorations — recalculated once per minute
+let activeHoliday: Holiday | null = getActiveHoliday();
+let lastHolidayCheckMinute = -1;
 
 // Offscreen canvas for static city elements
 let staticCanvas: HTMLCanvasElement | null = null;
@@ -796,6 +801,16 @@ function loop(timestamp: number = 0) {
 
   // Time-of-day atmosphere (mist, golden hour, Sunday tint) — world space, under everything
   dayNight.drawAtmosphere(ctx, layout.width, layout.height, nightAlpha);
+
+  // Holiday / seasonal decorations — under pedestrians so people walk among them
+  {
+    const currentMinute = new Date().getMinutes();
+    if (currentMinute !== lastHolidayCheckMinute) {
+      activeHoliday = getActiveHoliday();
+      lastHolidayCheckMinute = currentMinute;
+    }
+    drawHolidayDecorations(ctx, layout, nightAlpha, time, activeHoliday);
+  }
 
   // Chimney smoke — above rooftops, below everything else
   chimneySmoke.update();

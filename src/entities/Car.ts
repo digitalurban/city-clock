@@ -1617,14 +1617,6 @@ export class Car {
         // White cab
         ctx.fillStyle = `rgba(240, 240, 240, ${darkFactor})`;
         ctx.fillRect(hw - 8, -hh + 1.5, 6, this.width - 3);
-        // Amber flashing light when collecting
-        if (this.garbageState === 'collecting') {
-          const flashOn = Math.floor(Date.now() / 250) % 2 === 0;
-          ctx.fillStyle = flashOn ? 'rgba(255,160,0,0.95)' : 'rgba(255,100,0,0.3)';
-          ctx.beginPath();
-          ctx.arc(hw * 0.5, -hh - 3, 3, 0, Math.PI * 2);
-          ctx.fill();
-        }
         break;
       }
     }

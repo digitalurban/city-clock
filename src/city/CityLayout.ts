@@ -584,18 +584,21 @@ export class CityLayout {
       const hy = gardenSide === 'top' ? by + margin + gardenH : by + margin;
       const hh = blockH - margin * 2 - gardenH;
 
-      // Compute garden path end (sidewalk edge point)
+      // Compute garden path end (kerb-side point where the bin is placed).
+      // Must stay inside the block boundary so bins don't appear in the road.
       const frontDoorX = hx + houseW / 2;
       let gardenPathEnd: { x: number; y: number };
       if (hasGarden) {
         if (gardenSide === 'bottom') {
-          gardenPathEnd = { x: frontDoorX, y: hy + hh + gardenH + 2 };
+          // 6px inside the bottom garden edge — safely on the kerb strip
+          gardenPathEnd = { x: frontDoorX, y: hy + hh + gardenH - 6 };
         } else {
-          gardenPathEnd = { x: frontDoorX, y: hy - gardenH - 2 };
+          // 6px inside the top garden edge
+          gardenPathEnd = { x: frontDoorX, y: hy - gardenH + 6 };
         }
       } else {
-        // No garden: offset 15px toward sidewalk (assume bottom)
-        gardenPathEnd = { x: frontDoorX, y: hy + hh + 15 };
+        // No garden: place bin 10px inside the block bottom edge (sidewalk zone)
+        gardenPathEnd = { x: frontDoorX, y: by + blockH - 10 };
       }
 
       this.houses.push({
