@@ -129,6 +129,38 @@ const alarmAudio = new Audio('./alarm.mp3');
 alarmAudio.loop = true;
 alarmAudio.preload = 'auto';
 
+/**
+ * Play a short two-tone confirmation beep using Web Audio API.
+ * Must be called inside a user-gesture handler (click, touch).
+ * Also primes alarmAudio by playing+immediately pausing it within the same
+ * gesture, which unlocks autoplay for when the alarm fires from the render loop.
+ */
+function playAlarmSetBeep() {
+  // Prime alarmAudio within the user gesture so it can play later from rAF
+  alarmAudio.currentTime = 0;
+  alarmAudio.play()
+    .then(() => { alarmAudio.pause(); alarmAudio.currentTime = 0; })
+    .catch(() => {});
+
+  // Synthesise a quick two-tone "set" confirmation beep
+  try {
+    const AC = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AC) return;
+    const ac: AudioContext = new AC();
+    const osc = ac.createOscillator();
+    const gain = ac.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(880, ac.currentTime);
+    osc.frequency.setValueAtTime(1100, ac.currentTime + 0.12);
+    gain.gain.setValueAtTime(0.25, ac.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.28);
+    osc.connect(gain);
+    gain.connect(ac.destination);
+    osc.start();
+    osc.stop(ac.currentTime + 0.28);
+  } catch (_) {}
+}
+
 function clampPan(w: number, h: number) {
   const worldW = layout.width;
   const worldH = layout.height;
@@ -509,6 +541,9 @@ function createOptionsUI() {
         alarmBtn.textContent = 'Clear';
         alarmBtn.style.background = '#ff4a4a';
         alarmStatusLabel.textContent = alarmTime;
+        // Play confirmation beep AND prime alarmAudio within this user gesture
+        // so the browser permits autoplay when the alarm fires from the render loop.
+        playAlarmSetBeep();
       }
     }
   });
