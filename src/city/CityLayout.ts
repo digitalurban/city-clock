@@ -2250,7 +2250,7 @@ export class CityLayout {
       ped.vx = ped.vy = 0;
       ped.x = this.bandstandX + offset;
       ped.y = this.bandstandY;
-      ped.angle = Math.PI * 1.5; // face into the square (upward toward plaza centre)
+      ped.angle = Math.PI * 0.5; // face south (down-screen) toward the plaza audience
       ped.instrument = instruments[i];
       this.bandMembers.push(ped);
     }
