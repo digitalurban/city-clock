@@ -126,54 +126,86 @@ let alarmTime: string | null = null;
 let isAlarmActive = false;
 let isDancing = false;
 
-// Alarm audio — fully synthesised via Web Audio API so it is never blocked by
-// the browser autoplay policy.  The AudioContext is created during the "Set"
-// button click (a user gesture) and kept alive.  All subsequent play() calls
-// on nodes connected to that context succeed from any callback, including rAF.
+// Alarm audio — played via Web Audio API so it is never blocked by the browser
+// autoplay policy.  The AudioContext is created during the "Set" button click
+// (a user gesture) and kept alive; nodes on it can be started from any callback.
 let alarmAudioCtx: AudioContext | null = null;
-let alarmRingHandle: ReturnType<typeof setTimeout> | null = null;
+let alarmBuffer: AudioBuffer | null = null;       // decoded alarm.mp3
+let alarmSourceNode: AudioBufferSourceNode | null = null; // currently playing node
 
-/** Synthesise one burst of the alarm: two short beeps, then schedule the next. */
-function ringAlarmBurst() {
-  if (!isAlarmActive || !alarmAudioCtx) return;
+/** Fetch and decode alarm.mp3 into the Web Audio buffer (called after ctx is created). */
+async function loadAlarmBuffer() {
+  if (!alarmAudioCtx || alarmBuffer) return;
+  try {
+    const resp = await fetch('./alarm.mp3');
+    const ab = await resp.arrayBuffer();
+    alarmBuffer = await alarmAudioCtx.decodeAudioData(ab);
+  } catch (_) {
+    // File missing or decode failed — ringAlarm() will fall back to beeps
+  }
+}
+
+/** Start looping alarm.mp3 (or beeps if the file isn't available). */
+function ringAlarm() {
+  if (!alarmAudioCtx) return;
   const ctx = alarmAudioCtx;
   if (ctx.state === 'suspended') ctx.resume();
-  const t = ctx.currentTime;
 
-  // Two sharp sine beeps — 880 Hz then 1100 Hz
+  if (alarmBuffer) {
+    // Play the actual alarm.mp3 in a loop via AudioBufferSourceNode
+    const src = ctx.createBufferSource();
+    src.buffer = alarmBuffer;
+    src.loop = true;
+    src.connect(ctx.destination);
+    src.start();
+    alarmSourceNode = src;
+  } else {
+    // Fallback: synthesised beep pattern
+    ringAlarmBeepBurst();
+  }
+}
+
+let alarmBeepHandle: ReturnType<typeof setTimeout> | null = null;
+
+function ringAlarmBeepBurst() {
+  if (!isAlarmActive || !alarmAudioCtx) return;
+  const ctx = alarmAudioCtx;
+  const t = ctx.currentTime;
   [[880, 0], [1100, 0.22]].forEach(([freq, offset]) => {
     const osc = ctx.createOscillator();
     const g = ctx.createGain();
     osc.type = 'sine';
     osc.frequency.value = freq;
     g.gain.setValueAtTime(0, t + offset);
-    g.gain.linearRampToValueAtTime(0.55, t + offset + 0.02);
+    g.gain.linearRampToValueAtTime(0.45, t + offset + 0.02);
     g.gain.exponentialRampToValueAtTime(0.001, t + offset + 0.18);
-    osc.connect(g);
-    g.connect(ctx.destination);
-    osc.start(t + offset);
-    osc.stop(t + offset + 0.2);
+    osc.connect(g); g.connect(ctx.destination);
+    osc.start(t + offset); osc.stop(t + offset + 0.2);
   });
-
-  // Schedule the next burst
-  alarmRingHandle = setTimeout(ringAlarmBurst, 900);
+  alarmBeepHandle = setTimeout(ringAlarmBeepBurst, 900);
 }
 
-/** Stop the repeating alarm ring. */
+/** Stop the alarm (both mp3 and beep fallback). */
 function stopAlarmRing() {
-  if (alarmRingHandle !== null) { clearTimeout(alarmRingHandle); alarmRingHandle = null; }
+  if (alarmSourceNode) {
+    try { alarmSourceNode.stop(); } catch (_) {}
+    alarmSourceNode = null;
+  }
+  if (alarmBeepHandle !== null) { clearTimeout(alarmBeepHandle); alarmBeepHandle = null; }
 }
 
 /**
  * Called during the "Set" button click (user gesture).
- * Creates/resumes the AudioContext and plays a confirmation beep.
- * The context created here is reused when the alarm fires.
+ * Creates the AudioContext, starts loading alarm.mp3, and plays a confirmation chirp.
  */
 function playAlarmSetBeep() {
   try {
     const AC = window.AudioContext || (window as any).webkitAudioContext;
     if (!AC) return;
-    if (!alarmAudioCtx) alarmAudioCtx = new AC();
+    if (!alarmAudioCtx) {
+      alarmAudioCtx = new AC();
+      loadAlarmBuffer(); // kick off async fetch+decode while context is warm
+    }
     if (alarmAudioCtx.state === 'suspended') alarmAudioCtx.resume();
     const ctx = alarmAudioCtx;
     const t = ctx.currentTime;
@@ -186,10 +218,8 @@ function playAlarmSetBeep() {
     osc.frequency.setValueAtTime(1100, t + 0.12);
     g.gain.setValueAtTime(0.25, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.28);
-    osc.connect(g);
-    g.connect(ctx.destination);
-    osc.start(t);
-    osc.stop(t + 0.3);
+    osc.connect(g); g.connect(ctx.destination);
+    osc.start(t); osc.stop(t + 0.3);
   } catch (_) {}
 }
 
@@ -918,7 +948,7 @@ function loop(timestamp: number = 0) {
       // Ring using the Web Audio context that was created during the "Set"
       // button click — nodes on a user-gesture-created context are never
       // blocked by autoplay policy, even when called from a rAF callback.
-      ringAlarmBurst();
+      ringAlarm();
       layout.startBandstand();
 
       // Show alarm options container
