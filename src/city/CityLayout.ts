@@ -175,6 +175,9 @@ export class CityLayout {
   // Chimney smoke source positions (top of each chimney)
   chimneyPositions: { x: number; y: number }[] = [];
 
+  // Rain puddles — fills during rain, evaporates when dry
+  puddleIntensity = 0; // 0–1
+
   // Market stall positions (active on weekends / market days)
   marketStalls: { x: number; y: number; awningColor: string; produceColors: string[] }[] = [];
 
@@ -569,8 +572,9 @@ export class CityLayout {
   }
 
   private generateResidentialBlock(bx: number, by: number, blockW: number, blockH: number, margin: number, c: number, r: number) {
-    // Generate 2-4 houses with gardens
-    const numHouses = 2 + Math.floor(seededRandom(c * 47 + r * 83) * 3);
+    // Generate 2–3 houses per block — cap so each house is at least 34 px wide
+    const maxByWidth = Math.max(1, Math.floor((blockW - margin) / (34 + margin)));
+    const numHouses = Math.min(2 + Math.floor(seededRandom(c * 47 + r * 83) * 2), maxByWidth);
     const houseW = Math.floor((blockW - margin * (numHouses + 1)) / numHouses);
     const roofColors = ['#8b4513', '#a0522d', '#6b3a2a', '#7a4830', '#5c3a1e', '#9c6b4a'];
 
@@ -934,14 +938,38 @@ export class CityLayout {
       ctx.fillStyle = `rgba(0, 0, 0, ${0.18 + nightAlpha * 0.06})`;
       ctx.fillRect(v.x + 3, v.y + 3, v.w, v.h);
 
-      // Building body
+      // Building body with parapet walls + recessed roof
       const darkFactor = 1 - nightAlpha * 0.4;
       const r = parseInt(v.color.slice(1, 3), 16);
       const g = parseInt(v.color.slice(3, 5), 16);
       const b = parseInt(v.color.slice(5, 7), 16);
-      ctx.fillStyle = `rgb(${Math.floor(r * darkFactor)}, ${Math.floor(g * darkFactor)}, ${Math.floor(b * darkFactor)})`;
+
+      const vpW = Math.max(3, Math.min(6, Math.floor(Math.min(v.w, v.h) * 0.09)));
+
+      // Parapet tops — slightly brighter
+      const vpf = Math.min(1.0, darkFactor * 1.14);
+      ctx.fillStyle = `rgb(${Math.min(255,Math.floor(r*vpf))}, ${Math.min(255,Math.floor(g*vpf))}, ${Math.min(255,Math.floor(b*vpf))})`;
       ctx.fillRect(v.x, v.y, v.w, v.h);
-      ctx.strokeStyle = `rgba(0,0,0,0.2)`;
+
+      // Roof interior — recessed (base colour)
+      ctx.fillStyle = `rgb(${Math.floor(r * darkFactor)}, ${Math.floor(g * darkFactor)}, ${Math.floor(b * darkFactor)})`;
+      ctx.fillRect(v.x + vpW, v.y + vpW, v.w - vpW * 2, v.h - vpW * 2);
+
+      // Inner parapet shadows
+      ctx.fillStyle = 'rgba(0,0,0,0.14)';
+      ctx.fillRect(v.x + vpW, v.y + vpW, v.w - vpW * 2, Math.ceil(vpW * 0.65));
+      ctx.fillRect(v.x + vpW, v.y + vpW, Math.ceil(vpW * 0.65), v.h - vpW * 2);
+
+      // South parapet face
+      const vsf = darkFactor * 0.60;
+      ctx.fillStyle = `rgb(${Math.floor(r*vsf)}, ${Math.floor(g*vsf)}, ${Math.floor(b*vsf)})`;
+      ctx.fillRect(v.x, v.y + v.h - vpW, v.w, vpW);
+
+      // East parapet face
+      ctx.fillStyle = `rgba(0,0,0,${0.20 * darkFactor})`;
+      ctx.fillRect(v.x + v.w - vpW, v.y, vpW, v.h - vpW);
+
+      ctx.strokeStyle = `rgba(0,0,0,0.22)`;
       ctx.lineWidth = 1;
       ctx.strokeRect(v.x, v.y, v.w, v.h);
 
@@ -1306,20 +1334,35 @@ export class CityLayout {
       ctx.fillStyle = `rgb(${Math.floor(r * darkFactor)}, ${Math.floor(g * darkFactor)}, ${Math.floor(bl * darkFactor)})`;
       ctx.fillRect(b.x, b.y, b.w, b.h);
 
-      // ── Depth shading ────────────────────────────────────────────────
-      // Top-edge highlight — roof parapet catching ambient light
-      const hf = Math.min(1, darkFactor * 1.22);
-      ctx.fillStyle = `rgb(${Math.min(255, Math.floor(r * hf))}, ${Math.min(255, Math.floor(g * hf))}, ${Math.min(255, Math.floor(bl * hf))})`;
-      ctx.fillRect(b.x, b.y, b.w, 2);
+      // ── Parapet walls + recessed roof surface ────────────────────────
+      // Width of parapet walls — proportional to building size, 4–7 px
+      const pW = Math.max(4, Math.min(7, Math.floor(Math.min(b.w, b.h) * 0.09)));
 
-      // Bottom near-face shadow — visible south wall in top-down view
-      const sf = darkFactor * 0.68;
+      // Parapet top surface: the flat tops of the four parapet walls catch
+      // sky light so they appear slightly brighter than the roof interior.
+      // We paint the whole rect lighter, then overwrite the centre.
+      const pf = Math.min(1.0, darkFactor * 1.16);
+      ctx.fillStyle = `rgb(${Math.min(255, Math.floor(r * pf))}, ${Math.min(255, Math.floor(g * pf))}, ${Math.min(255, Math.floor(bl * pf))})`;
+      ctx.fillRect(b.x, b.y, b.w, b.h);
+
+      // Roof interior — recessed behind parapet, use the base building colour
+      ctx.fillStyle = `rgb(${Math.floor(r * darkFactor)}, ${Math.floor(g * darkFactor)}, ${Math.floor(bl * darkFactor)})`;
+      ctx.fillRect(b.x + pW, b.y + pW, b.w - pW * 2, b.h - pW * 2);
+
+      // Inner parapet shadow — north + west walls cast a shadow onto the roof
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.16)';
+      ctx.fillRect(b.x + pW, b.y + pW, b.w - pW * 2, Math.ceil(pW * 0.65)); // from north
+      ctx.fillRect(b.x + pW, b.y + pW, Math.ceil(pW * 0.65), b.h - pW * 2); // from west
+
+      // South parapet face — the exterior south wall is visible from our
+      // slightly-elevated south-above viewpoint; it's the darkest face.
+      const sf = darkFactor * 0.58;
       ctx.fillStyle = `rgb(${Math.floor(r * sf)}, ${Math.floor(g * sf)}, ${Math.floor(bl * sf)})`;
-      ctx.fillRect(b.x, b.y + b.h - 4, b.w, 4);
+      ctx.fillRect(b.x, b.y + b.h - pW, b.w, pW);
 
-      // Right-edge shadow — east face catches less light
-      ctx.fillStyle = `rgba(0, 0, 0, ${0.10 * darkFactor})`;
-      ctx.fillRect(b.x + b.w - 2, b.y, 2, b.h);
+      // East parapet face — partially visible east wall, medium shadow
+      ctx.fillStyle = `rgba(0, 0, 0, ${0.22 * darkFactor})`;
+      ctx.fillRect(b.x + b.w - pW, b.y, pW, b.h - pW); // leave SE corner to south face
       // ────────────────────────────────────────────────────────────────
 
       // Building border
@@ -1327,35 +1370,295 @@ export class CityLayout {
       ctx.lineWidth = 1;
       ctx.strokeRect(b.x, b.y, b.w, b.h);
 
-      // Windows at night
+      // Windows + glow at night
       if (nightAlpha > 0.1) {
         const hour = new Date().getHours() + new Date().getMinutes() / 60;
-        let litChance = 0.30; // default
-        if (hour >= 23 || hour < 5) litChance = 0.18;       // very late night — few lights on
-        else if (hour >= 20 || hour < 6) litChance = 0.38;  // night — moderate
-        else if (hour >= 18) litChance = 0.55;               // early evening — peak
+        // Time-quantised seed changes every 20 minutes so windows "go dark" as night progresses
+        const timeSlot = Math.floor(hour * 3);
+        let litChance = 0.30;
+        if (hour >= 23 || hour < 5) litChance = 0.12;
+        else if (hour >= 20 || hour < 6) litChance = 0.38;
+        else if (hour >= 18) litChance = 0.55;
 
         const winSize = 5;
         const winGap = 8;
         const winAlpha = Math.min(1, nightAlpha * 1.6);
-        for (let wx = b.x + 6; wx < b.x + b.w - 6; wx += winGap) {
-          for (let wy = b.y + 6; wy < b.y + b.h - 6; wy += winGap) {
-            const isLit = seededRandom(b.windowSeed + wx * 7 + wy * 13) < litChance;
+        // Windows sit on the roof interior, inside the parapet
+        const wp = Math.max(4, Math.min(7, Math.floor(Math.min(b.w, b.h) * 0.09)));
+        for (let wx = b.x + wp + 2; wx < b.x + b.w - wp - 2; wx += winGap) {
+          for (let wy = b.y + wp + 2; wy < b.y + b.h - wp - 2; wy += winGap) {
+            const isLit = seededRandom(b.windowSeed + wx * 7 + wy * 13 + timeSlot * 3001) < litChance;
             if (isLit) {
               const warmth = seededRandom(b.windowSeed + wx * 3 + wy * 11);
-              if (warmth > 0.4) {
-                // Warm incandescent / warm-white LED
-                ctx.fillStyle = `rgba(255, 215, 110, ${winAlpha})`;
-              } else if (warmth > 0.15) {
-                // Cool daylight / monitor glow
-                ctx.fillStyle = `rgba(180, 220, 255, ${winAlpha * 0.85})`;
-              } else {
-                // Blue-ish TV flicker
-                ctx.fillStyle = `rgba(140, 180, 255, ${winAlpha * 0.7})`;
-              }
+              let wr2: number, wg2: number, wb2: number;
+              if (warmth > 0.4) { wr2 = 255; wg2 = 215; wb2 = 110; }        // warm incandescent
+              else if (warmth > 0.15) { wr2 = 180; wg2 = 220; wb2 = 255; } // cool daylight
+              else { wr2 = 140; wg2 = 180; wb2 = 255; }                     // blue TV glow
+              ctx.fillStyle = `rgba(${wr2}, ${wg2}, ${wb2}, ${winAlpha})`;
+              ctx.fillRect(wx, wy, winSize, winSize);
+              // Soft halo — makes the glow bleed into the dark facade
+              const gr = ctx.createRadialGradient(wx + winSize / 2, wy + winSize / 2, 0, wx + winSize / 2, wy + winSize / 2, 9);
+              gr.addColorStop(0, `rgba(${wr2}, ${wg2}, ${wb2}, ${nightAlpha * 0.18})`);
+              gr.addColorStop(1, `rgba(${wr2}, ${wg2}, ${wb2}, 0)`);
+              ctx.fillStyle = gr;
+              ctx.fillRect(wx - 4, wy - 4, winSize + 8, winSize + 8);
+            } else if (nightAlpha > 0.3) {
+              ctx.fillStyle = `rgba(10, 10, 20, ${nightAlpha * 0.25})`;
               ctx.fillRect(wx, wy, winSize, winSize);
             }
           }
+        }
+      }
+    }
+  }
+
+  drawBuildingRooftops(ctx: CanvasRenderingContext2D, nightAlpha: number) {
+    const darkFactor = 1 - nightAlpha * 0.75;
+
+    for (const b of this.buildings) {
+      if (b.w < 20 || b.h < 20) continue;
+
+      const pW = Math.max(4, Math.min(7, Math.floor(Math.min(b.w, b.h) * 0.09)));
+      const innerX = b.x + pW;
+      const innerY = b.y + pW;
+      const innerW = b.w - pW * 2;
+      const innerH = b.h - pW * 2;
+
+      // ── Raised shaft / stairwell boxes ────────────────────────────
+      // Every commercial building has 1–2 raised access structures.
+      // Drawn as solid boxes with SE cast-shadow to show they stand
+      // above the roof plane.
+      const boxCount = 1 + Math.floor(seededRandom(b.windowSeed + 8000) * 2);
+      for (let bi = 0; bi < boxCount; bi++) {
+        const bwF = 0.12 + seededRandom(b.windowSeed + 8100 + bi * 29) * 0.72;
+        const bhF = 0.12 + seededRandom(b.windowSeed + 8200 + bi * 37) * 0.68;
+        const boxW = Math.max(8, Math.min(innerW * 0.45, 8 + seededRandom(b.windowSeed + 8300 + bi * 41) * 10));
+        const boxH = Math.max(6, Math.min(innerH * 0.45, 6 + seededRandom(b.windowSeed + 8400 + bi * 53) * 7));
+        const bxPos = innerX + innerW * bwF - boxW / 2;
+        const byPos = innerY + innerH * bhF - boxH / 2;
+
+        // Cast shadow to SE — conveys height above roof
+        ctx.fillStyle = `rgba(0,0,0,${0.32 * darkFactor})`;
+        ctx.fillRect(bxPos + 3, byPos + 3, boxW, boxH);
+
+        // Box top surface (concrete — slightly lighter than roof)
+        const lum = Math.floor(192 * darkFactor);
+        ctx.fillStyle = `rgb(${lum},${lum - 4},${lum - 10})`;
+        ctx.fillRect(bxPos, byPos, boxW, boxH);
+
+        // North + west edges: bright highlight (sky-lit top of parapet)
+        ctx.fillStyle = `rgba(255,255,255,${0.20 * darkFactor})`;
+        ctx.fillRect(bxPos, byPos, boxW, 1.5);
+        ctx.fillRect(bxPos, byPos, 1.5, boxH);
+
+        // South face: darkest — exterior wall visible from above-south
+        const sfH = Math.ceil(boxH * 0.30);
+        ctx.fillStyle = `rgba(0,0,0,${0.42 * darkFactor})`;
+        ctx.fillRect(bxPos, byPos + boxH - sfH, boxW, sfH);
+
+        // East face: medium shadow
+        const efW = Math.ceil(boxW * 0.16);
+        ctx.fillStyle = `rgba(0,0,0,${0.25 * darkFactor})`;
+        ctx.fillRect(bxPos + boxW - efW, byPos, efW, boxH - sfH);
+
+        // Door / hatch on south face
+        const dW = Math.min(boxW * 0.38, 5);
+        ctx.fillStyle = `rgba(0,0,0,${0.60 * darkFactor})`;
+        ctx.fillRect(bxPos + (boxW - dW) / 2, byPos + boxH - sfH, dW, sfH);
+      }
+
+      // ── Optional features: water tower, AC unit, satellite dish ───
+      const featureCount = Math.floor(seededRandom(b.windowSeed + 9000) * 2.5); // 0–2
+      for (let fi = 0; fi < featureCount; fi++) {
+        const featureType = Math.floor(seededRandom(b.windowSeed + 9100 + fi * 17) * 3);
+        const fx = b.x + b.w * (0.15 + seededRandom(b.windowSeed + 9200 + fi * 23) * 0.7);
+        const fy = b.y + b.h * (0.1  + seededRandom(b.windowSeed + 9300 + fi * 31) * 0.65);
+
+        if (featureType === 0) {
+          // ── Water tower (circle from above) ─────────────────────────
+          const wr = 5 + seededRandom(b.windowSeed + 9400 + fi) * 4; // 5–9 px
+
+          // Support leg shadows on roof
+          ctx.fillStyle = `rgba(0,0,0,${0.20 * darkFactor})`;
+          ctx.fillRect(fx - wr * 0.65, fy + wr * 0.25, wr * 1.3, wr * 0.55);
+
+          // Support legs (4 thin posts)
+          ctx.strokeStyle = `rgb(${Math.floor(80*darkFactor)},${Math.floor(78*darkFactor)},${Math.floor(72*darkFactor)})`;
+          ctx.lineWidth = 1.0;
+          for (let leg = 0; leg < 4; leg++) {
+            const la = ((leg + 0.5) / 4) * Math.PI * 2;
+            ctx.beginPath();
+            ctx.moveTo(fx, fy + wr * 0.12);
+            ctx.lineTo(fx + Math.cos(la) * wr * 0.88, fy + wr * 0.48 + Math.sin(la) * wr * 0.18);
+            ctx.stroke();
+          }
+
+          // Tank cast shadow
+          ctx.fillStyle = `rgba(0,0,0,${0.18 * darkFactor})`;
+          ctx.beginPath();
+          ctx.arc(fx + 2, fy + 2, wr, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Barrel body (circle — tank is round from above)
+          ctx.fillStyle = `rgb(${Math.floor(148*darkFactor)},${Math.floor(110*darkFactor)},${Math.floor(72*darkFactor)})`;
+          ctx.beginPath();
+          ctx.arc(fx, fy, wr, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Metal hoop rings at 90 %, 70 %, 50 % of radius
+          for (const rf of [0.96, 0.74, 0.52]) {
+            ctx.strokeStyle = `rgba(${Math.floor(70*darkFactor)},${Math.floor(68*darkFactor)},${Math.floor(62*darkFactor)},0.9)`;
+            ctx.lineWidth = 0.9;
+            ctx.beginPath();
+            ctx.arc(fx, fy, wr * rf, 0, Math.PI * 2);
+            ctx.stroke();
+          }
+
+          // Vertical stave lines (wood planks viewed from above)
+          ctx.strokeStyle = `rgba(${Math.floor(105*darkFactor)},${Math.floor(78*darkFactor)},${Math.floor(50*darkFactor)},0.50)`;
+          ctx.lineWidth = 0.5;
+          for (let s = 0; s < 8; s++) {
+            const a = (s / 8) * Math.PI * 2;
+            ctx.beginPath();
+            ctx.moveTo(fx, fy);
+            ctx.lineTo(fx + Math.cos(a) * wr, fy + Math.sin(a) * wr);
+            ctx.stroke();
+          }
+
+          // Conical cap (seen as a darker inner disc, slightly offset N)
+          ctx.fillStyle = `rgb(${Math.floor(72*darkFactor)},${Math.floor(56*darkFactor)},${Math.floor(42*darkFactor)})`;
+          ctx.beginPath();
+          ctx.arc(fx - 0.5, fy - 0.5, wr * 0.36, 0, Math.PI * 2);
+          ctx.fill();
+
+        } else if (featureType === 1) {
+          // ── AC / HVAC unit (raised box from above) ──────────────────
+          const aw = 9 + seededRandom(b.windowSeed + 9500 + fi) * 9;
+          const ah = 6 + seededRandom(b.windowSeed + 9600 + fi) * 5;
+          const ax = fx - aw / 2;
+          const ay = fy - ah / 2;
+
+          // SE cast shadow
+          ctx.fillStyle = `rgba(0,0,0,${0.30 * darkFactor})`;
+          ctx.fillRect(ax + 2.5, ay + 2.5, aw, ah);
+
+          // Box top surface
+          ctx.fillStyle = `rgb(${Math.floor(185*darkFactor)},${Math.floor(183*darkFactor)},${Math.floor(176*darkFactor)})`;
+          ctx.fillRect(ax, ay, aw, ah);
+
+          // Horizontal louver slats (air intake, seen from above)
+          ctx.fillStyle = `rgba(0,0,0,${0.20 * darkFactor})`;
+          const slats = Math.max(2, Math.floor(ah / 2.2));
+          for (let s = 1; s <= slats; s++) {
+            ctx.fillRect(ax + 1, ay + s * (ah / (slats + 1)) - 0.4, aw - 2, 0.9);
+          }
+
+          // Fan housing (circle on right side)
+          const fanR = Math.min(aw, ah) * 0.26;
+          const fanX = ax + aw * 0.72;
+          const fanY = ay + ah / 2;
+          ctx.fillStyle = `rgb(${Math.floor(162*darkFactor)},${Math.floor(160*darkFactor)},${Math.floor(152*darkFactor)})`;
+          ctx.beginPath();
+          ctx.arc(fanX, fanY, fanR, 0, Math.PI * 2);
+          ctx.fill();
+          // Fan blades (4 spokes)
+          ctx.strokeStyle = `rgba(${Math.floor(110*darkFactor)},${Math.floor(108*darkFactor)},${Math.floor(100*darkFactor)},0.75)`;
+          ctx.lineWidth = 0.45;
+          for (let blade = 0; blade < 4; blade++) {
+            const a = (blade / 4) * Math.PI * 2;
+            ctx.beginPath();
+            ctx.moveTo(fanX, fanY);
+            ctx.lineTo(fanX + Math.cos(a) * fanR, fanY + Math.sin(a) * fanR);
+            ctx.stroke();
+          }
+          ctx.fillStyle = `rgb(${Math.floor(95*darkFactor)},${Math.floor(93*darkFactor)},${Math.floor(86*darkFactor)})`;
+          ctx.beginPath();
+          ctx.arc(fanX, fanY, fanR * 0.24, 0, Math.PI * 2);
+          ctx.fill();
+
+          // South face (height shadow strip)
+          ctx.fillStyle = `rgba(0,0,0,${0.38 * darkFactor})`;
+          ctx.fillRect(ax, ay + ah - 2, aw, 2);
+          // East face
+          ctx.fillStyle = `rgba(0,0,0,${0.24 * darkFactor})`;
+          ctx.fillRect(ax + aw - 2, ay, 2, ah);
+          // Top highlight
+          ctx.fillStyle = `rgba(255,255,255,${0.14 * darkFactor})`;
+          ctx.fillRect(ax, ay, aw, 1);
+          ctx.fillRect(ax, ay, 1, ah);
+
+        } else {
+          // ── Satellite dish ───────────────────────────────────────────
+          // From above: a round dish on a mounting arm, with a thick rim,
+          // bowl highlight and LNB feed at the end of the feed arm.
+          const dr = 6 + seededRandom(b.windowSeed + 9700 + fi) * 4; // 6–10 px
+          const mountAngle = seededRandom(b.windowSeed + 9800 + fi) * Math.PI * 2;
+
+          // Concrete mounting pad on roof (small square with shadow)
+          const padW = Math.ceil(dr * 0.65);
+          ctx.fillStyle = `rgba(0,0,0,${0.22 * darkFactor})`;
+          ctx.fillRect(fx - padW / 2 + 1, fy - padW / 2 + 1, padW, padW);
+          ctx.fillStyle = `rgb(${Math.floor(172*darkFactor)},${Math.floor(168*darkFactor)},${Math.floor(160*darkFactor)})`;
+          ctx.fillRect(fx - padW / 2, fy - padW / 2, padW, padW);
+          ctx.fillStyle = `rgba(255,255,255,${0.16 * darkFactor})`;
+          ctx.fillRect(fx - padW / 2, fy - padW / 2, padW, 1);
+
+          // Mounting arm from pad to dish centre
+          const armLen = dr * 1.2;
+          const dishCx = fx + Math.cos(mountAngle) * armLen * 0.55;
+          const dishCy = fy + Math.sin(mountAngle) * armLen * 0.55;
+          ctx.strokeStyle = `rgb(${Math.floor(145*darkFactor)},${Math.floor(142*darkFactor)},${Math.floor(135*darkFactor)})`;
+          ctx.lineWidth = 1.6;
+          ctx.beginPath();
+          ctx.moveTo(fx, fy);
+          ctx.lineTo(dishCx, dishCy);
+          ctx.stroke();
+
+          // Dish shadow cast on roof
+          ctx.fillStyle = `rgba(0,0,0,${0.24 * darkFactor})`;
+          ctx.beginPath();
+          ctx.ellipse(dishCx + 2, dishCy + 2, dr, dr * 0.50, mountAngle, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Dish bowl fill
+          ctx.fillStyle = `rgb(${Math.floor(208*darkFactor)},${Math.floor(205*darkFactor)},${Math.floor(198*darkFactor)})`;
+          ctx.beginPath();
+          ctx.ellipse(dishCx, dishCy, dr, dr * 0.50, mountAngle, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Dish rim (thick outer ring — makes it look like a bowl)
+          ctx.strokeStyle = `rgb(${Math.floor(140*darkFactor)},${Math.floor(137*darkFactor)},${Math.floor(128*darkFactor)})`;
+          ctx.lineWidth = 1.8;
+          ctx.beginPath();
+          ctx.ellipse(dishCx, dishCy, dr, dr * 0.50, mountAngle, 0, Math.PI * 2);
+          ctx.stroke();
+
+          // Bowl interior highlight (offset toward N-W to suggest concavity)
+          const hOff = dr * 0.22;
+          ctx.fillStyle = `rgba(255,255,255,${0.22 * darkFactor})`;
+          ctx.beginPath();
+          ctx.ellipse(
+            dishCx - Math.cos(mountAngle) * hOff,
+            dishCy - Math.sin(mountAngle) * hOff,
+            dr * 0.46, dr * 0.22, mountAngle, 0, Math.PI * 2
+          );
+          ctx.fill();
+
+          // Feed arm (thin rod from centre of dish to LNB)
+          const lnbX = dishCx + Math.cos(mountAngle + Math.PI) * dr * 0.62;
+          const lnbY = dishCy + Math.sin(mountAngle + Math.PI) * dr * 0.62;
+          ctx.strokeStyle = `rgb(${Math.floor(120*darkFactor)},${Math.floor(118*darkFactor)},${Math.floor(110*darkFactor)})`;
+          ctx.lineWidth = 0.7;
+          ctx.beginPath();
+          ctx.moveTo(dishCx, dishCy);
+          ctx.lineTo(lnbX, lnbY);
+          ctx.stroke();
+
+          // LNB receiver head
+          ctx.fillStyle = `rgb(${Math.floor(55*darkFactor)},${Math.floor(53*darkFactor)},${Math.floor(48*darkFactor)})`;
+          ctx.beginPath();
+          ctx.arc(lnbX, lnbY, 1.8, 0, Math.PI * 2);
+          ctx.fill();
         }
       }
     }
@@ -1413,6 +1716,9 @@ export class CityLayout {
       ctx.fillStyle = `rgba(0, 0, 0, ${shadow.alpha + nightAlpha * 0.06})`;
       ctx.fillRect(h.x + shadow.dx, h.y + shadow.dy, h.w, h.h);
 
+      // Roof covers the full footprint
+      const roofH = h.h;
+
       // Determine roof style from seed: 0 = gabled (ridge runs left-right),
       // 1 = hip roof, 2 = gabled rotated (ridge runs top-bottom)
       const roofStyle = Math.floor(seededRandom(h.seed + 1500) * 3);
@@ -1429,25 +1735,23 @@ export class CityLayout {
 
       if (roofStyle === 0) {
         // Gabled roof — ridge runs left↔right, slopes face top and bottom
-        // Two triangular slopes meeting at a horizontal ridge line
-
-        // South-facing slope (lighter — catches more sun from bird's eye)
+        // South-facing slope (lighter)
         ctx.fillStyle = roofLight;
         ctx.beginPath();
-        ctx.moveTo(h.x, h.y + h.h);         // bottom-left
-        ctx.lineTo(h.x + h.w, h.y + h.h);   // bottom-right
-        ctx.lineTo(h.x + h.w, cy);           // ridge-right
-        ctx.lineTo(h.x, cy);                 // ridge-left
+        ctx.moveTo(h.x,       h.y + roofH);
+        ctx.lineTo(h.x + h.w, h.y + roofH);
+        ctx.lineTo(h.x + h.w, cy);
+        ctx.lineTo(h.x,       cy);
         ctx.closePath();
         ctx.fill();
 
-        // North-facing slope (darker — in shadow)
+        // North-facing slope (darker)
         ctx.fillStyle = roofDark;
         ctx.beginPath();
-        ctx.moveTo(h.x, h.y);               // top-left
-        ctx.lineTo(h.x + h.w, h.y);         // top-right
-        ctx.lineTo(h.x + h.w, cy);          // ridge-right
-        ctx.lineTo(h.x, cy);                // ridge-left
+        ctx.moveTo(h.x,       h.y);
+        ctx.lineTo(h.x + h.w, h.y);
+        ctx.lineTo(h.x + h.w, cy);
+        ctx.lineTo(h.x,       cy);
         ctx.closePath();
         ctx.fill();
 
@@ -1455,124 +1759,110 @@ export class CityLayout {
         ctx.strokeStyle = `rgba(0,0,0,${0.25 + nightAlpha * 0.1})`;
         ctx.lineWidth = 1.2;
         ctx.beginPath();
-        ctx.moveTo(h.x, cy);
+        ctx.moveTo(h.x,       cy);
         ctx.lineTo(h.x + h.w, cy);
         ctx.stroke();
 
-        // Tile lines (horizontal rows)
-        ctx.strokeStyle = `rgba(0,0,0,${0.06})`;
+        // Tile lines
+        ctx.strokeStyle = `rgba(0,0,0,0.06)`;
         ctx.lineWidth = 0.4;
-        const tileSpacing = 4;
-        for (let ty = h.y + tileSpacing; ty < h.y + h.h; ty += tileSpacing) {
-          if (Math.abs(ty - cy) < 1) continue; // skip ridge
+        for (let ty2 = h.y + 4; ty2 < h.y + roofH; ty2 += 4) {
+          if (Math.abs(ty2 - cy) < 1) continue;
           ctx.beginPath();
-          ctx.moveTo(h.x + 1, ty);
-          ctx.lineTo(h.x + h.w - 1, ty);
+          ctx.moveTo(h.x + 1, ty2);
+          ctx.lineTo(h.x + h.w - 1, ty2);
           ctx.stroke();
         }
 
       } else if (roofStyle === 1) {
-        // Hip roof — all four edges slope inward to a smaller rectangle at the top
-        const inset = Math.min(h.w, h.h) * 0.3;
+        // Hip roof — all four edges slope inward
+        const inset = Math.min(h.w, roofH) * 0.3;
 
-        // Four triangular/trapezoidal faces
-        // Bottom face (lighter)
         ctx.fillStyle = roofLight;
         ctx.beginPath();
-        ctx.moveTo(h.x, h.y + h.h);
-        ctx.lineTo(h.x + h.w, h.y + h.h);
-        ctx.lineTo(h.x + h.w - inset, h.y + h.h - inset);
-        ctx.lineTo(h.x + inset, h.y + h.h - inset);
+        ctx.moveTo(h.x,             h.y + roofH);
+        ctx.lineTo(h.x + h.w,       h.y + roofH);
+        ctx.lineTo(h.x + h.w-inset, h.y + roofH - inset);
+        ctx.lineTo(h.x + inset,     h.y + roofH - inset);
         ctx.closePath();
         ctx.fill();
 
-        // Top face (darker)
         ctx.fillStyle = roofDark;
         ctx.beginPath();
-        ctx.moveTo(h.x, h.y);
-        ctx.lineTo(h.x + h.w, h.y);
-        ctx.lineTo(h.x + h.w - inset, h.y + inset);
-        ctx.lineTo(h.x + inset, h.y + inset);
+        ctx.moveTo(h.x,             h.y);
+        ctx.lineTo(h.x + h.w,       h.y);
+        ctx.lineTo(h.x + h.w-inset, h.y + inset);
+        ctx.lineTo(h.x + inset,     h.y + inset);
         ctx.closePath();
         ctx.fill();
 
-        // Left face
         ctx.fillStyle = roofBase;
         ctx.beginPath();
         ctx.moveTo(h.x, h.y);
-        ctx.lineTo(h.x, h.y + h.h);
-        ctx.lineTo(h.x + inset, h.y + h.h - inset);
-        ctx.lineTo(h.x + inset, h.y + inset);
+        ctx.lineTo(h.x, h.y + roofH);
+        ctx.lineTo(h.x + inset,     h.y + roofH - inset);
+        ctx.lineTo(h.x + inset,     h.y + inset);
         ctx.closePath();
         ctx.fill();
 
-        // Right face (slightly lighter)
         ctx.fillStyle = roofLight;
         ctx.globalAlpha = 0.9;
         ctx.beginPath();
-        ctx.moveTo(h.x + h.w, h.y);
-        ctx.lineTo(h.x + h.w, h.y + h.h);
-        ctx.lineTo(h.x + h.w - inset, h.y + h.h - inset);
-        ctx.lineTo(h.x + h.w - inset, h.y + inset);
+        ctx.moveTo(h.x + h.w,       h.y);
+        ctx.lineTo(h.x + h.w,       h.y + roofH);
+        ctx.lineTo(h.x + h.w-inset, h.y + roofH - inset);
+        ctx.lineTo(h.x + h.w-inset, h.y + inset);
         ctx.closePath();
         ctx.fill();
         ctx.globalAlpha = 1;
 
-        // Ridge lines (the four edges from corner to inner rect)
         ctx.strokeStyle = `rgba(0,0,0,${0.2 + nightAlpha * 0.1})`;
         ctx.lineWidth = 0.8;
         ctx.beginPath();
-        ctx.moveTo(h.x, h.y); ctx.lineTo(h.x + inset, h.y + inset);
-        ctx.moveTo(h.x + h.w, h.y); ctx.lineTo(h.x + h.w - inset, h.y + inset);
-        ctx.moveTo(h.x, h.y + h.h); ctx.lineTo(h.x + inset, h.y + h.h - inset);
-        ctx.moveTo(h.x + h.w, h.y + h.h); ctx.lineTo(h.x + h.w - inset, h.y + h.h - inset);
+        ctx.moveTo(h.x,       h.y);       ctx.lineTo(h.x+inset,       h.y+inset);
+        ctx.moveTo(h.x+h.w,   h.y);       ctx.lineTo(h.x+h.w-inset,   h.y+inset);
+        ctx.moveTo(h.x,       h.y+roofH); ctx.lineTo(h.x+inset,       h.y+roofH-inset);
+        ctx.moveTo(h.x+h.w,   h.y+roofH); ctx.lineTo(h.x+h.w-inset,   h.y+roofH-inset);
         ctx.stroke();
 
-        // Inner rectangle outline (the flat top)
-        ctx.strokeStyle = `rgba(0,0,0,${0.15})`;
+        ctx.strokeStyle = `rgba(0,0,0,0.15)`;
         ctx.lineWidth = 0.6;
-        ctx.strokeRect(h.x + inset, h.y + inset, h.w - inset * 2, h.h - inset * 2);
+        ctx.strokeRect(h.x+inset, h.y+inset, h.w-inset*2, roofH-inset*2);
 
       } else {
-        // Gabled rotated — ridge runs top↔bottom, slopes face left and right
-
-        // Right-facing slope (lighter)
+        // Gabled rotated — ridge runs top↔bottom
         ctx.fillStyle = roofLight;
         ctx.beginPath();
-        ctx.moveTo(h.x + h.w, h.y);          // top-right
-        ctx.lineTo(h.x + h.w, h.y + h.h);    // bottom-right
-        ctx.lineTo(cx, h.y + h.h);            // ridge-bottom
-        ctx.lineTo(cx, h.y);                  // ridge-top
+        ctx.moveTo(h.x + h.w, h.y);
+        ctx.lineTo(h.x + h.w, h.y + roofH);
+        ctx.lineTo(cx,         h.y + roofH);
+        ctx.lineTo(cx,         h.y);
         ctx.closePath();
         ctx.fill();
 
-        // Left-facing slope (darker)
         ctx.fillStyle = roofDark;
         ctx.beginPath();
-        ctx.moveTo(h.x, h.y);                // top-left
-        ctx.lineTo(h.x, h.y + h.h);          // bottom-left
-        ctx.lineTo(cx, h.y + h.h);           // ridge-bottom
-        ctx.lineTo(cx, h.y);                 // ridge-top
+        ctx.moveTo(h.x, h.y);
+        ctx.lineTo(h.x, h.y + roofH);
+        ctx.lineTo(cx,  h.y + roofH);
+        ctx.lineTo(cx,  h.y);
         ctx.closePath();
         ctx.fill();
 
-        // Ridge line (vertical)
         ctx.strokeStyle = `rgba(0,0,0,${0.25 + nightAlpha * 0.1})`;
         ctx.lineWidth = 1.2;
         ctx.beginPath();
         ctx.moveTo(cx, h.y);
-        ctx.lineTo(cx, h.y + h.h);
+        ctx.lineTo(cx, h.y + roofH);
         ctx.stroke();
 
-        // Tile lines (vertical rows)
-        ctx.strokeStyle = `rgba(0,0,0,${0.06})`;
+        ctx.strokeStyle = `rgba(0,0,0,0.06)`;
         ctx.lineWidth = 0.4;
-        const tileSpacing = 4;
-        for (let tx = h.x + tileSpacing; tx < h.x + h.w; tx += tileSpacing) {
-          if (Math.abs(tx - cx) < 1) continue;
+        for (let tx2 = h.x + 4; tx2 < h.x + h.w; tx2 += 4) {
+          if (Math.abs(tx2 - cx) < 1) continue;
           ctx.beginPath();
-          ctx.moveTo(tx, h.y + 1);
-          ctx.lineTo(tx, h.y + h.h - 1);
+          ctx.moveTo(tx2, h.y + 1);
+          ctx.lineTo(tx2, h.y + roofH - 1);
           ctx.stroke();
         }
       }
@@ -1934,6 +2224,7 @@ export class CityLayout {
     this.eventPed.x = ex;
     this.eventPed.y = ey;
     this.eventPed.draw(ctx, nightAlpha, 0, false, zoom);
+    ctx.beginPath(); // clear stale path from pedestrian draw
 
     const t = Date.now() / 1000;
     const bounce = Math.abs(Math.sin(t * 4)) * 3;
@@ -2074,79 +2365,52 @@ export class CityLayout {
   /** Draw the static basins — call from buildStaticCanvas. */
   drawFountainBasin(ctx: CanvasRenderingContext2D, nightAlpha: number) {
     const dark = 1 - nightAlpha * 0.4;
-    const nightBloom = 1 - nightAlpha * 0.55; // flowers dim at night
 
-    // Flower / leaf data — fixed per-fountain, seeded by index so they're stable
-    // 8 planting spots evenly around radius 20, each gets a leaf + optional flower
-    const PLANT_R = 20;      // distance from fountain centre
-    const PLANT_COUNT = 8;
-    const FLOWER_COLORS = [
-      [255, 80, 100],   // rose pink
-      [255, 160, 40],   // amber
-      [255, 220, 50],   // yellow
-      [180, 100, 220],  // lavender
-      [255, 120, 60],   // coral
-      [220, 255, 80],   // lime (bud)
-    ];
+    // Small shrubs evenly spaced around each fountain
+    const SHRUB_R = 22;       // distance from fountain centre
+    const SHRUB_COUNT = 6;
 
     for (let fi = 0; fi < this.fountains.length; fi++) {
       const f = this.fountains[fi];
 
-      // ── Greenery ring (drawn first, behind basin) ──────────────────────
-      for (let i = 0; i < PLANT_COUNT; i++) {
-          const angle = (i / PLANT_COUNT) * Math.PI * 2 + fi * 0.4;
-          const px = f.x + Math.cos(angle) * PLANT_R;
-          const py = f.y + Math.sin(angle) * PLANT_R;
+      // ── Shrub ring (drawn first, behind basin) ─────────────────────────
+      for (let i = 0; i < SHRUB_COUNT; i++) {
+        const angle = (i / SHRUB_COUNT) * Math.PI * 2 + fi * 0.4;
+        const px = f.x + Math.cos(angle) * SHRUB_R;
+        const py = f.y + Math.sin(angle) * SHRUB_R;
 
-          // Stem — thin green line from ground up
-          const stemLen = 4.5 + (i % 3) * 1.2;
-          ctx.strokeStyle = `rgba(${Math.floor(60 * dark)},${Math.floor(130 * dark)},${Math.floor(50 * dark)},${0.85 * nightBloom})`;
-          ctx.lineWidth = 0.8;
-          ctx.beginPath();
-          ctx.moveTo(px, py + stemLen * 0.4);
-          ctx.lineTo(px, py - stemLen);
-          ctx.stroke();
+        // Vary size slightly per shrub using a stable offset
+        const sizeVar = 0.85 + ((i * 7 + fi * 3) % 5) * 0.07; // 0.85–1.13
 
-          // Leaf — small ellipse tilted sideways
-          const leafAngle = angle + Math.PI / 2 + (i % 2 === 0 ? 0.3 : -0.3);
-          ctx.save();
-          ctx.translate(px, py);
-          ctx.rotate(leafAngle);
-          ctx.fillStyle = `rgba(${Math.floor(55 * dark)},${Math.floor(145 * dark)},${Math.floor(55 * dark)},${0.8 * nightBloom})`;
-          ctx.beginPath();
-          ctx.ellipse(0, 0, 1.2, 3.5, 0, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.restore();
+        // Shadow beneath shrub
+        ctx.fillStyle = `rgba(0,0,0,${0.18 * dark})`;
+        ctx.beginPath();
+        ctx.ellipse(px + 1.2, py + 1.2, 4.5 * sizeVar, 3.2 * sizeVar, 0, 0, Math.PI * 2);
+        ctx.fill();
 
-          // Flower head — every other plant gets a bloom, alternating colour
-          if (i % 2 === 0) {
-            const col = FLOWER_COLORS[(i / 2 + fi * 3) % FLOWER_COLORS.length];
-            const petalR = 2.0 + (i % 3) * 0.4;
+        // Dark inner mass — gives the shrub volume
+        const g1 = Math.floor(62 * dark);
+        const g2 = Math.floor(98 * dark);
+        const g3 = Math.floor(52 * dark);
+        ctx.fillStyle = `rgb(${g1},${g2},${g3})`;
+        ctx.beginPath();
+        ctx.arc(px, py, 4.2 * sizeVar, 0, Math.PI * 2);
+        ctx.fill();
 
-            // 5 petals
-            for (let p = 0; p < 5; p++) {
-              const pa = (p / 5) * Math.PI * 2;
-              ctx.fillStyle = `rgba(${Math.floor(col[0] * dark)},${Math.floor(col[1] * dark)},${Math.floor(col[2] * dark)},${0.85 * nightBloom})`;
-              ctx.beginPath();
-              ctx.ellipse(
-                px + Math.cos(pa) * petalR * 0.9,
-                py - stemLen + Math.sin(pa) * petalR * 0.9,
-                petalR * 0.7, petalR * 0.5, pa, 0, Math.PI * 2
-              );
-              ctx.fill();
-            }
-            // Centre dot
-            ctx.fillStyle = `rgba(255,230,${Math.floor(80 * dark)},${0.9 * nightBloom})`;
-            ctx.beginPath();
-            ctx.arc(px, py - stemLen, 1.1, 0, Math.PI * 2);
-            ctx.fill();
-          } else {
-            // Bud — closed teardrop on non-flower plants
-            ctx.fillStyle = `rgba(${Math.floor(80 * dark)},${Math.floor(160 * dark)},${Math.floor(70 * dark)},${0.7 * nightBloom})`;
-            ctx.beginPath();
-            ctx.arc(px, py - stemLen, 1.4, 0, Math.PI * 2);
-            ctx.fill();
-          }
+        // Mid-green highlight lobe (offset N-W to show rounded top)
+        const h1 = Math.floor(78 * dark);
+        const h2 = Math.floor(128 * dark);
+        const h3 = Math.floor(64 * dark);
+        ctx.fillStyle = `rgb(${h1},${h2},${h3})`;
+        ctx.beginPath();
+        ctx.ellipse(px - 0.8, py - 0.8, 2.8 * sizeVar, 2.4 * sizeVar, -0.5, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Bright top specular dot
+        ctx.fillStyle = `rgba(${Math.floor(130 * dark)},${Math.floor(185 * dark)},${Math.floor(100 * dark)},0.55)`;
+        ctx.beginPath();
+        ctx.arc(px - 1.0, py - 1.2, 1.3 * sizeVar, 0, Math.PI * 2);
+        ctx.fill();
       }
 
       // ── Basin rim (stone) ───────────────────────────────────────────────
@@ -2391,6 +2655,7 @@ export class CityLayout {
     for (const ped of this.bandMembers) {
       ped.draw(ctx, nightAlpha, 0, true /* isDancing */, zoom);
     }
+    ctx.beginPath(); // clear any stale path left by the last band member draw
 
     // ── Instrument overlays ────────────────────────────────────────────────
     for (const ped of this.bandMembers) {
@@ -2487,6 +2752,158 @@ export class CityLayout {
     ctx.restore();
   }
 
+  updatePuddles(weatherType: string, weatherIntensity: number) {
+    const isWet = ['rain', 'heavy_rain', 'drizzle', 'thunderstorm', 'hail'].includes(weatherType);
+    if (isWet) {
+      this.puddleIntensity = Math.min(1, this.puddleIntensity + weatherIntensity * 0.004);
+    } else {
+      this.puddleIntensity = Math.max(0, this.puddleIntensity - 0.0004);
+    }
+  }
+
+  drawPuddles(ctx: CanvasRenderingContext2D, nightAlpha: number, time: number) {
+    if (this.puddleIntensity < 0.02) return;
+    const a = this.puddleIntensity * 0.55;
+    const ripplePhase = time * 0.9;
+    ctx.save();
+    for (const road of this.roads) {
+      const count = Math.min(10, Math.floor((road.w * road.h) / 450));
+      for (let i = 0; i < count; i++) {
+        const px = road.x + seededRandom(road.x * 7 + road.y * 3 + i * 17 + 11) * road.w;
+        const py = road.y + seededRandom(road.x * 11 + road.y * 7 + i * 23 + 13) * road.h;
+        const pr = (4 + seededRandom(road.x * 13 + i * 31 + 7) * 9) * this.puddleIntensity;
+        // Sky-reflection tint — blueish in day, darker at night
+        const rr = Math.floor((70 + 50 * (1 - nightAlpha)) * 1);
+        const rg = Math.floor((90 + 55 * (1 - nightAlpha)) * 1);
+        const rb = Math.floor((130 + 70 * (1 - nightAlpha)) * 1);
+        ctx.fillStyle = `rgba(${rr}, ${rg}, ${rb}, ${a * 0.75})`;
+        ctx.beginPath();
+        ctx.ellipse(px, py, pr, pr * 0.35, 0, 0, Math.PI * 2);
+        ctx.fill();
+        // Specular highlight
+        ctx.fillStyle = `rgba(255, 255, 255, ${a * 0.28})`;
+        ctx.beginPath();
+        ctx.ellipse(px - pr * 0.18, py - pr * 0.1, pr * 0.32, pr * 0.11, 0, 0, Math.PI * 2);
+        ctx.fill();
+        // Animated ripple ring when actively raining
+        if (this.puddleIntensity > 0.25) {
+          const ripR = pr * (0.85 + 0.28 * Math.sin(ripplePhase + i * 2.3));
+          ctx.strokeStyle = `rgba(255, 255, 255, ${a * 0.13})`;
+          ctx.lineWidth = 0.5;
+          ctx.beginPath();
+          ctx.ellipse(px, py, ripR, ripR * 0.33, 0, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+      }
+    }
+    ctx.restore();
+  }
+
+  drawOutdoorSeating(ctx: CanvasRenderingContext2D, nightAlpha: number, weatherType: string, time: number) {
+    const isRainy = ['rain', 'heavy_rain', 'drizzle', 'thunderstorm', 'hail', 'snow', 'heavy_snow'].includes(weatherType);
+    const hour = new Date().getHours() + new Date().getMinutes() / 60;
+    const isOpen = hour >= 7.5 && hour < 22.5;
+    const dark = 1 - nightAlpha * 0.48;
+    // Use a 5-minute time bucket so occupancy shifts gradually, not every frame
+    const timeBucket = Math.floor(time / 300);
+
+    for (const v of this.venues) {
+      if (v.type !== 'cafe' && v.type !== 'restaurant') continue;
+      if (!isOpen) continue;
+
+      const tableCount = 2 + Math.floor(seededRandom(v.seed + 5000) * 2); // 2–3 tables
+      const spacing = 17;
+
+      for (let t = 0; t < tableCount; t++) {
+        // Place tables outside the entrance face of the venue
+        let tx: number, ty: number;
+        switch (v.facingPlaza) {
+          case 'bottom': tx = v.x + v.w * 0.18 + t * spacing; ty = v.y + v.h + 5; break;
+          case 'top':    tx = v.x + v.w * 0.18 + t * spacing; ty = v.y - 17;       break;
+          case 'right':  tx = v.x + v.w + 5;  ty = v.y + v.h * 0.18 + t * spacing; break;
+          default:       tx = v.x - 17;       ty = v.y + v.h * 0.18 + t * spacing; break;
+        }
+
+        const ta = Math.max(0.3, 0.88 - nightAlpha * 0.38);
+
+        // Umbrella (cafe only, during daytime)
+        if (v.type === 'cafe' && nightAlpha < 0.45) {
+          const umbColors = ['#e63946', '#f4a261', '#2a9d8f', '#e9c46a', '#4a9eff', '#c77dff'];
+          const uc = umbColors[Math.floor(seededRandom(v.seed + t * 7 + 5100) * umbColors.length)];
+          const ur = parseInt(uc.slice(1, 3), 16);
+          const ug = parseInt(uc.slice(3, 5), 16);
+          const ub = parseInt(uc.slice(5, 7), 16);
+          ctx.fillStyle = `rgba(${Math.floor(ur * dark)}, ${Math.floor(ug * dark)}, ${Math.floor(ub * dark)}, ${ta * 0.82})`;
+          ctx.beginPath();
+          ctx.arc(tx + 5, ty + 5, 8, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = `rgba(0,0,0,${0.08 * dark})`;
+          ctx.lineWidth = 0.4;
+          for (let sp = 0; sp < 6; sp++) {
+            const a = (sp / 6) * Math.PI * 2;
+            ctx.beginPath();
+            ctx.moveTo(tx + 5, ty + 5);
+            ctx.lineTo(tx + 5 + Math.cos(a) * 8, ty + 5 + Math.sin(a) * 8);
+            ctx.stroke();
+          }
+          // Umbrella pole
+          ctx.strokeStyle = `rgba(${Math.floor(120 * dark)}, ${Math.floor(100 * dark)}, ${Math.floor(80 * dark)}, 0.7)`;
+          ctx.lineWidth = 0.7;
+          ctx.beginPath();
+          ctx.moveTo(tx + 5, ty + 5);
+          ctx.lineTo(tx + 5, ty + 12);
+          ctx.stroke();
+        }
+
+        // Table top (small circle)
+        ctx.fillStyle = `rgba(${Math.floor(205 * dark)}, ${Math.floor(190 * dark)}, ${Math.floor(165 * dark)}, ${ta})`;
+        ctx.beginPath();
+        ctx.arc(tx + 5, ty + 7, 4.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = `rgba(0,0,0,${0.18 * dark})`;
+        ctx.lineWidth = 0.5;
+        ctx.stroke();
+
+        // Chairs (4 around the table)
+        ctx.fillStyle = `rgba(${Math.floor(155 * dark)}, ${Math.floor(122 * dark)}, ${Math.floor(85 * dark)}, ${ta})`;
+        for (const [cx, cy] of [[-7, 3], [17, 3], [2, -5], [2, 15]] as [number, number][]) {
+          ctx.fillRect(tx + cx, ty + cy, 4, 4);
+        }
+
+        // Seated figures — only when weather is fine
+        if (!isRainy) {
+          const occupied = seededRandom(v.seed + t * 97 + timeBucket * 53) < (isOpen ? 0.68 : 0.1);
+          if (occupied) {
+            // Pick a consistent but varied skin / clothing per seat
+            const skins = ['#f4c59d', '#d4906b', '#c07844', '#8b5e3c', '#f5deb3'];
+            const skin = skins[Math.floor(seededRandom(v.seed + t * 19 + timeBucket) * skins.length)];
+            const sr = parseInt(skin.slice(1, 3), 16);
+            const sg = parseInt(skin.slice(3, 5), 16);
+            const sb = parseInt(skin.slice(5, 7), 16);
+            const bodyColors = ['#3a5a9c', '#9c3a3a', '#3a9c5a', '#9c7a3a', '#7a3a9c', '#4a4a7c'];
+            const bc = bodyColors[Math.floor(seededRandom(v.seed + t * 31 + timeBucket) * bodyColors.length)];
+            const br = parseInt(bc.slice(1, 3), 16);
+            const bg2 = parseInt(bc.slice(3, 5), 16);
+            const bb = parseInt(bc.slice(5, 7), 16);
+            // Body blob
+            ctx.fillStyle = `rgb(${Math.floor(br * dark)}, ${Math.floor(bg2 * dark)}, ${Math.floor(bb * dark)})`;
+            ctx.beginPath();
+            ctx.ellipse(tx + 5, ty + 7, 3, 2.5, 0, 0, Math.PI * 2);
+            ctx.fill();
+            // Head
+            ctx.fillStyle = `rgb(${Math.floor(sr * dark)}, ${Math.floor(sg * dark)}, ${Math.floor(sb * dark)})`;
+            ctx.beginPath();
+            ctx.arc(tx + 5, ty + 3.5, 2.1, 0, Math.PI * 2);
+            ctx.fill();
+            // Coffee/drink cup on table edge
+            ctx.fillStyle = `rgba(${Math.floor(230 * dark)}, ${Math.floor(218 * dark)}, ${Math.floor(200 * dark)}, 0.9)`;
+            ctx.fillRect(tx + 8, ty + 5, 2, 3);
+          }
+        }
+      }
+    }
+  }
+
   drawBusker(ctx: CanvasRenderingContext2D, nightAlpha: number, zoom: number = 1) {
     if (!this.buskerActive || !this.buskerPed) return;
     ctx.beginPath(); // guard against stale path from previous draw call
@@ -2513,6 +2930,7 @@ export class CityLayout {
     this.buskerPed.x = this.buskerX;
     this.buskerPed.y = this.buskerY;
     this.buskerPed.draw(ctx, nightAlpha, 0, false, zoom);
+    ctx.beginPath(); // clear any stale path left by pedestrian draw — prevents path bleeding into next ctx.stroke()
 
     // Guitar overlay drawn on top of the pedestrian
     const s = this.buskerPed.size * 5.5;

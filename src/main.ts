@@ -119,6 +119,7 @@ const MAX_ZOOM = 5.0;
 
 // Current slider values (for live adjustment without full resize)
 let currentCarCount = TOTAL_CARS;
+let lastRushHourSegment = -1; // tracks 10-min time segments for density auto-adjustment
 let currentPedCount = TOTAL_PEDESTRIANS;
 
 // Alarm state
@@ -793,6 +794,7 @@ function buildStaticCanvas(nightAlpha: number) {
   layout.drawFountainBasin(sctx, nightAlpha);
   layout.drawShadows(sctx, nightAlpha);
   layout.drawBuildings(sctx, nightAlpha);
+  layout.drawBuildingRooftops(sctx, nightAlpha);
   layout.drawHouses(sctx, nightAlpha);
   // House windows — baked into static canvas so lit windows are stable bloom
   // sources. At deep night all residents are home; using a full set avoids
@@ -834,6 +836,26 @@ function loop(timestamp: number = 0) {
 
   // Update weather
   weather.update();
+
+  // Rush-hour density — auto-adjust pedestrian and car counts every 10 minutes
+  {
+    const _h = new Date();
+    const hour = _h.getHours() + _h.getMinutes() / 60;
+    const segment = Math.floor(hour * 6); // 10-minute granularity
+    if (segment !== lastRushHourSegment) {
+      lastRushHourSegment = segment;
+      let pedMult: number, carMult: number;
+      if      (hour < 5)  { pedMult = 0.22; carMult = 0.15; } // dead of night
+      else if (hour < 7)  { pedMult = 0.48; carMult = 0.45; } // early morning
+      else if (hour < 9)  { pedMult = 1.30; carMult = 1.40; } // morning rush hour
+      else if (hour < 17) { pedMult = 1.00; carMult = 1.00; } // working day
+      else if (hour < 19) { pedMult = 1.28; carMult = 1.35; } // evening rush hour
+      else if (hour < 22) { pedMult = 0.75; carMult = 0.60; } // evening wind-down
+      else                { pedMult = 0.35; carMult = 0.28; } // late night
+      adjustPedCount(Math.round(TOTAL_PEDESTRIANS * pedMult));
+      adjustCarCount(Math.round(TOTAL_CARS * carMult));
+    }
+  }
 
   // Follow camera — smoothly pan to keep the selected pedestrian centred
   if (followedPedestrian) {
@@ -881,6 +903,7 @@ function loop(timestamp: number = 0) {
 
   // Venue labels — drawn live in world space so text is rasterised at current zoom, never upscaled
   layout.drawVenueLabels(ctx, nightAlpha);
+  layout.drawOutdoorSeating(ctx, nightAlpha, weather.type, time);
 
   // Time-of-day atmosphere (mist, golden hour, Sunday tint) — world space, under everything
   dayNight.drawAtmosphere(ctx, layout.width, layout.height, nightAlpha);
@@ -894,6 +917,10 @@ function loop(timestamp: number = 0) {
     }
     drawHolidayDecorations(ctx, layout, nightAlpha, time, activeHoliday);
   }
+
+  // Puddles — update fill/evaporation, then draw on roads under everything
+  layout.updatePuddles(weather.type, weather.intensity);
+  layout.drawPuddles(ctx, nightAlpha, time);
 
   // Chimney smoke — above rooftops, below everything else
   chimneySmoke.update();
