@@ -22,32 +22,19 @@ document.addEventListener('touchstart', () => audioEngine.resume(), { once: true
 
 // Cached screen-space gradients — rebuilt only on resize, not every frame.
 // Creating new gradient objects each frame is CPU-heavy on Safari (not GPU-accelerated).
-let cachedVignette: CanvasGradient | null = null;
-let cachedTiltTop: CanvasGradient | null = null;
-let cachedTiltBot: CanvasGradient | null = null;
 let cachedWetSheen: CanvasGradient | null = null;
 let cachedGradientW = 0;
 let cachedGradientH = 0;
 
 function rebuildCachedGradients() {
-  const vw = canvas.width, vh = canvas.height;
-  cachedVignette = ctx.createRadialGradient(vw / 2, vh / 2, vh * 0.18, vw / 2, vh / 2, vw * 0.72);
-  cachedVignette.addColorStop(0, 'rgba(0, 0, 0, 0)');
-  cachedVignette.addColorStop(1, 'rgba(0, 0, 0, 0.36)');
-  const bandH = vh * 0.18;
-  cachedTiltTop = ctx.createLinearGradient(0, 0, 0, bandH);
-  cachedTiltTop.addColorStop(0, 'rgba(200, 210, 220, 0.38)');
-  cachedTiltTop.addColorStop(1, 'rgba(200, 210, 220, 0)');
-  cachedTiltBot = ctx.createLinearGradient(0, vh - bandH, 0, vh);
-  cachedTiltBot.addColorStop(0, 'rgba(200, 210, 220, 0)');
-  cachedTiltBot.addColorStop(1, 'rgba(200, 210, 220, 0.38)');
+  const vw = canvas.width;
   cachedWetSheen = ctx.createLinearGradient(0, 0, vw, 0);
   cachedWetSheen.addColorStop(0,   'rgba(100,130,180,0)');
   cachedWetSheen.addColorStop(0.3, 'rgba(140,170,220,1)');
   cachedWetSheen.addColorStop(0.7, 'rgba(100,130,180,1)');
   cachedWetSheen.addColorStop(1,   'rgba(100,130,180,0)');
   cachedGradientW = vw;
-  cachedGradientH = vh;
+  cachedGradientH = canvas.height;
 }
 
 let layout: CityLayout;
@@ -1174,22 +1161,6 @@ function loop(timestamp: number = 0) {
     rebuildCachedGradients();
   }
 
-  // Vignette — subtle radial darkening at the screen edges to frame the scene
-  {
-    const vw = canvas.width, vh = canvas.height;
-    ctx.fillStyle = cachedVignette!;
-    ctx.fillRect(0, 0, vw, vh);
-  }
-
-  // Tilt-shift diorama effect — fog bands at top and bottom (18% vh)
-  {
-    const vw = canvas.width, vh = canvas.height;
-    const bandH = vh * 0.18;
-    ctx.fillStyle = cachedTiltTop!;
-    ctx.fillRect(0, 0, vw, bandH);
-    ctx.fillStyle = cachedTiltBot!;
-    ctx.fillRect(0, vh - bandH, vw, bandH);
-  }
 
   // Update audio
   if (audioEngine.isActive) {
