@@ -197,7 +197,6 @@ Several passes work together to give the city depth and visual polish:
 - **Plaza paving** — a two-tone checkerboard floor (40px tiles), visible grout lines, a double inset perimeter border, and a central compass rose (concentric rings, 8 spokes, 4 cardinal lines) baked into the static canvas at zero runtime cost
 - **Road kerb lines** — a thin white edge stroke around every road rectangle defines the curb/gutter boundary and gives the road network visual structure
 - **Screen vignette** — a radial gradient from transparent at the centre to 36% black at the screen edges, drawn last in screen space; frames the city, gives it weight, and makes the plaza pop as the focal point
-- **Film grain** — a pre-generated 256×256 noise canvas is tiled over the full physical canvas at a random offset using `source-over` blend. Tiling coordinates use `canvas.width`/`canvas.height` (physical pixels) at the identity transform. Offset advances every 4th frame (~15 fps), below the flicker-fusion threshold. Subtly stronger at night
 - **Procedural audio** — all sounds are synthesised via the Web Audio API (no MP3s): rain (pink noise filtered to match drizzle → thunderstorm intensity), fountain spray (white noise highpass), bird song (sparrow chirps, pigeon coos, robin sequences), thunder, and wailing police/fire sirens (LFO-modulated oscillator). Starts muted; toggle on/off via the Sound button in Settings. AudioContext is created lazily on first user interaction to satisfy browser autoplay policies. Lamp glow halos use `screen` compositing so overlapping lights stay crisp at night on all browsers including Safari
 - **Time-of-day atmosphere** — morning mist (5–9am), golden hour amber (17–20h), and Sunday quiet blue tint, all composited in world space before the main dynamic layer
 
@@ -207,8 +206,7 @@ Several passes work together to give the city depth and visual polish:
 2. **Dynamic layer** - venue name labels, atmosphere overlays, holiday decorations, chimney smoke, roadside bins, market stalls, newspaper stand, busker pitch, fountain spray particles, cars, pedestrians, dogs, dropped packages, construction crane, bird shadows, animated tree sway, and birds (drawn above weather with parallax height)
 3. **Light pass** - street lights, plaza lamp glows, and car headlight beams drawn after the night overlay using `screen` compositing so overlapping halos brighten toward white rather than accumulating into an opaque fog wash (fixes a Safari-specific rendering artefact)
 4. **Atmosphere pass** - fog tendrils (two drifting noise layers) and wet road sheen composited in screen space after world-space weather
-5. **Film grain pass** - 256×256 tiled noise canvas covering the full physical canvas, `source-over` blend at ~2.5–4.5% opacity, offset advanced every 4th frame
-6. **Vignette pass** - screen-space radial gradient drawn last over everything to frame the scene
+5. **Vignette pass** - screen-space radial gradient drawn last over everything to frame the scene
 7. **DPR-aware** - canvas resolution scales with devicePixelRatio (capped at 2x) for crisp rendering on Retina displays; static canvas uses `imageSmoothingQuality = 'medium'` during zoom gestures
 
 ### Battery & Performance
@@ -219,7 +217,6 @@ City Clock is designed to run efficiently as an always-on wallpaper or bedside c
 - **Visibility pause** - the loop stops entirely when the tab is hidden or the screen is off (via the Page Visibility API), dropping power draw to near zero when no one is watching
 - **Cloud caching** - each cloud is pre-rendered to an offscreen canvas and cached; only rebuilt when storm intensity changes the cloud colour. Eliminates ~200 `createRadialGradient` calls per frame
 - **Gradient caching** - vignette, tilt, and wet-sheen gradients are created once and reused every frame; rebuilt only on canvas resize. Eliminates thousands of GC objects per minute that previously caused Safari to slow down over time
-- **DOMMatrix reuse** - the film grain pattern transform reuses a single `DOMMatrix` instance per frame, mutating `.e`/`.f` in place rather than allocating a new object. Eliminates ~7,200 GC allocations per minute
 - **Spatial grid** - pedestrian separation checks use a `SpatialGrid` structure for O(n) neighbour queries instead of O(n²) brute-force iteration
 - **In-place array cleanup** - all particle and entity arrays are compacted with reverse-splice rather than `.filter()`, avoiding per-frame array allocations
 - **Idle particle skip** - the 2000-particle rain pool is only iterated while `alpha > 0.01`; fully settled clear weather skips the loop entirely. During cross-fade transitions the pool keeps animating so particles fade out naturally rather than disappearing mid-fall

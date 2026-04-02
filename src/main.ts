@@ -6,7 +6,6 @@ import { ChimneySmoke } from './rendering/ChimneySmoke';
 import { ClockManager } from './clock/ClockManager';
 import { DayNightCycle } from './rendering/DayNightCycle';
 import { Weather } from './rendering/Weather';
-// import { PostProcess } from './rendering/PostProcess';
 import { AudioEngine } from './rendering/AudioEngine';
 import { getActiveHoliday, drawHolidayDecorations, type Holiday } from './rendering/HolidayDecorations';
 import { TOTAL_PEDESTRIANS, CLOCK_ELIGIBLE_COUNT, TOTAL_CARS, setTotalPedestrians, setTotalCars, SEPARATION_RADIUS } from './utils/constants';
@@ -15,36 +14,11 @@ import { SpatialGrid } from './utils/SpatialGrid';
 const canvas = document.getElementById('cityCanvas') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d', { alpha: false })!;
 
-// --- Post-processing bloom overlay (disabled — WebGL2 texSubImage2D is slow on Safari) ---
-// const postProcess = new PostProcess(canvas);
-
 // --- Procedural audio ---
 const audioEngine = new AudioEngine();
 document.addEventListener('click', () => audioEngine.resume(), { once: true });
 document.addEventListener('touchstart', () => audioEngine.resume(), { once: true });
 
-// --- Film grain — single CanvasPattern tile, offset via setTransform ---
-// Using createPattern + one fillRect instead of tiling drawImage calls.
-// On mobile Safari, each drawImage call is expensive; one fillRect with a
-// repeating pattern is GPU-accelerated and has no per-tile overhead.
-const grainCanvas = (() => {
-  const gc = document.createElement('canvas');
-  gc.width = gc.height = 256;
-  const gx = gc.getContext('2d')!;
-  const img = gx.createImageData(256, 256);
-  for (let i = 0; i < img.data.length; i += 4) {
-    const v = Math.floor(Math.random() * 255);
-    img.data[i] = img.data[i + 1] = img.data[i + 2] = v;
-    img.data[i + 3] = 255;
-  }
-  gx.putImageData(img, 0, 0);
-  return gc;
-})();
-let grainPattern: CanvasPattern | null = null; // created lazily after ctx is ready
-let grainOffset = { x: 0, y: 0 };
-let grainFrame = 0; // throttle grain updates to ~15fps so it reads as texture, not noise
-// Reused DOMMatrix for grain offset — avoids allocating a new object every frame (7k+/min GC pressure)
-const _grainMatrix = new DOMMatrix();
 
 // Cached screen-space gradients — rebuilt only on resize, not every frame.
 // Creating new gradient objects each frame is CPU-heavy on Safari (not GPU-accelerated).
@@ -796,9 +770,9 @@ function buildStaticCanvas(nightAlpha: number) {
   layout.drawBuildings(sctx, nightAlpha);
   layout.drawBuildingRooftops(sctx, nightAlpha);
   layout.drawHouses(sctx, nightAlpha);
-  // House windows — baked into static canvas so lit windows are stable bloom
+  // House windows — baked into static canvas so lit windows are stable light
   // sources. At deep night all residents are home; using a full set avoids
-  // per-frame occupancy changes that caused bloom shimmer.
+  // per-frame occupancy changes that caused window shimmer.
   if (nightAlpha > 0.05) {
     const allHouseIndices = new Set(layout.houses.map((_, i) => i));
     layout.drawHouseWindows(sctx, nightAlpha, allHouseIndices);
@@ -1194,32 +1168,6 @@ function loop(timestamp: number = 0) {
   // Wet road sheen — pass cached gradient so Weather doesn't create one per frame
   weather.drawWetSheen(ctx, canvas.width, canvas.height, cachedWetSheen);
 
-  // WebGL2 bloom disabled — Safari's Metal backend has no fast-path for the
-  // Canvas2D→WebGL texSubImage2D upload, causing significant per-frame slowdown.
-
-  // Film grain — drawn AFTER bloom so grain noise is never fed into the bloom
-  // extractor. Use source-over (GPU-accelerated); overlay is software-rendered.
-  // Advance offset every 4th frame (~15fps) — below flicker-fusion threshold so
-  // grain reads as static film texture rather than boiling noise.
-  // IMPORTANT: use canvas.width/canvas.height (physical pixels), NOT divided by dpr.
-  // At DPR=2 the loop runs in physical pixel space (identity transform) — dividing
-  // by dpr caused grain to only tile the top-left quarter of the canvas, leaving a
-  // hard seam at ~54% width / ~55% height that flickered every 4th frame.
-  grainFrame++;
-  if (grainFrame % 4 === 0) {
-    grainOffset.x = Math.random() * 256;
-    grainOffset.y = Math.random() * 256;
-  }
-  if (!grainPattern) grainPattern = ctx.createPattern(grainCanvas, 'repeat')!;
-  _grainMatrix.e = grainOffset.x % 256;
-  _grainMatrix.f = grainOffset.y % 256;
-  grainPattern.setTransform(_grainMatrix);
-  ctx.save();
-  ctx.globalAlpha = 0.025 + nightAlpha * 0.02;
-  ctx.globalCompositeOperation = 'source-over';
-  ctx.fillStyle = grainPattern;
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.restore();
 
   // Rebuild cached gradients on first frame or if canvas was resized
   if (canvas.width !== cachedGradientW || canvas.height !== cachedGradientH) {

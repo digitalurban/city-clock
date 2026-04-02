@@ -2515,6 +2515,8 @@ export class CityLayout {
       ped.x = this.bandstandX + offset;
       ped.y = this.bandstandY;
       ped.angle = Math.PI * 0.5; // face south (down-screen) toward the plaza audience
+      ped.hasDog = false;        // band members never have dogs — dogX/dogY starts at (0,0)
+      ped.hasBicycle = false;    // and no bicycles while performing
       ped.instrument = instruments[i];
       this.bandMembers.push(ped);
     }
@@ -2653,6 +2655,7 @@ export class CityLayout {
 
     // ── Band members (drawn as pedestrians dancing) ───────────────────────
     for (const ped of this.bandMembers) {
+      ped.angle = Math.PI * 0.5; // re-enforce south-facing each frame
       ped.draw(ctx, nightAlpha, 0, true /* isDancing */, zoom);
     }
     ctx.beginPath(); // clear any stale path left by the last band member draw
