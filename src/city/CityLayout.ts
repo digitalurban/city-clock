@@ -1370,40 +1370,37 @@ export class CityLayout {
       ctx.lineWidth = 1;
       ctx.strokeRect(b.x, b.y, b.w, b.h);
 
-      // Windows + glow at night
+      // Windows at night — sparse lit windows only (office buildings are mostly dark at night)
       if (nightAlpha > 0.1) {
         const hour = new Date().getHours() + new Date().getMinutes() / 60;
-        // Time-quantised seed changes every 20 minutes so windows "go dark" as night progresses
+        // Time-quantised seed changes every 20 minutes so windows shift gradually
         const timeSlot = Math.floor(hour * 3);
-        let litChance = 0.30;
-        if (hour >= 23 || hour < 5) litChance = 0.12;
-        else if (hour >= 20 || hour < 6) litChance = 0.38;
-        else if (hour >= 18) litChance = 0.55;
+        // Realistic office occupancy: very few lights after hours
+        let litChance = 0.06;
+        if (hour >= 23 || hour < 6) litChance = 0.03;      // deep night — almost all dark
+        else if (hour >= 20) litChance = 0.05;              // late evening
+        else if (hour >= 17) litChance = 0.10;              // end of business day, some people still in
 
-        const winSize = 5;
-        const winGap = 8;
-        const winAlpha = Math.min(1, nightAlpha * 1.6);
+        const winSize = 4;
+        const winGap = 9;  // slightly wider gap = less total windows rendered
+        const winAlpha = Math.min(1, nightAlpha * 1.8);
         // Windows sit on the roof interior, inside the parapet
         const wp = Math.max(4, Math.min(7, Math.floor(Math.min(b.w, b.h) * 0.09)));
-        for (let wx = b.x + wp + 2; wx < b.x + b.w - wp - 2; wx += winGap) {
-          for (let wy = b.y + wp + 2; wy < b.y + b.h - wp - 2; wy += winGap) {
+        for (let wx = b.x + wp + 3; wx < b.x + b.w - wp - 3; wx += winGap) {
+          for (let wy = b.y + wp + 3; wy < b.y + b.h - wp - 3; wy += winGap) {
             const isLit = seededRandom(b.windowSeed + wx * 7 + wy * 13 + timeSlot * 3001) < litChance;
             if (isLit) {
               const warmth = seededRandom(b.windowSeed + wx * 3 + wy * 11);
               let wr2: number, wg2: number, wb2: number;
-              if (warmth > 0.4) { wr2 = 255; wg2 = 215; wb2 = 110; }        // warm incandescent
-              else if (warmth > 0.15) { wr2 = 180; wg2 = 220; wb2 = 255; } // cool daylight
-              else { wr2 = 140; wg2 = 180; wb2 = 255; }                     // blue TV glow
+              if (warmth > 0.55) { wr2 = 255; wg2 = 218; wb2 = 120; }      // warm incandescent
+              else if (warmth > 0.2) { wr2 = 180; wg2 = 220; wb2 = 255; } // cool office daylight
+              else { wr2 = 140; wg2 = 180; wb2 = 255; }                    // blue screen glow
               ctx.fillStyle = `rgba(${wr2}, ${wg2}, ${wb2}, ${winAlpha})`;
               ctx.fillRect(wx, wy, winSize, winSize);
-              // Soft halo — makes the glow bleed into the dark facade
-              const gr = ctx.createRadialGradient(wx + winSize / 2, wy + winSize / 2, 0, wx + winSize / 2, wy + winSize / 2, 9);
-              gr.addColorStop(0, `rgba(${wr2}, ${wg2}, ${wb2}, ${nightAlpha * 0.18})`);
-              gr.addColorStop(1, `rgba(${wr2}, ${wg2}, ${wb2}, 0)`);
-              ctx.fillStyle = gr;
-              ctx.fillRect(wx - 4, wy - 4, winSize + 8, winSize + 8);
-            } else if (nightAlpha > 0.3) {
-              ctx.fillStyle = `rgba(10, 10, 20, ${nightAlpha * 0.25})`;
+              // No per-window radial halo — it accumulates into building-wide fog
+            } else if (nightAlpha > 0.35) {
+              // Dark recess for unlit windows — subtle, not too heavy
+              ctx.fillStyle = `rgba(8, 8, 18, ${nightAlpha * 0.18})`;
               ctx.fillRect(wx, wy, winSize, winSize);
             }
           }

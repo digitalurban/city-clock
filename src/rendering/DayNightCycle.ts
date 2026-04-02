@@ -31,8 +31,8 @@ export class DayNightCycle {
 
   drawNightOverlay(ctx: CanvasRenderingContext2D, w: number, h: number, nightAlpha: number) {
     if (nightAlpha < 0.01) return;
-    // Dark blue overlay — strong enough for night feel but not murky
-    ctx.fillStyle = `rgba(5, 8, 22, ${nightAlpha * 0.75})`;
+    // Dark overlay — deep night without blue-haze murkiness
+    ctx.fillStyle = `rgba(2, 4, 12, ${nightAlpha * 0.65})`;
     ctx.fillRect(0, 0, w, h);
   }
 
