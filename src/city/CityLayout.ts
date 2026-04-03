@@ -2279,6 +2279,8 @@ export class CityLayout {
     this.eventPed = new Pedestrian(this, 9001, 0);
     this.eventPed.vx = this.eventPed.vy = 0;
     this.eventPed.angle = 0;
+    this.eventPed.hasDog = false;
+    this.eventPed.hasBicycle = false;
   }
 
   updateEvent() {
@@ -2380,6 +2382,8 @@ export class CityLayout {
     this.buskerPed = new Pedestrian(this, 9000, 0);
     this.buskerPed.vx = this.buskerPed.vy = 0;
     this.buskerPed.angle = 0; // facing east (toward audience)
+    this.buskerPed.hasDog = false;    // busker never has a dog — dogX/dogY starts at (0,0)
+    this.buskerPed.hasBicycle = false;
   }
 
   /** Call once per frame — manages busker lifecycle, coin arcs and music notes. */

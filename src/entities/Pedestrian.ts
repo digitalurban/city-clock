@@ -453,6 +453,7 @@ export class Pedestrian {
           this.isQueuing || this.socialMode || this.isSheltering || this.isAtWorkplace ||
           this.isWindowShopping || this.isCheckingPhone || this.isTakingPhoto ||
           this.isWatchingBusker || this.isBuyingPaper || this.isBrowsingMarket || this.isInGarden) {
+        if (this.isAtHome && this.hasDog) { this.dogX = this.x; this.dogY = this.y; }
         this.isAtHome = false;
         this.isGoingHome = false;
         this.homePath = [];
@@ -919,6 +920,8 @@ export class Pedestrian {
             this.isInGarden = false;
             this.thoughtBubble = 'happy';
             this.thoughtTimer = 100;
+            // Snap dog to owner position so leash doesn't stretch from (0,0)
+            if (this.hasDog) { this.dogX = this.x; this.dogY = this.y; }
 
             // Walk back out to sidewalk via garden path
             if (home && home.gardenPathEnd) {
@@ -1953,6 +1956,10 @@ export class Pedestrian {
 
     // Draw dog (in world space, after restoring owner transform)
     if (this.hasDog && !this.isAtHome && ctx.globalAlpha > 0.2) {
+      // Snap dog if it somehow drifted far from owner (prevents long stray leash lines)
+      if (Math.hypot(this.dogX - this.x, this.dogY - this.y) > 60) {
+        this.dogX = this.x; this.dogY = this.y;
+      }
       ctx.save();
       ctx.translate(this.dogX, this.dogY);
       // Dog faces same direction as owner (walking ahead)
