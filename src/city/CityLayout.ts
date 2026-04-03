@@ -1947,7 +1947,6 @@ export class CityLayout {
 
       // Grass
       const grassGreen = Math.floor(140 * darkFactor);
-      const grassBase = Math.floor(100 * darkFactor);
       ctx.fillStyle = `rgb(${Math.floor(80 * darkFactor)}, ${grassGreen}, ${Math.floor(60 * darkFactor)})`;
       ctx.fillRect(park.x, park.y, park.w, park.h);
 

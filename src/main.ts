@@ -468,6 +468,13 @@ function createOptionsUI() {
         <button id="location-btn" style="background: #4a9eff; color: white; border: none; border-radius: 4px; padding: 4px 8px; cursor: pointer; font-weight: bold;">Set</button>
       </div>
     </div>
+    <div style="margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between;">
+      <span>City Info</span>
+      <button id="city-info-toggle" style="
+        background: #2a7a48; color: #d4f5e0; border: none; border-radius: 20px;
+        padding: 4px 14px; cursor: pointer; font-size: 13px; font-weight: bold;
+        min-width: 64px; transition: background 0.2s;">🏙 On</button>
+    </div>
     <div style="margin-bottom: 6px;">
       <label style="display: flex; justify-content: space-between; margin-bottom: 4px;">
         <span>Alarm</span>
@@ -498,6 +505,22 @@ function createOptionsUI() {
       panelOpen = false;
       panel.style.display = 'none';
       toggleBtn.style.transform = '';
+    }
+  });
+
+  // City Info toggle handler
+  const cityInfoToggle = panel.querySelector('#city-info-toggle') as HTMLButtonElement;
+  cityInfoToggle.addEventListener('click', () => {
+    _cityInfoEnabled = !_cityInfoEnabled;
+    cityInfoToggle.style.background = _cityInfoEnabled ? '#2a7a48' : '#444';
+    cityInfoToggle.style.color = _cityInfoEnabled ? '#d4f5e0' : '#aaa';
+    cityInfoToggle.textContent = _cityInfoEnabled ? '🏙 On' : '🏙 Off';
+    if (_cityInfoEnabled) {
+      showToast('🏙 City Information Stream', 'Welcome to the City Information Stream', 4000);
+    } else {
+      for (const t of [..._activeToasts]) {
+        t.classList.remove('city-toast--visible');
+      }
     }
   });
 
@@ -885,9 +908,6 @@ function loop(timestamp: number = 0) {
     drawHolidayDecorations(ctx, layout, nightAlpha, time, activeHoliday);
   }
 
-  // Puddles — update fill/evaporation, then draw on roads under everything
-  layout.updatePuddles(weather.type, weather.intensity);
-  layout.drawPuddles(ctx, nightAlpha, time);
 
   // Chimney smoke — above rooftops, below everything else
   chimneySmoke.update();
@@ -1386,7 +1406,7 @@ const _toastStyle = document.createElement('style');
 _toastStyle.textContent = `
   .city-toast {
     position: fixed;
-    right: 16px;
+    left: 16px;
     z-index: 300;
     max-width: 280px;
     padding: 10px 14px;
@@ -1399,7 +1419,7 @@ _toastStyle.textContent = `
     box-shadow: 0 4px 18px rgba(0,0,0,0.55);
     border: 1px solid rgba(100,130,200,0.18);
     pointer-events: none;
-    transform: translateX(110%);
+    transform: translateX(-110%);
     transition: transform 0.35s cubic-bezier(0.22,1,0.36,1), opacity 0.35s ease;
     opacity: 0;
   }
@@ -1412,64 +1432,23 @@ _toastStyle.textContent = `
     color: #b8d0ff;
     margin-bottom: 3px;
   }
-  #city-info-toggle {
-    position: fixed;
-    top: 16px;
-    right: 16px;
-    z-index: 300;
-    padding: 6px 12px;
-    border-radius: 20px;
-    border: 1px solid rgba(100,130,200,0.25);
-    background: rgba(10, 12, 22, 0.75);
-    color: #c8d8f4;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    font-size: 12px;
-    cursor: pointer;
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
-    transition: background 0.2s, color 0.2s;
-    user-select: none;
-  }
-  #city-info-toggle.active {
-    background: rgba(30, 110, 60, 0.85);
-    color: #d4f5e0;
-    border-color: rgba(80,200,120,0.5);
-  }
 `;
 document.head.appendChild(_toastStyle);
 
-// City info enabled flag — controls city facts & time events (weather always shows)
+// City info enabled flag — controlled from settings panel
 let _cityInfoEnabled = true;
 
-// Toggle button
-const _cityInfoBtn = document.createElement('button');
-_cityInfoBtn.id = 'city-info-toggle';
-_cityInfoBtn.textContent = '🏙 City Info';
-_cityInfoBtn.classList.add('active');
-_cityInfoBtn.addEventListener('click', () => {
-  _cityInfoEnabled = !_cityInfoEnabled;
-  _cityInfoBtn.classList.toggle('active', _cityInfoEnabled);
-  if (_cityInfoEnabled) {
-    showToast('🏙 City Information Stream', 'Welcome to the City Information Stream', 4000);
-  } else {
-    for (const t of [..._activeToasts]) {
-      t.classList.remove('city-toast--visible');
-    }
-  }
-});
-document.body.appendChild(_cityInfoBtn);
-
-// Stack management — toasts stack downward from top-right
+// Stack management — toasts stack upward from bottom-left
 const _activeToasts: HTMLDivElement[] = [];
 const TOAST_GAP = 8;
-const TOAST_TOP_BASE = 52; // below the toggle button
+const TOAST_BOTTOM_BASE = 20;
 
 function _repositionToasts() {
-  let top = TOAST_TOP_BASE;
-  for (let i = 0; i < _activeToasts.length; i++) {
+  let bottom = TOAST_BOTTOM_BASE;
+  for (let i = _activeToasts.length - 1; i >= 0; i--) {
     const t = _activeToasts[i];
-    t.style.top = `${top}px`;
-    top += t.offsetHeight + TOAST_GAP;
+    t.style.bottom = `${bottom}px`;
+    bottom += t.offsetHeight + TOAST_GAP;
   }
 }
 
