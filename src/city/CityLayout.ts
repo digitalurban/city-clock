@@ -124,7 +124,7 @@ export interface CityEvent {
 }
 
 // Block type determines what fills a city block
-type BlockType = 'commercial' | 'residential' | 'park' | 'utility' | 'construction';
+type BlockType = 'commercial' | 'residential' | 'park' | 'utility' | 'construction' | 'station' | 'railway';
 
 export interface ConstructionSiteDef {
   x: number; y: number; w: number; h: number;
@@ -180,6 +180,33 @@ export class CityLayout {
 
   // Market stall positions (active on weekends / market days)
   marketStalls: { x: number; y: number; awningColor: string; produceColors: string[] }[] = [];
+  // Extra stalls only on Sundays — left and right edges of the plaza
+  sundayMarketStalls: { x: number; y: number; awningColor: string; produceColors: string[] }[] = [];
+
+  // ── Train station ─────────────────────────────────────────────────────────
+  stationX: number = 0;
+  stationY: number = 0;
+  stationW: number = 0;
+  stationH: number = 0;
+  trainTrackY: number = 0; // world-space Y of the running rail line
+  // Train animation — slides in from right, pauses, departs left
+  trainX: number = 0;
+  trainActive: boolean = false;
+  trainState: 'arriving' | 'stopped' | 'departing' = 'arriving';
+  trainTimer: number = 0;
+  trainCooldown: number = 600; // frames until first train (~10s)
+  smokeParticles: { x: number; y: number; vx: number; vy: number; age: number; maxAge: number }[] = [];
+  // Fired once per train event so main.ts can react
+  trainJustArrived: boolean = false;   // set for one frame when state → 'stopped'
+  trainJustDeparted: boolean = false;  // set for one frame when train leaves the canvas
+
+  // ── Ice cream van ──────────────────────────────────────────────────────────
+  iceCreamActive: boolean = false;
+  iceCreamX: number = 0;
+  iceCreamY: number = 0;
+  iceCreamCooldown: number = 600;
+  iceCreamTimer: number = 0;
+  iceCreamQueuePositions: { x: number; y: number }[] = [];
 
   // Cached awning shelter positions (standing under venue awnings)
   awningSheltPositions: { x: number; y: number }[] = [];
@@ -342,6 +369,16 @@ export class CityLayout {
         this.blockTypes.set(`${c},${r}`, blockType);
       }
     }
+
+    // Reserve entire bottom row as the railway corridor; station occupies the centre pair
+    const stationRow = this.gridRows - 1;
+    const stationColA = Math.floor(this.gridCols / 2) - 1; // col 5
+    const stationColB = stationColA + 1;                   // col 6
+    for (let c = 0; c < this.gridCols; c++) {
+      this.blockTypes.set(`${c},${stationRow}`, 'railway');
+    }
+    this.blockTypes.set(`${stationColA},${stationRow}`, 'station');
+    this.blockTypes.set(`${stationColB},${stationRow}`, 'station');
 
     // Pick one outer block to be a construction site
     const candidates: string[] = [];
@@ -516,6 +553,29 @@ export class CityLayout {
           case 'construction':
             this.generateConstructionBlock(bx, by, blockW, blockH);
             break;
+          case 'station': {
+            // Only generate at the left cell of the pair
+            const stationRow2 = this.gridRows - 1;
+            const stationColA2 = Math.floor(this.gridCols / 2) - 1;
+            if (c === stationColA2 && r === stationRow2) {
+              // Station spans two blocks + road between them
+              const totalW = blockW * 2 + ROAD_WIDTH;
+              this.generateStationBlock(bx, by, totalW, blockH, cellSize);
+            }
+            break;
+          }
+          case 'railway': {
+            // Right of station → terraced houses, clipped to stay above the track
+            const railStationColA = Math.floor(this.gridCols / 2) - 1;
+            if (c > railStationColA && this.trainTrackY > 0) {
+              // Only use the portion of the block above the track line
+              const availH = Math.floor(this.trainTrackY - by) - 6;
+              if (availH > 20) {
+                this.generateResidentialBlock(bx, by, blockW, availH, margin, c, r);
+              }
+            }
+            break;
+          }
         }
 
         // Trees along sidewalks (occasional)
@@ -690,6 +750,38 @@ export class CityLayout {
       w: blockW - 8, h: blockH - 8,
       color: '#8a7d5a', // dirt/sand color
       windowSeed: -1, // no windows
+    });
+  }
+
+  private generateStationBlock(bx: number, by: number, totalW: number, blockH: number, cellSize: number) {
+    // Record geometry for drawing and train animation
+    this.stationX = bx;
+    this.stationY = by;
+    this.stationW = totalW;
+    this.stationH = blockH;
+
+    // Pre-compute the world-space track Y so the railway corridor can align
+    const buildingH2 = Math.floor(blockH * 0.55);
+    const platformH2 = blockH - buildingH2;
+    // Place the track centre at 55% down the platform area
+    this.trainTrackY = by + buildingH2 + platformH2 * 0.55;
+
+    // Train starts off the right edge
+    this.trainX = this.width + 250;
+
+    // Station building occupies the top ~55% of the footprint
+    const buildingH = Math.floor(blockH * 0.55);
+    this.buildings.push({
+      x: bx + 4, y: by + 4,
+      w: totalW - 8, h: buildingH - 4,
+      color: '#8a8fa8',
+      windowSeed: 88888,
+    });
+
+    // Walkable platform area (bottom portion)
+    this.walkableRects.push({
+      x: bx, y: by + buildingH, w: totalW, h: blockH - buildingH,
+      type: 'sidewalk',
     });
   }
 
@@ -1710,6 +1802,39 @@ export class CityLayout {
     }
   }
 
+  /** Overlay white snow on rooftop edges of buildings — called in buildStaticCanvas after drawBuildingRooftops */
+  drawSnowCover(ctx: CanvasRenderingContext2D, snowAlpha: number) {
+    if (snowAlpha < 0.02) return;
+    const snowR = Math.floor(235 + 20 * snowAlpha);
+    ctx.fillStyle = `rgba(${snowR}, ${snowR}, 255, ${snowAlpha * 0.88})`;
+    // Cover the parapet edge of each building (a narrow strip around the perimeter)
+    for (const b of this.buildings) {
+      if (b.w < 16 || b.h < 16) continue;
+      const depth = Math.max(2, Math.min(5, b.w * 0.06));
+      // Top edge
+      ctx.fillRect(b.x, b.y, b.w, depth);
+      // Bottom edge
+      ctx.fillRect(b.x, b.y + b.h - depth, b.w, depth);
+      // Left edge
+      ctx.fillRect(b.x, b.y, depth, b.h);
+      // Right edge
+      ctx.fillRect(b.x + b.w - depth, b.y, depth, b.h);
+    }
+    // Cover house roofs (full roof at heavy snow, edge strip at lighter)
+    for (const h of this.houses) {
+      const coverW = h.w * snowAlpha;
+      const coverH = h.h * snowAlpha;
+      const ox = (h.w - coverW) / 2;
+      const oy = (h.h - coverH) / 2;
+      ctx.fillRect(h.x + ox, h.y + oy, coverW, coverH);
+    }
+    // Dust parks / roads with a faint white
+    for (const p of this.parks) {
+      ctx.fillStyle = `rgba(240,245,255,${snowAlpha * 0.30})`;
+      ctx.fillRect(p.x, p.y, p.w, p.h);
+    }
+  }
+
   drawHouses(ctx: CanvasRenderingContext2D, nightAlpha: number) {
     for (const h of this.houses) {
       const darkFactor = 1 - nightAlpha * 0.45;
@@ -2377,6 +2502,16 @@ export class CityLayout {
       { x: cx, y: cy - h_digit / 4 },
       { x: cx, y: cy + h_digit / 4 },
     ];
+
+    // Ice cream van parks on the south side of the plaza near the corner
+    const vanX = pb.x + pb.w * 0.75;
+    const vanY = pb.y + pb.h + 8; // just outside south edge
+    this.iceCreamX = vanX;
+    this.iceCreamY = vanY;
+    // Queue forms to the left of the van
+    for (let i = 0; i < 6; i++) {
+      this.iceCreamQueuePositions.push({ x: vanX - 14 - i * 10, y: vanY + 5 });
+    }
 
     // Create a dedicated pedestrian instance for the busker figure
     this.buskerPed = new Pedestrian(this, 9000, 0);
@@ -3061,6 +3196,493 @@ export class CityLayout {
     }
   }
 
+  /** Returns true when conditions are right for an ice cream van (warm afternoon, clear/cloudy) */
+  iceCreamConditions(weatherType: string): boolean {
+    const now = new Date();
+    const month = now.getMonth(); // 0-based; Apr=3 … Sep=8
+    const hour = now.getHours() + now.getMinutes() / 60;
+    const warmMonth = month >= 3 && month <= 8;
+    const goodWeather = weatherType === 'clear' || weatherType === 'cloudy';
+    const afternoon = hour >= 11.5 && hour < 19;
+    return warmMonth && goodWeather && afternoon;
+  }
+
+  /** Call once per frame — manages ice cream van lifecycle */
+  updateIceCreamVan(weatherType: string) {
+    if (this.iceCreamActive) {
+      this.iceCreamTimer--;
+      if (this.iceCreamTimer <= 0 || !this.iceCreamConditions(weatherType)) {
+        this.iceCreamActive = false;
+        this.iceCreamCooldown = Math.floor(3600 + Math.random() * 3600); // 1–2 min before next visit
+      }
+    } else if (this.iceCreamConditions(weatherType)) {
+      this.iceCreamCooldown--;
+      if (this.iceCreamCooldown <= 0) {
+        this.iceCreamActive = true;
+        this.iceCreamTimer = Math.floor(1800 + Math.random() * 3600); // 30 s – 2 min
+      }
+    }
+  }
+
+  drawIceCreamVan(ctx: CanvasRenderingContext2D, nightAlpha: number) {
+    if (!this.iceCreamActive) return;
+    const x = this.iceCreamX;
+    const y = this.iceCreamY;
+    const dark = 1 - nightAlpha * 0.5;
+    const vw = 28, vh = 14; // van footprint (top-down)
+
+    // Van shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.22)';
+    ctx.fillRect(x - vw / 2 + 2, y - vh / 2 + 2, vw, vh);
+
+    // Van body — white
+    ctx.fillStyle = `rgb(${Math.floor(240*dark)},${Math.floor(240*dark)},${Math.floor(238*dark)})`;
+    ctx.fillRect(x - vw / 2, y - vh / 2, vw, vh);
+
+    // Coloured stripe along the side
+    ctx.fillStyle = `rgb(${Math.floor(255*dark)},${Math.floor(120*dark)},${Math.floor(40*dark)})`;
+    ctx.fillRect(x - vw / 2, y - 1, vw, 3);
+
+    // Serving hatch window (right side, middle)
+    ctx.fillStyle = `rgba(${Math.floor(180*dark)},${Math.floor(230*dark)},${Math.floor(255*dark)},0.8)`;
+    ctx.fillRect(x + vw / 2 - 8, y - vh / 2 + 3, 6, 5);
+
+    // Ice cream cone sign on roof
+    ctx.fillStyle = `rgb(${Math.floor(255*dark)},${Math.floor(210*dark)},${Math.floor(100*dark)})`;
+    ctx.beginPath();
+    ctx.arc(x + 4, y - vh / 2 - 1, 3.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = `rgb(${Math.floor(255*dark)},${Math.floor(130*dark)},${Math.floor(160*dark)})`;
+    ctx.beginPath();
+    ctx.arc(x + 4, y - vh / 2 - 3.5, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Wheels (4 small dark circles)
+    ctx.fillStyle = `rgb(${Math.floor(45*dark)},${Math.floor(40*dark)},${Math.floor(40*dark)})`;
+    // Wheels sit just inside the body edge so they don't poke out the sides
+    const wr = 2;
+    const wheelOffsets = [
+      { wx: -vw / 2 + 4,  wy: -vh / 2 + wr },
+      { wx:  vw / 2 - 4,  wy: -vh / 2 + wr },
+      { wx: -vw / 2 + 4,  wy:  vh / 2 - wr },
+      { wx:  vw / 2 - 4,  wy:  vh / 2 - wr },
+    ];
+    for (const { wx, wy } of wheelOffsets) {
+      ctx.beginPath();
+      ctx.arc(x + wx, y + wy, wr, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Outline
+    ctx.strokeStyle = `rgba(0,0,0,${0.30 * dark})`;
+    ctx.lineWidth = 0.8;
+    ctx.strokeRect(x - vw / 2, y - vh / 2, vw, vh);
+  }
+
+  /** Ballast + land use for railway-corridor cells (non-station bottom row).
+   *  Left columns → allotments; right columns → small terraced houses.
+   *  Call in buildStaticCanvas before drawTrainStation. */
+  drawRailwayCorridor(ctx: CanvasRenderingContext2D, nightAlpha: number) {
+    if (this.trainTrackY === 0) return;
+    const dark = 1 - nightAlpha * 0.5;
+    const cellSize = BLOCK_SIZE + ROAD_WIDTH;
+    const stationRow = this.gridRows - 1;
+    const stationColA = Math.floor(this.gridCols / 2) - 1;
+    const stationColB = stationColA + 1;
+    // Two rails 4px either side of the track centre
+    const track1Y = this.trainTrackY - 4;
+    const track2Y = this.trainTrackY + 4;
+
+    // Allotment plot colours
+    const plotColors = [
+      [100, 155, 70],  // leafy green
+      [140, 175, 80],  // yellow-green
+      [80, 130, 55],   // dark green
+      [170, 150, 70],  // straw / dry plot
+      [60, 110, 45],   // deep green
+      [120, 95, 50],   // earth / fallow
+    ];
+
+    for (let c = 0; c < this.gridCols; c++) {
+      if (c === stationColA || c === stationColB) continue;
+      const bx = c * cellSize + ROAD_WIDTH / 2;
+      const by = stationRow * cellSize + ROAD_WIDTH / 2;
+
+      // ── Background: gravel / soil base ──
+      const isLeft = c <= stationColA; // left of station → allotments; right → houses (drawn by drawHouses)
+      if (isLeft) {
+        // ── Allotments ──────────────────────────────────────────────────
+        ctx.fillStyle = `rgb(${Math.floor(130*dark)},${Math.floor(105*dark)},${Math.floor(60*dark)})`;
+        ctx.fillRect(bx, by, BLOCK_SIZE, BLOCK_SIZE);
+
+        // Path down the middle
+        ctx.fillStyle = `rgb(${Math.floor(185*dark)},${Math.floor(170*dark)},${Math.floor(130*dark)})`;
+        ctx.fillRect(bx + BLOCK_SIZE / 2 - 3, by, 6, BLOCK_SIZE);
+
+        // Plot grid: 2 columns × 3 rows
+        const plotW = (BLOCK_SIZE - 14) / 2;
+        const plotH = (BLOCK_SIZE - 10) / 3;
+        for (let px = 0; px < 2; px++) {
+          for (let py2 = 0; py2 < 3; py2++) {
+            const pidx = (c * 6 + px * 3 + py2) % plotColors.length;
+            const [pr, pg, pb2] = plotColors[pidx];
+            const gx2 = bx + 4 + px * (plotW + 6);
+            const gy2 = by + 4 + py2 * (plotH + 1);
+            ctx.fillStyle = `rgb(${Math.floor(pr*dark)},${Math.floor(pg*dark)},${Math.floor(pb2*dark)})`;
+            ctx.fillRect(gx2, gy2, plotW, plotH);
+
+            // Crop rows (small stripes)
+            ctx.fillStyle = `rgba(0,0,0,${0.12 * dark})`;
+            for (let rowY = gy2 + 3; rowY < gy2 + plotH - 2; rowY += 4) {
+              ctx.fillRect(gx2 + 2, rowY, plotW - 4, 1.5);
+            }
+
+            // Occasional shed or water butt in top-right plot
+            if (px === 1 && py2 === 0 && seededRandom(c * 11) > 0.4) {
+              ctx.fillStyle = `rgb(${Math.floor(140*dark)},${Math.floor(100*dark)},${Math.floor(60*dark)})`;
+              ctx.fillRect(gx2 + plotW - 10, gy2 + 2, 8, 8);
+              ctx.fillStyle = `rgb(${Math.floor(100*dark)},${Math.floor(75*dark)},${Math.floor(40*dark)})`;
+              ctx.fillRect(gx2 + plotW - 9, gy2 + 3, 6, 3); // darker roof
+            }
+          }
+        }
+
+        // Low fence around edge
+        ctx.strokeStyle = `rgb(${Math.floor(155*dark)},${Math.floor(120*dark)},${Math.floor(70*dark)})`;
+        ctx.lineWidth = 1.2;
+        ctx.strokeRect(bx + 1, by + 1, BLOCK_SIZE - 2, BLOCK_SIZE - 2);
+
+      }
+      // Right side: houses already drawn by drawHouses — no background fill needed here
+
+      // ── Sleepers for both tracks (drawn over land) ──
+      ctx.strokeStyle = `rgb(${Math.floor(100*dark)},${Math.floor(82*dark)},${Math.floor(58*dark)})`;
+      ctx.lineWidth = 1.2;
+      for (const ty of [track1Y, track2Y]) {
+        for (let slx = bx; slx < bx + BLOCK_SIZE + ROAD_WIDTH; slx += 10) {
+          ctx.beginPath(); ctx.moveTo(slx, ty - 2); ctx.lineTo(slx, ty + 2); ctx.stroke();
+        }
+      }
+    }
+  }
+
+  /** Drawn into the static canvas — station building, platforms, tracks, canopy */
+  drawTrainStation(ctx: CanvasRenderingContext2D, nightAlpha: number) {
+    if (this.stationW === 0) return;
+    const { stationX: sx, stationY: sy, stationW: sw, stationH: sh } = this;
+    const dark = 1 - nightAlpha * 0.5;
+    const buildingH = Math.floor(sh * 0.55);
+    const platformY = sy + buildingH;
+    const platformH = sh - buildingH;
+
+    // ── Platform ground ──
+    ctx.fillStyle = `rgb(${Math.floor(195*dark)},${Math.floor(188*dark)},${Math.floor(178*dark)})`;
+    ctx.fillRect(sx, platformY, sw, platformH);
+
+    // Platform edge yellow warning stripe
+    ctx.fillStyle = `rgb(${Math.floor(230*dark)},${Math.floor(190*dark)},${Math.floor(40*dark)})`;
+    ctx.fillRect(sx, platformY + 2, sw, 3);
+
+    // ── Two rail tracks running full width ──
+    // Two rails forming a single track — 4px either side of centre
+    const trackCentreY = platformY + platformH * 0.55;
+    const track1Y = trackCentreY - 4;
+    const track2Y = trackCentreY + 4;
+    ctx.strokeStyle = `rgb(${Math.floor(90*dark)},${Math.floor(85*dark)},${Math.floor(80*dark)})`;
+    ctx.lineWidth = 1.5;
+    for (const ty of [track1Y, track2Y]) {
+      ctx.beginPath(); ctx.moveTo(0, ty); ctx.lineTo(this.width, ty); ctx.stroke();
+      // Rail sleepers (within station area only — outside drawn by drawRailwayCorridor)
+      ctx.lineWidth = 1.2;
+      ctx.strokeStyle = `rgb(${Math.floor(110*dark)},${Math.floor(95*dark)},${Math.floor(75*dark)})`;
+      for (let slx = sx; slx < sx + sw; slx += 10) {
+        ctx.beginPath(); ctx.moveTo(slx, ty - 2); ctx.lineTo(slx, ty + 2); ctx.stroke();
+      }
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = `rgb(${Math.floor(90*dark)},${Math.floor(85*dark)},${Math.floor(80*dark)})`;
+    }
+
+    // ── Canopy over platform (translucent roof structure) ──
+    ctx.fillStyle = `rgba(${Math.floor(160*dark)},${Math.floor(175*dark)},${Math.floor(200*dark)},0.35)`;
+    ctx.fillRect(sx + 10, platformY, sw - 20, platformH * 0.45);
+    // Canopy support columns
+    ctx.fillStyle = `rgb(${Math.floor(130*dark)},${Math.floor(125*dark)},${Math.floor(120*dark)})`;
+    for (let cx2 = sx + 20; cx2 < sx + sw - 10; cx2 += 40) {
+      ctx.fillRect(cx2 - 1.5, platformY, 3, platformH * 0.45);
+    }
+
+    // ── Station name sign above building entrance ──
+    // (Text drawn in drawTrainStationLabel for zoom-correct rasterisation)
+
+    // ── Station building facade details ──
+    // Entrance arch in the centre
+    const archX = sx + sw / 2 - 18;
+    const archY = sy + buildingH - 20;
+    ctx.fillStyle = `rgb(${Math.floor(60*dark)},${Math.floor(58*dark)},${Math.floor(72*dark)})`;
+    ctx.beginPath();
+    ctx.moveTo(archX, archY + 16);
+    ctx.lineTo(archX, archY + 4);
+    ctx.quadraticCurveTo(archX + 18, archY - 4, archX + 36, archY + 4);
+    ctx.lineTo(archX + 36, archY + 16);
+    ctx.closePath();
+    ctx.fill();
+
+    // Clock above entrance
+    ctx.fillStyle = `rgb(${Math.floor(220*dark)},${Math.floor(210*dark)},${Math.floor(195*dark)})`;
+    ctx.beginPath();
+    ctx.arc(sx + sw / 2, sy + buildingH - 28, 7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = `rgb(${Math.floor(80*dark)},${Math.floor(75*dark)},${Math.floor(70*dark)})`;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    // Clock hands
+    const now = new Date();
+    const hr = (now.getHours() % 12) / 12;
+    const mn = now.getMinutes() / 60;
+    const clkX = sx + sw / 2, clkY = sy + buildingH - 28;
+    ctx.strokeStyle = `rgb(${Math.floor(40*dark)},${Math.floor(38*dark)},${Math.floor(36*dark)})`;
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(clkX, clkY);
+    ctx.lineTo(clkX + Math.cos(hr * Math.PI * 2 - Math.PI / 2) * 4, clkY + Math.sin(hr * Math.PI * 2 - Math.PI / 2) * 4);
+    ctx.stroke();
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.moveTo(clkX, clkY);
+    ctx.lineTo(clkX + Math.cos(mn * Math.PI * 2 - Math.PI / 2) * 5.5, clkY + Math.sin(mn * Math.PI * 2 - Math.PI / 2) * 5.5);
+    ctx.stroke();
+  }
+
+  drawTrainStationLabel(ctx: CanvasRenderingContext2D, nightAlpha: number) {
+    if (this.stationW === 0) return;
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = 'bold 9px sans-serif';
+    ctx.fillStyle = `rgba(235,230,220,${0.9 - nightAlpha * 0.3})`;
+    ctx.fillText('CENTRAL STATION', this.stationX + this.stationW / 2, this.stationY + 12);
+    ctx.restore();
+  }
+
+  /** Call once per frame — manages arriving/departing steam train */
+  updateTrain() {
+    const { stationX: sx, stationW: sw } = this;
+    if (sw === 0) return;
+
+    // Loco dimensions (engine + tender + 2 carriages)
+    const locoTotalW = 55 + 4 + 32 + 4 + 46 + 4 + 46; // ≈ 191
+    const stoppedX = sx + sw / 2 - locoTotalW / 2;
+
+    if (!this.trainActive) {
+      this.trainCooldown--;
+      if (this.trainCooldown <= 0) {
+        this.trainActive = true;
+        this.trainState = 'arriving';
+        this.trainX = this.width + 60; // start off right edge
+        this.trainTimer = 0;
+        this.smokeParticles = [];
+      }
+    }
+
+    // Update smoke particles regardless of train state
+    for (let i = this.smokeParticles.length - 1; i >= 0; i--) {
+      const p = this.smokeParticles[i];
+      p.x += p.vx;
+      p.y += p.vy;
+      p.age++;
+      if (p.age >= p.maxAge) this.smokeParticles.splice(i, 1);
+    }
+
+    if (!this.trainActive) return;
+
+    this.trainJustArrived = false;
+    this.trainJustDeparted = false;
+
+    const trainSpeed = 0.7;
+    if (this.trainState === 'arriving') {
+      this.trainX -= trainSpeed;
+      if (this.trainX <= stoppedX) {
+        this.trainX = stoppedX;
+        this.trainState = 'stopped';
+        this.trainTimer = 420; // ~7 s at 60fps
+        this.trainJustArrived = true;
+      }
+    } else if (this.trainState === 'stopped') {
+      this.trainTimer--;
+      if (this.trainTimer <= 0) this.trainState = 'departing';
+    } else {
+      this.trainX -= trainSpeed;
+      if (this.trainX < -locoTotalW - 60) {
+        this.trainActive = false;
+        this.trainCooldown = Math.floor(1800 + Math.random() * 3600);
+        this.trainJustDeparted = true;
+      }
+    }
+
+    // Emit smoke from chimney (front of loco) while moving
+    if (this.trainState !== 'stopped' && Math.random() < 0.4) {
+      const chimneyX = this.trainX + 7;  // chimney circle x in top-down view
+      const chimneyY = this.trainTrackY - 6; // slightly above the track line
+      this.smokeParticles.push({
+        x: chimneyX + (Math.random() - 0.5) * 3,
+        y: chimneyY,
+        vx: (Math.random() - 0.6) * 0.5,
+        vy: -0.6 - Math.random() * 0.5,
+        age: 0,
+        maxAge: 55 + Math.floor(Math.random() * 30),
+      });
+    }
+    // Idle chuff while stopped (slower emit)
+    if (this.trainState === 'stopped' && Math.random() < 0.05) {
+      const chimneyX = this.trainX + 7;
+      const chimneyY = this.trainTrackY - 6;
+      this.smokeParticles.push({
+        x: chimneyX,
+        y: chimneyY,
+        vx: 0,
+        vy: -0.3 - Math.random() * 0.3,
+        age: 0,
+        maxAge: 40 + Math.floor(Math.random() * 20),
+      });
+    }
+  }
+
+  drawTrain(ctx: CanvasRenderingContext2D, nightAlpha: number) {
+    if (this.stationW === 0) return;
+    const trackY = this.trainTrackY;
+    const dark = 1 - nightAlpha * 0.45;
+
+    // ── Smoke particles ──
+    for (const p of this.smokeParticles) {
+      const t = p.age / p.maxAge;
+      const radius = 2 + t * 6;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(${Math.floor(190*dark)},${Math.floor(185*dark)},${Math.floor(175*dark)},${(1 - t) * 0.5})`;
+      ctx.fill();
+    }
+
+    if (!this.trainActive) return;
+
+    const tx = this.trainX;
+    // Train body height in top-down view (width of the train as seen from above)
+    const trainH = 8;  // sits between the two rails (4px gap each side)
+    const top = trackY - trainH / 2;
+
+    // ── Helper: rounded rect ──
+    const rRect = (x: number, y: number, w: number, h: number, r: number) => {
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.lineTo(x + w - r, y); ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+      ctx.lineTo(x + w, y + h - r); ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+      ctx.lineTo(x + r, y + h); ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+      ctx.lineTo(x, y + r); ctx.quadraticCurveTo(x, y, x + r, y);
+      ctx.closePath();
+      ctx.fill();
+    };
+
+    // ── Locomotive (top-down roof view, 44px long) ──
+    const lx = tx;
+    const lW = 44;
+
+    // Shadow
+    ctx.fillStyle = `rgba(0,0,0,${0.25 + nightAlpha * 0.1})`;
+    rRect(lx + 1.5, top + 1.5, lW, trainH, 2);
+
+    // Boiler roof — dark iron cylinder seen from above (elliptical highlight)
+    ctx.fillStyle = `rgb(${Math.floor(42*dark)},${Math.floor(40*dark)},${Math.floor(38*dark)})`;
+    rRect(lx, top, lW, trainH, 2);
+
+    // Boiler centreline highlight (slightly lighter strip down the middle — curved roof)
+    ctx.fillStyle = `rgba(${Math.floor(80*dark)},${Math.floor(78*dark)},${Math.floor(75*dark)},0.7)`;
+    ctx.fillRect(lx + 2, trackY - 1, lW - 14, 2);
+
+    // Red buffer at front
+    ctx.fillStyle = `rgb(${Math.floor(200*dark)},${Math.floor(45*dark)},${Math.floor(45*dark)})`;
+    ctx.fillRect(lx, top + 1, 3, trainH - 2);
+
+    // Brass boiler bands
+    ctx.fillStyle = `rgb(${Math.floor(185*dark)},${Math.floor(145*dark)},${Math.floor(45*dark)})`;
+    for (const bx2 of [lx + 12, lx + 21]) {
+      ctx.fillRect(bx2, top, 2, trainH);
+    }
+
+    // Dome (top-down: small brass circle)
+    ctx.fillStyle = `rgb(${Math.floor(175*dark)},${Math.floor(135*dark)},${Math.floor(40*dark)})`;
+    ctx.beginPath(); ctx.arc(lx + 18, trackY, 2.5, 0, Math.PI * 2); ctx.fill();
+
+    // Chimney (top-down: small dark circle near front)
+    ctx.fillStyle = `rgb(${Math.floor(22*dark)},${Math.floor(20*dark)},${Math.floor(18*dark)})`;
+    ctx.beginPath(); ctx.arc(lx + 7, trackY, 2, 0, Math.PI * 2); ctx.fill();
+    // Chimney rim (slightly lighter ring)
+    ctx.strokeStyle = `rgb(${Math.floor(50*dark)},${Math.floor(48*dark)},${Math.floor(46*dark)})`;
+    ctx.lineWidth = 0.8;
+    ctx.beginPath(); ctx.arc(lx + 7, trackY, 2.5, 0, Math.PI * 2); ctx.stroke();
+
+    // Cab roof (back portion — slightly different shade, with window strip)
+    ctx.fillStyle = `rgb(${Math.floor(58*dark)},${Math.floor(54*dark)},${Math.floor(52*dark)})`;
+    ctx.fillRect(lx + 30, top, 14, trainH);
+    ctx.fillStyle = `rgba(${Math.floor(160*dark)},${Math.floor(200*dark)},${Math.floor(225*dark)},0.55)`;
+    ctx.fillRect(lx + 32, top + 1, 10, trainH - 2);
+
+    // ── Coupling gap ──
+    const gap = 3;
+
+    // ── Tender (top-down, 26px long) ──
+    const tndX = tx + lW + gap;
+    const tndW = 26;
+
+    ctx.fillStyle = `rgba(0,0,0,${0.25 + nightAlpha * 0.1})`;
+    rRect(tndX + 1.5, top + 1.5, tndW, trainH, 1.5);
+
+    ctx.fillStyle = `rgb(${Math.floor(48*dark)},${Math.floor(44*dark)},${Math.floor(42*dark)})`;
+    rRect(tndX, top, tndW, trainH, 1.5);
+    // Coal — dark textured fill in top half
+    ctx.fillStyle = `rgb(${Math.floor(22*dark)},${Math.floor(20*dark)},${Math.floor(20*dark)})`;
+    ctx.fillRect(tndX + 2, top + 1, tndW - 4, Math.floor(trainH * 0.55));
+
+    // ── Carriages (2 × 46px) ──
+    const cW = 46;
+    const carriagePalette = [
+      [210, 192, 158],  // parchment cream
+      [195, 175, 142],  // warm tan
+    ];
+    for (let i = 0; i < 2; i++) {
+      const cx2 = tndX + tndW + gap + i * (cW + gap);
+      const [cr, cg, cb] = carriagePalette[i];
+
+      // Shadow
+      ctx.fillStyle = `rgba(0,0,0,${0.22 + nightAlpha * 0.08})`;
+      rRect(cx2 + 1.5, top + 1.5, cW, trainH, 2);
+
+      // Body (roof seen from above)
+      ctx.fillStyle = `rgb(${Math.floor(cr*dark)},${Math.floor(cg*dark)},${Math.floor(cb*dark)})`;
+      rRect(cx2, top, cW, trainH, 2);
+
+      // Roof centreline highlight
+      ctx.fillStyle = `rgba(255,255,255,${0.12 * dark})`;
+      ctx.fillRect(cx2 + 3, trackY - 0.8, cW - 6, 1.6);
+
+      // Darker edge strips (sides of roof)
+      ctx.fillStyle = `rgba(0,0,0,${0.18 * dark})`;
+      ctx.fillRect(cx2, top, cW, 1.5);
+      ctx.fillRect(cx2, top + trainH - 1.5, cW, 1.5);
+
+      // Windows (top-down: small lit rectangles along each side)
+      ctx.fillStyle = `rgba(${Math.floor(180*dark)},${Math.floor(218*dark)},${Math.floor(235*dark)},0.85)`;
+      for (let wx = cx2 + 5; wx < cx2 + cW - 5; wx += 10) {
+        ctx.fillRect(wx, top, 6, 2);           // near side
+        ctx.fillRect(wx, top + trainH - 2, 6, 2); // far side
+      }
+    }
+
+    // ── Headlamp glow at front when at night ──
+    if (nightAlpha > 0.1) {
+      ctx.fillStyle = `rgba(255, 240, 160, ${0.5 * nightAlpha})`;
+      ctx.beginPath(); ctx.arc(lx, trackY, 3.5, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+
   drawNewstand(ctx: CanvasRenderingContext2D, nightAlpha: number) {
     const hour = new Date().getHours();
     if (hour < 6 || hour >= 13) return;   // morning papers only
@@ -3110,6 +3732,21 @@ export class CityLayout {
     ctx.strokeStyle = `rgba(0,0,0,${0.38 * fadeAlpha})`;
     ctx.lineWidth = 0.9;
     ctx.strokeRect(x, y, 20, 26);
+  }
+
+  /** Returns a random position beside the carriages (not the loco) for boarding/alighting. */
+  getRandomPlatformPosition(): { x: number; y: number } {
+    const platformY = this.stationY + Math.floor(this.stationH * 0.55);
+    const platformH = this.stationH - Math.floor(this.stationH * 0.55);
+    // Carriages sit behind loco (55) + gap (4) + tender (32) + gap (4) = 95px offset
+    const locoTotalW = 55 + 4 + 32 + 4 + 46 + 4 + 46;
+    const stoppedX = this.stationX + this.stationW / 2 - locoTotalW / 2;
+    const carriageStartX = stoppedX + 95;
+    const carriageEndX = stoppedX + locoTotalW;
+    return {
+      x: carriageStartX + Math.random() * (carriageEndX - carriageStartX),
+      y: platformY + 4 + Math.random() * (platformH * 0.4),
+    };
   }
 
   getRandomWalkablePosition(seed: number): { x: number; y: number } {
@@ -3410,6 +4047,29 @@ export class CityLayout {
         produceColors: produceSets[(idx + 2) % produceSets.length],
       });
     }
+
+    // Sunday-only extra stalls — 3 along the left edge + 3 along the right edge
+    const ph = dp.bottomY - dp.topY;
+    const rows = 3;
+    const ySpacing = ph / (rows + 1);
+    const sundayColors = ['#06d6a0','#118ab2','#ffd166','#ef476f','#073b4c','#8338ec'];
+    for (let row = 0; row < rows; row++) {
+      const sy = dp.topY + ySpacing * (row + 1) - 7;
+      // Left edge stalls (rotated 90° — wider in y, narrow in x)
+      this.sundayMarketStalls.push({
+        x: dp.leftX + 6,
+        y: sy,
+        awningColor: sundayColors[row % sundayColors.length],
+        produceColors: produceSets[row % produceSets.length],
+      });
+      // Right edge stalls
+      this.sundayMarketStalls.push({
+        x: dp.rightX - 26,
+        y: sy,
+        awningColor: sundayColors[(row + 3) % sundayColors.length],
+        produceColors: produceSets[(row + 1) % produceSets.length],
+      });
+    }
   }
 
   /** Draw market stalls — called each frame in the dynamic layer */
@@ -3453,6 +4113,39 @@ export class CityLayout {
       }
 
       // Outline
+      ctx.strokeStyle = 'rgba(0,0,0,0.28)';
+      ctx.lineWidth = 0.8;
+      ctx.strokeRect(x, y, sw, sh);
+    }
+  }
+
+  /** Draw extra Sunday market stalls on the left/right edges of the delivery perimeter */
+  drawSundayMarket(ctx: CanvasRenderingContext2D, nightAlpha: number) {
+    if (new Date().getDay() !== 0) return; // Sunday only
+    const hour = new Date().getHours();
+    if (hour < 9 || hour >= 18) return;
+    const dark = 1 - nightAlpha * 0.45;
+    const sw = 20, sh = 14;
+    for (const stall of this.sundayMarketStalls) {
+      const { x, y } = stall;
+      ctx.fillStyle = 'rgba(0,0,0,0.18)';
+      ctx.fillRect(x + 3, y + 3, sw, sh);
+      const ar = parseInt(stall.awningColor.slice(1, 3), 16);
+      const ag = parseInt(stall.awningColor.slice(3, 5), 16);
+      const ab = parseInt(stall.awningColor.slice(5, 7), 16);
+      ctx.fillStyle = `rgb(${Math.floor(ar * dark)},${Math.floor(ag * dark)},${Math.floor(ab * dark)})`;
+      ctx.fillRect(x, y, sw, sh);
+      ctx.fillStyle = `rgba(255,255,255,${0.22 * dark})`;
+      for (let sx = 0; sx < sw; sx += 5) ctx.fillRect(x + sx, y, 2.5, sh);
+      for (let i = 0; i < stall.produceColors.length; i++) {
+        const pr = parseInt(stall.produceColors[i].slice(1, 3), 16);
+        const pg = parseInt(stall.produceColors[i].slice(3, 5), 16);
+        const pb = parseInt(stall.produceColors[i].slice(5, 7), 16);
+        ctx.fillStyle = `rgb(${Math.floor(pr * dark)},${Math.floor(pg * dark)},${Math.floor(pb * dark)})`;
+        ctx.beginPath();
+        ctx.arc(x + 3 + i * 5, y + sh - 2, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
       ctx.strokeStyle = 'rgba(0,0,0,0.28)';
       ctx.lineWidth = 0.8;
       ctx.strokeRect(x, y, sw, sh);

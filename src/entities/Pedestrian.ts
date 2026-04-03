@@ -202,6 +202,14 @@ export class Pedestrian {
   currentWeatherType: string = 'clear';
   bicycleSpeed: number = 0;
 
+  // Train station behaviour
+  isHeadingToPlatform: boolean = false; // walking to platform to board
+  isOnPlatform: boolean = false;        // waiting on platform
+  isBoarding: boolean = false;          // dissolving into the train
+  boardTimer: number = 0;
+  isAlighting: boolean = false;         // arriving from train, heading into city
+  alightTimer: number = 0;
+
   constructor(layout: CityLayout, index: number, clockEligibleCount: number) {
     this.isClockEligible = index < clockEligibleCount;
     this.name = PEDESTRIAN_NAMES[index % PEDESTRIAN_NAMES.length];
@@ -318,6 +326,10 @@ export class Pedestrian {
     if (this.isAtHome && this.isInGarden) return 'Pottering in the garden';
     if (this.isAtHome) return 'At home';
     if (this.isGoingHome) return 'Heading home';
+    if (this.isBoarding) return 'Boarding the train';
+    if (this.isOnPlatform) return 'Waiting on the platform';
+    if (this.isHeadingToPlatform) return 'Heading to the station';
+    if (this.isAlighting) return 'Arrived by train';
     if (this.isWatchingBusker) return 'Watching the busker';
     if (this.isBuyingPaper) return 'Buying a newspaper';
     if (this.isBrowsingMarket) return 'Browsing the market';
@@ -528,6 +540,61 @@ export class Pedestrian {
     } else {
       // === AUTONOMOUS MODE ===
 
+      // --- Train: boarding (fade out while walking into train) ---
+      if (this.isBoarding) {
+        this.boardTimer--;
+        // Drift toward train centre
+        const bdx = this.waypointX - this.x;
+        const bdy = this.waypointY - this.y;
+        ax += bdx * 0.12;
+        ay += bdy * 0.12;
+        this.vx *= 0.82;
+        this.vy *= 0.82;
+        return; // caller will remove this pedestrian when boardTimer <= 0
+      }
+
+      // --- Train: alighting (just arrived, walk into city) ---
+      if (this.isAlighting) {
+        this.alightTimer--;
+        if (this.alightTimer <= 0) {
+          this.isAlighting = false;
+          const wp = layout.getRandomSidewalkWaypoint();
+          this.waypointX = wp.x;
+          this.waypointY = wp.y;
+          this.waypointTimer = 0;
+        } else {
+          const adx = this.waypointX - this.x;
+          const ady = this.waypointY - this.y;
+          ax += adx * 0.06;
+          ay += ady * 0.06;
+          this.vx *= 0.92;
+          this.vy *= 0.92;
+        }
+      }
+
+      // --- Train: heading to platform ---
+      if (this.isHeadingToPlatform) {
+        const pdx = this.waypointX - this.x;
+        const pdy = this.waypointY - this.y;
+        const pdist = Math.sqrt(pdx * pdx + pdy * pdy);
+        if (pdist < 8) {
+          this.isHeadingToPlatform = false;
+          this.isOnPlatform = true;
+        } else {
+          ax += (pdx / pdist) * this.maxForce * 3.0;
+          ay += (pdy / pdist) * this.maxForce * 3.0;
+          this.vx *= 0.88;
+          this.vy *= 0.88;
+        }
+      }
+
+      // --- Train: waiting on platform ---
+      if (this.isOnPlatform) {
+        // Idle — slow drift
+        this.vx *= 0.85;
+        this.vy *= 0.85;
+      }
+
       // Update thought bubble timer
       if (this.thoughtTimer > 0) {
         this.thoughtTimer--;
@@ -542,6 +609,7 @@ export class Pedestrian {
       const isBusy = this.isSitting || this.isBenchSitting || this.socialMode
         || this.isQueuing || this.isWindowShopping || this.isCheckingPhone || this.isTakingPhoto
         || this.isGoingHome || this.isAtHome || this.isAtWorkplace
+        || this.isHeadingToPlatform || this.isOnPlatform || this.isAlighting
         || this.isSheltering || this.isBrowsingMarket;
 
       // --- Social chat mode ---
@@ -1680,6 +1748,10 @@ export class Pedestrian {
       ctx.globalAlpha = 0.15;  // inside the house — faintly visible through roof
     } else if (this.isAtWorkplace) {
       ctx.globalAlpha = 0.3;
+    } else if (this.isBoarding) {
+      ctx.globalAlpha = Math.max(0, this.boardTimer / 80); // fade out as they board
+    } else if (this.isAlighting) {
+      ctx.globalAlpha = Math.min(1, 1 - this.alightTimer / 180); // fade in from train
     }
 
     const s = this.size * 5.5;

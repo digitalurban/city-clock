@@ -68,6 +68,7 @@ Full rainbow bunting (red / orange / yellow / green / blue / purple / pink / cya
 - **Fruit & veg market** - a colourful street market sets up in the plaza on weekends and roughly 30% of weekdays. Eight stalls with striped awnings and produce displays are arranged as a perimeter market — four along the north inner edge and four along the south inner edge — keeping the central clock formation area clear. Pedestrians wander over to browse and stand in front of stalls
 - **Cafe rush hours** - outdoor seating fills up noticeably during morning coffee (8–9:30am) and lunch (12–1:30pm). Pedestrians stay seated 1.4–1.8× longer, and more people spontaneously head to cafes and restaurants during these windows
 - **Rain sheltering** - during rain, heavy rain, thunderstorms, and hail, pedestrians in the plaza dash for the nearest venue awning and wait under it until the weather eases, then resume their normal routines
+- **Train station & railway** - Central Station occupies the bottom-centre of the city. A steam locomotive (drawn top-down) slowly arrives from the right, stops at the platform, then departs left. Passengers gather on the platform and board as the train departs; new arrivals alight from the carriages and walk into the city. The entire bottom row is a railway corridor — left side has allotment plots (crop rows, sheds, fenced beds) and right side has small terraced houses matching the city style. Two close-set rails run the full width of the map
 - **Construction site** - one city block is a construction zone with dirt ground, a partial concrete frame, orange/white safety barriers, material piles, and a slowly rotating crane
 - **Directional shadows** - buildings and trees cast ground shadows whose direction sweeps from west (dawn) through a short northward stub at solar noon to east (dusk), with length and opacity scaling with sun angle
 - **Time-of-day atmosphere** - three subtle world-space overlays: a gradient morning mist that burns off between 5–9am; a warm amber golden-hour wash that peaks around 6pm and fades into dusk; a barely-there cool blue Sunday-morning tint that gives the city a distinctly quieter feel on Sundays before noon
@@ -122,6 +123,7 @@ The city world is 2x the viewport in each dimension, so zooming out reveals the 
 - **Parks**: green spaces with trees scattered through the city
 - **Road network**: roads at every grid edge with lane markings, crosswalks, and traffic lights at intersections
 - **Venues**: cafes, bars, bookshops, restaurants and flower shops around the plaza perimeter with striped awnings and parasol seating
+- **Railway corridor**: the entire bottom row is reserved for the railway — Central Station in the centre, allotment gardens on the left (fenced plots with crops, sheds, paths), and terraced houses on the right. Two rails run the full city width; houses are clipped to stay above the track line
 
 ### Cars and Delivery Vehicles
 

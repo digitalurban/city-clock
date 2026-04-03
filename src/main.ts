@@ -56,6 +56,10 @@ let trafficPhase = 0;
 let activeHoliday: Holiday | null = getActiveHoliday();
 let lastHolidayCheckMinute = -1;
 
+// Snow accumulation — increases while snowing, melts when weather changes
+let snowAccumulation = 0;          // 0–1
+let lastStaticSnowAlpha = -1;      // quantised to 0.05 steps to limit rebuilds
+
 // Offscreen canvas for static city elements
 let staticCanvas: HTMLCanvasElement | null = null;
 let lastStaticNightAlpha = -1;
@@ -785,6 +789,7 @@ function buildStaticCanvas(nightAlpha: number) {
   layout.drawShadows(sctx, nightAlpha);
   layout.drawBuildings(sctx, nightAlpha);
   layout.drawBuildingRooftops(sctx, nightAlpha);
+  layout.drawSnowCover(sctx, snowAccumulation);
   layout.drawHouses(sctx, nightAlpha);
   // House windows — baked into static canvas so lit windows are stable light
   // sources. At deep night all residents are home; using a full set avoids
@@ -796,6 +801,8 @@ function buildStaticCanvas(nightAlpha: number) {
   layout.drawVenues(sctx, nightAlpha);
   layout.drawDeliveryLanes(sctx, nightAlpha); // on top of venues so stub is visible
   layout.drawPlazaLampPosts(sctx, nightAlpha);
+  layout.drawRailwayCorridor(sctx, nightAlpha);
+  layout.drawTrainStation(sctx, nightAlpha);
 
   lastStaticNightAlpha = nightAlpha;
 }
@@ -862,13 +869,26 @@ function loop(timestamp: number = 0) {
     clampPan(w, h);
   }
 
-  // Rebuild static canvas if lighting changed significantly, or if zoom has moved
-  // far enough from the level it was last rendered at (detail mismatch).
+  // Update snow accumulation
+  {
+    const wt = weather.type;
+    const isSnowing = wt === 'snow' || wt === 'heavy_snow';
+    if (isSnowing) {
+      snowAccumulation = Math.min(1, snowAccumulation + 0.00008 * (wt === 'heavy_snow' ? 2 : 1));
+    } else {
+      snowAccumulation = Math.max(0, snowAccumulation - 0.00004);
+    }
+  }
+
+  // Rebuild static canvas if lighting or snow cover changed significantly,
+  // or if zoom has moved far enough from the level it was last rendered at.
   const quantizedAlpha = Math.round(nightAlpha * 20) / 20;
+  const quantizedSnow = Math.round(snowAccumulation * 20) / 20;
   const detailMismatch = lastStaticDetailScale > 0 &&
     Math.abs(zoom - lastStaticDetailScale) > 0.18 &&
     staticRebuildTimer === null; // only if no pending debounced rebuild already
-  if (quantizedAlpha !== lastStaticNightAlpha || detailMismatch) {
+  if (quantizedAlpha !== lastStaticNightAlpha || quantizedSnow !== lastStaticSnowAlpha || detailMismatch) {
+    lastStaticSnowAlpha = quantizedSnow;
     buildStaticCanvas(nightAlpha);
     // After a mid-gesture detail rebuild, arm the debounce timer so subsequent
     // frames (while pinch is still active) don't each trigger another rebuild.
@@ -893,6 +913,7 @@ function loop(timestamp: number = 0) {
 
   // Venue labels — drawn live in world space so text is rasterised at current zoom, never upscaled
   layout.drawVenueLabels(ctx, nightAlpha);
+  layout.drawTrainStationLabel(ctx, nightAlpha);
   layout.drawOutdoorSeating(ctx, nightAlpha, weather.type, time);
 
   // Time-of-day atmosphere (mist, golden hour, Sunday tint) — world space, under everything
@@ -919,7 +940,86 @@ function loop(timestamp: number = 0) {
 
   // Market stalls and morning newsstand — drawn in plaza before pedestrians
   layout.drawMarket(ctx, nightAlpha);
+  layout.drawSundayMarket(ctx, nightAlpha);
   layout.drawNewstand(ctx, nightAlpha);
+
+  // Ice cream van
+  layout.updateIceCreamVan(weather.type);
+  layout.drawIceCreamVan(ctx, nightAlpha);
+
+  // Train station — animated train + passenger cycle
+  layout.updateTrain();
+  layout.drawTrain(ctx, nightAlpha);
+
+  // When train arrives: send 3–5 waiting pedestrians to platform, then board
+  if (layout.trainJustArrived) {
+    // 1. Spawn 3-5 new arrivals from the train onto the platform, heading into city
+    const arrivalCount = 3 + Math.floor(Math.random() * 3);
+    for (let i = 0; i < arrivalCount; i++) {
+      const p = new Pedestrian(layout, pedestrians.length, CLOCK_ELIGIBLE_COUNT);
+      const plat = layout.getRandomPlatformPosition();
+      p.x = plat.x;
+      p.y = plat.y;
+      p.vx = 0; p.vy = 0;
+      p.isAlighting = true;
+      p.alightTimer = 120 + Math.floor(Math.random() * 180);
+      const wp = layout.getRandomSidewalkWaypoint();
+      p.waypointX = wp.x;
+      p.waypointY = wp.y;
+      pedestrians.push(p);
+    }
+    // 2. Pull 3-5 idle city pedestrians toward the platform to board
+    let boardCount = 3 + Math.floor(Math.random() * 3);
+    for (const p of pedestrians) {
+      if (boardCount <= 0) break;
+      if (p.isClockEligible || p.isAtHome || p.isAtWorkplace || p.isBoarding
+          || p.isOnPlatform || p.isHeadingToPlatform || p.isAlighting) continue;
+      // Clear busy state so they can move
+      p.isSitting = false; p.isBenchSitting = false; p.isQueuing = false;
+      p.isWindowShopping = false; p.isCheckingPhone = false; p.socialMode = false;
+      p.isBrowsingMarket = false; p.isSheltering = false;
+      const plat = layout.getRandomPlatformPosition();
+      p.isHeadingToPlatform = true;
+      p.waypointX = plat.x;
+      p.waypointY = plat.y;
+      p.waypointTimer = 0;
+      boardCount--;
+    }
+  }
+
+  // When train departs: remove pedestrians on platform (they've boarded)
+  if (layout.trainJustDeparted) {
+    for (let i = pedestrians.length - 1; i >= 0; i--) {
+      const p = pedestrians[i];
+      if (p.isOnPlatform || p.isHeadingToPlatform) {
+        p.dispose();
+        pedestrians.splice(i, 1);
+      }
+    }
+    // Also start boarding animation for any still on platform
+  }
+
+  // Tick boarding: pedestrians waiting on platform start boarding when train departs
+  if (layout.trainState === 'departing') {
+    for (const p of pedestrians) {
+      if (p.isOnPlatform && !p.isBoarding) {
+        p.isOnPlatform = false;
+        p.isBoarding = true;
+        p.boardTimer = 60 + Math.floor(Math.random() * 40);
+        const cx = layout.stationX + layout.stationW / 2;
+        p.waypointX = cx + (Math.random() - 0.5) * 60;
+        p.waypointY = layout.trainTrackY;
+      }
+    }
+  }
+
+  // Remove pedestrians who have finished boarding
+  for (let i = pedestrians.length - 1; i >= 0; i--) {
+    if (pedestrians[i].isBoarding && pedestrians[i].boardTimer <= 0) {
+      pedestrians[i].dispose();
+      pedestrians.splice(i, 1);
+    }
+  }
 
   // Fountain — update on/off cycle and draw spray above the static basin
   layout.updateFountain();
@@ -1602,6 +1702,30 @@ function _checkFlashMob() {
   }
 }
 
+// --- Ice cream van arrival toast ---
+let _iceCreamWasActive = false;
+
+function _checkIceCreamVan() {
+  const active = layout.iceCreamActive;
+  if (active && !_iceCreamWasActive) {
+    showToast('🍦 Ice cream van!', 'The van has parked up near the plaza. Queue forming.', 5000);
+  }
+  _iceCreamWasActive = active;
+}
+
+// --- Sunday market toast ---
+let _sundayMarketToastFired = false;
+
+function _checkSundayMarket() {
+  const now = new Date();
+  if (now.getDay() !== 0) { _sundayMarketToastFired = false; return; }
+  const hour = now.getHours();
+  if (hour === 9 && !_sundayMarketToastFired) {
+    _sundayMarketToastFired = true;
+    showToast('🛍 Sunday Market', 'The Sunday market is open in the plaza. Extra stalls today until 6pm.', 7000);
+  }
+}
+
 // Hook all checks into the weather.update call site
 const _origWeatherUpdate = weather.update.bind(weather);
 (weather as any).update = function () {
@@ -1610,6 +1734,8 @@ const _origWeatherUpdate = weather.update.bind(weather);
   _checkCityFact();
   _checkTimeEvents();
   _checkFlashMob();
+  _checkIceCreamVan();
+  _checkSundayMarket();
 };
 
 createOptionsUI();
