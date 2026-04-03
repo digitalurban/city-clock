@@ -738,8 +738,14 @@ function buildStaticCanvas(nightAlpha: number) {
   const sctx = staticCanvas.getContext('2d')!;
   sctx.scale(dpr * detailScale, dpr * detailScale);
 
-  // Sky/ground base
-  sctx.fillStyle = dayNight.getSkyColor(nightAlpha);
+  // Sky/ground base — subtle gradient from slightly darker top to lighter bottom
+  const skyBase = dayNight.getSkyColor(nightAlpha);
+  const skyGrad = sctx.createLinearGradient(0, 0, 0, worldH);
+  skyGrad.addColorStop(0, skyBase);
+  // Shift lightness ~8% brighter toward the "horizon" (bottom of the top-down view)
+  const skyBrighter = dayNight.getSkyColorOffset(nightAlpha, 0.08);
+  skyGrad.addColorStop(1, skyBrighter);
+  sctx.fillStyle = skyGrad;
   sctx.fillRect(0, 0, worldW, worldH);
 
   // Render layers
@@ -1372,6 +1378,233 @@ function showInspectPopup(p: (typeof pedestrians)[0]) {
     if (inspectPopup) inspectPopup.style.display = 'none';
   }, 5000);
 }
+
+// ==================== Toast notification system ====================
+
+// Inject shared toast styles once
+const _toastStyle = document.createElement('style');
+_toastStyle.textContent = `
+  .city-toast {
+    position: fixed;
+    right: 16px;
+    z-index: 300;
+    max-width: 280px;
+    padding: 10px 14px;
+    border-radius: 10px;
+    background: rgba(10, 12, 22, 0.88);
+    color: #e8ecf4;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 13px;
+    line-height: 1.45;
+    box-shadow: 0 4px 18px rgba(0,0,0,0.55);
+    border: 1px solid rgba(100,130,200,0.18);
+    pointer-events: none;
+    transform: translateX(110%);
+    transition: transform 0.35s cubic-bezier(0.22,1,0.36,1), opacity 0.35s ease;
+    opacity: 0;
+  }
+  .city-toast.city-toast--visible {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  .city-toast .toast-title {
+    font-weight: 600;
+    color: #b8d0ff;
+    margin-bottom: 3px;
+  }
+  #city-info-toggle {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    z-index: 300;
+    padding: 6px 12px;
+    border-radius: 20px;
+    border: 1px solid rgba(100,130,200,0.25);
+    background: rgba(10, 12, 22, 0.75);
+    color: #c8d8f4;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 12px;
+    cursor: pointer;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    transition: background 0.2s, color 0.2s;
+    user-select: none;
+  }
+  #city-info-toggle.active {
+    background: rgba(30, 110, 60, 0.85);
+    color: #d4f5e0;
+    border-color: rgba(80,200,120,0.5);
+  }
+`;
+document.head.appendChild(_toastStyle);
+
+// City info enabled flag — controls city facts & time events (weather always shows)
+let _cityInfoEnabled = true;
+
+// Toggle button
+const _cityInfoBtn = document.createElement('button');
+_cityInfoBtn.id = 'city-info-toggle';
+_cityInfoBtn.textContent = '🏙 City Info';
+_cityInfoBtn.classList.add('active');
+_cityInfoBtn.addEventListener('click', () => {
+  _cityInfoEnabled = !_cityInfoEnabled;
+  _cityInfoBtn.classList.toggle('active', _cityInfoEnabled);
+  if (_cityInfoEnabled) {
+    showToast('🏙 City Information Stream', 'Welcome to the City Information Stream', 4000);
+  } else {
+    for (const t of [..._activeToasts]) {
+      t.classList.remove('city-toast--visible');
+    }
+  }
+});
+document.body.appendChild(_cityInfoBtn);
+
+// Stack management — toasts stack downward from top-right
+const _activeToasts: HTMLDivElement[] = [];
+const TOAST_GAP = 8;
+const TOAST_TOP_BASE = 52; // below the toggle button
+
+function _repositionToasts() {
+  let top = TOAST_TOP_BASE;
+  for (let i = 0; i < _activeToasts.length; i++) {
+    const t = _activeToasts[i];
+    t.style.top = `${top}px`;
+    top += t.offsetHeight + TOAST_GAP;
+  }
+}
+
+function showToast(title: string, body: string, durationMs = 5000) {
+  if (!_cityInfoEnabled) return;
+  const el = document.createElement('div');
+  el.className = 'city-toast';
+  el.innerHTML = `<div class="toast-title">${title}</div><div>${body}</div>`;
+  document.body.appendChild(el);
+  _activeToasts.push(el);
+
+  // Position before animating in (needs to be in DOM for offsetHeight)
+  _repositionToasts();
+
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      el.classList.add('city-toast--visible');
+    });
+  });
+
+  setTimeout(() => {
+    el.classList.remove('city-toast--visible');
+    el.addEventListener('transitionend', () => {
+      el.remove();
+      const idx = _activeToasts.indexOf(el);
+      if (idx !== -1) _activeToasts.splice(idx, 1);
+      _repositionToasts();
+    }, { once: true });
+  }, durationMs);
+}
+
+// --- Weather change alerts ---
+let _lastWeatherType = weather.type;
+
+function _checkWeatherChange() {
+  const current = weather.type;
+  if (current === _lastWeatherType) return;
+  const prev = _lastWeatherType;
+  _lastWeatherType = current;
+
+  const weatherLabels: Record<string, string> = {
+    clear:       '☀️ Clearing up',
+    cloudy:      '☁️ Clouds rolling in',
+    rain:        '🌧 Rain moving in',
+    thunderstorm:'⛈ Storm approaching',
+    snow:        '❄️ Snow falling',
+    fog:         '🌫 Fog settling in',
+  };
+
+  const weatherDesc: Record<string, string> = {
+    clear:       'Skies are clearing. A good time to head outside.',
+    cloudy:      'Overcast skies. Rain possible later.',
+    rain:        'Umbrellas out — steady rain expected.',
+    thunderstorm:'Heavy rain and thunder. Stay sheltered.',
+    snow:        'Snowfall across the city. Roads may be slow.',
+    fog:         'Low visibility across the district.',
+  };
+
+  const title = weatherLabels[current] ?? `🌡 Weather: ${current}`;
+  const body = weatherDesc[current] ?? `Conditions changing from ${prev}.`;
+  // Weather alerts always show regardless of city info toggle
+  const wasEnabled = _cityInfoEnabled;
+  _cityInfoEnabled = true;
+  showToast(title, body, 6000);
+  _cityInfoEnabled = wasEnabled;
+}
+
+// --- City fact toasts ---
+const CITY_FACTS = [
+  ['📍 City founded', "This city's grid was laid out in 1887 by engineer Clara Mott on a former marshland."],
+  ['🏛 City Hall', 'The clock tower above City Hall has kept time since 1923 — hand-wound until 1971.'],
+  ['🌳 Central Park', "The park's elm trees were planted in 1952 and are now a protected heritage grove."],
+  ['🚋 Transport history', 'Horse-drawn trams once ran along Riverside Road until 1934.'],
+  ['🏗 Skyline', 'The tallest building on the east block was originally a grain silo, converted in 1988.'],
+  ['☕ Café culture', 'More coffee is consumed per capita here than any other city in the region.'],
+  ['🎵 Live music', 'The bandstand in Civic Plaza has hosted free concerts every summer since 1961.'],
+  ['🌧 Rainfall', 'Average rainfall: 890 mm per year — most falls between October and February.'],
+  ['🚴 Cycling', 'The city added 42 km of protected bike lanes between 2015 and 2022.'],
+  ['🦆 Wildlife', 'The riverside corridor supports 34 species of birds recorded by local naturalists.'],
+  ['📬 Postal routes', 'The central post office processes over 12,000 items daily, down from 80,000 in 1995.'],
+  ['🌉 River bridge', 'The main bridge was designed to flex up to 18 cm in high winds — by design.'],
+];
+
+let _nextFactTime = Date.now() + (3 + Math.random() * 5) * 60_000; // 3–8 min from load
+
+function _checkCityFact() {
+  if (Date.now() < _nextFactTime) return;
+  const [title, body] = CITY_FACTS[Math.floor(Math.random() * CITY_FACTS.length)];
+  showToast(title, body, 7000);
+  _nextFactTime = Date.now() + (3 + Math.random() * 5) * 60_000;
+}
+
+// --- Time-of-day event toasts ---
+// Each entry fires once when the clock passes the target hour (checked per minute).
+const TIME_EVENTS: { hour: number; title: string; body: string }[] = [
+  { hour: 7.0,  title: '☕ Morning rush starting', body: 'Coffee queues forming. Foot traffic picking up across the district.' },
+  { hour: 8.5,  title: '🚌 Peak commute', body: 'Buses running at capacity. Extra services deployed on the main corridor.' },
+  { hour: 12.0, title: '🍱 Lunch hour', body: 'Cafés and food trucks at full swing. Expect queues near the plaza.' },
+  { hour: 13.5, title: '🏙 Afternoon settling in', body: 'Post-lunch lull. The city slows for about an hour.' },
+  { hour: 17.5, title: '🌆 Evening rush', body: 'Offices emptying out. Train platforms filling up.' },
+  { hour: 20.0, title: '🍽 Dinner time', body: 'Restaurant reservations peaking. The plaza fills with evening strollers.' },
+  { hour: 23.0, title: '🌙 Night quiet', body: 'The city winds down. Only the night owls remain.' },
+];
+
+let _lastEventMinute = -1;
+let _firedEventHours = new Set<number>();
+
+function _checkTimeEvents() {
+  const now = new Date();
+  const hour = now.getHours() + now.getMinutes() / 60;
+  const minute = now.getHours() * 60 + now.getMinutes();
+
+  if (minute === _lastEventMinute) return;
+  _lastEventMinute = minute;
+
+  // Reset fired set at midnight
+  if (now.getHours() === 0 && now.getMinutes() === 0) _firedEventHours.clear();
+
+  for (const ev of TIME_EVENTS) {
+    if (!_firedEventHours.has(ev.hour) && hour >= ev.hour && hour < ev.hour + 0.25) {
+      _firedEventHours.add(ev.hour);
+      showToast(ev.title, ev.body, 6000);
+      break; // one event per minute check
+    }
+  }
+}
+
+// Hook all three checks into the weather.update call site
+const _origWeatherUpdate = weather.update.bind(weather);
+(weather as any).update = function () {
+  _origWeatherUpdate();
+  _checkWeatherChange();
+  _checkCityFact();
+  _checkTimeEvents();
+};
 
 createOptionsUI();
 resize();

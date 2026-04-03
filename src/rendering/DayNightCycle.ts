@@ -21,6 +21,18 @@ export class DayNightCycle {
     return `rgb(${r}, ${g}, ${b})`;
   }
 
+  /** Like getSkyColor but with a small lightness offset (0–1) for gradient ends. */
+  getSkyColorOffset(nightAlpha: number, lightnessBoost: number): string {
+    const dayR = 200, dayG = 215, dayB = 230;
+    const nightR = 5, nightG = 10, nightB = 26;
+    const t = nightAlpha / 0.6;
+    const boost = Math.floor(lightnessBoost * 30 * (1 - t));
+    const r = Math.min(255, Math.floor(dayR + (nightR - dayR) * t) + boost);
+    const g = Math.min(255, Math.floor(dayG + (nightG - dayG) * t) + boost);
+    const b = Math.min(255, Math.floor(dayB + (nightB - dayB) * t) + boost);
+    return `rgb(${r}, ${g}, ${b})`;
+  }
+
   private seededRandom(seed: number): number {
     const x = Math.sin(seed + 1) * 10000;
     return x - Math.floor(x);

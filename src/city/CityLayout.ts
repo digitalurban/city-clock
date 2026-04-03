@@ -1161,6 +1161,29 @@ export class CityLayout {
       ctx.stroke();
     }
     ctx.setLineDash([]);
+
+    // ── Manhole covers — small circles at road centres near intersections ─────
+    const manholeAlpha = 0.18 - nightAlpha * 0.06;
+    if (manholeAlpha > 0.01) {
+      // Place one manhole per road segment, roughly centred
+      for (const road of this.roads) {
+        const seed = Math.round(road.x * 0.07 + road.y * 0.13);
+        if (seededRandom(seed) > 0.45) continue; // ~55% of segments get one
+        const mx = road.x + road.w * (0.35 + seededRandom(seed + 1) * 0.3);
+        const my = road.y + road.h * (0.35 + seededRandom(seed + 2) * 0.3);
+        const mr = road.horizontal ? road.h * 0.14 : road.w * 0.14;
+        ctx.strokeStyle = `rgba(255, 255, 255, ${manholeAlpha})`;
+        ctx.lineWidth = 0.8;
+        ctx.beginPath();
+        ctx.arc(mx, my, mr, 0, Math.PI * 2);
+        ctx.stroke();
+        // Cross hatch on cover
+        ctx.beginPath();
+        ctx.moveTo(mx - mr * 0.7, my); ctx.lineTo(mx + mr * 0.7, my);
+        ctx.moveTo(mx, my - mr * 0.7); ctx.lineTo(mx, my + mr * 0.7);
+        ctx.stroke();
+      }
+    }
   }
 
   drawSidewalks(ctx: CanvasRenderingContext2D, nightAlpha: number) {
@@ -1658,6 +1681,32 @@ export class CityLayout {
           ctx.fill();
         }
       }
+
+      // ── Rooftop garden — ~22% of large buildings ───────────────────────────
+      // A green planted area in a corner of the roof, with a small grid pattern
+      // of planted beds and a border rail, visible from above.
+      if (innerW > 22 && innerH > 22 && seededRandom(b.windowSeed + 7700) < 0.22) {
+        const gw = Math.min(innerW * 0.42, 28 + seededRandom(b.windowSeed + 7710) * 14);
+        const gh = Math.min(innerH * 0.42, 20 + seededRandom(b.windowSeed + 7720) * 12);
+        // Place in a random corner (NW / NE / SW / SE)
+        const corner = Math.floor(seededRandom(b.windowSeed + 7730) * 4);
+        const gx = corner % 2 === 0 ? innerX + 2 : innerX + innerW - gw - 2;
+        const gy = corner < 2    ? innerY + 2 : innerY + innerH - gh - 2;
+        // Garden base — muted green
+        ctx.fillStyle = `rgb(${Math.floor(68*darkFactor)},${Math.floor(105*darkFactor)},${Math.floor(55*darkFactor)})`;
+        ctx.fillRect(gx, gy, gw, gh);
+        // Planted beds — lighter rows
+        ctx.fillStyle = `rgba(${Math.floor(90*darkFactor)},${Math.floor(130*darkFactor)},${Math.floor(68*darkFactor)},0.7)`;
+        const bedRows = Math.max(2, Math.floor(gh / 7));
+        const bedH = (gh - 2) / bedRows;
+        for (let row = 0; row < bedRows; row++) {
+          if (row % 2 === 0) ctx.fillRect(gx + 1, gy + 1 + row * bedH, gw - 2, bedH * 0.7);
+        }
+        // Perimeter low railing
+        ctx.strokeStyle = `rgba(${Math.floor(180*darkFactor)},${Math.floor(165*darkFactor)},${Math.floor(140*darkFactor)},0.55)`;
+        ctx.lineWidth = 0.8;
+        ctx.strokeRect(gx, gy, gw, gh);
+      }
     }
   }
 
@@ -1936,6 +1985,47 @@ export class CityLayout {
         ctx.beginPath();
         ctx.arc(fx, fy, 3, 0, Math.PI * 2);
         ctx.fill();
+      }
+
+      // Sports court — ~40% of parks large enough get one (basketball or tennis)
+      if (park.w > 90 && park.h > 90 && seededRandom(park.seed + 77) < 0.40) {
+        const isTennis = seededRandom(park.seed + 88) > 0.5;
+        const cw = isTennis ? Math.min(park.w * 0.55, 52) : Math.min(park.w * 0.42, 38);
+        const ch = isTennis ? Math.min(park.h * 0.42, 38) : cw; // basketball is square
+        const cx = park.x + (park.w - cw) * (0.18 + seededRandom(park.seed + 99) * 0.64);
+        const cy = park.y + (park.h - ch) * (0.18 + seededRandom(park.seed + 100) * 0.64);
+        // Court surface
+        const courtColor = isTennis
+          ? `rgba(${Math.floor(52 * darkFactor)}, ${Math.floor(90 * darkFactor)}, ${Math.floor(140 * darkFactor)}, 0.85)`
+          : `rgba(${Math.floor(165 * darkFactor)}, ${Math.floor(88 * darkFactor)}, ${Math.floor(42 * darkFactor)}, 0.80)`;
+        ctx.fillStyle = courtColor;
+        ctx.fillRect(cx, cy, cw, ch);
+        // Court lines
+        ctx.strokeStyle = `rgba(255, 255, 255, ${0.7 - nightAlpha * 0.25})`;
+        ctx.lineWidth = 0.8;
+        ctx.strokeRect(cx + 1, cy + 1, cw - 2, ch - 2);
+        if (isTennis) {
+          // Net (centre line across width)
+          ctx.beginPath();
+          ctx.moveTo(cx, cy + ch / 2); ctx.lineTo(cx + cw, cy + ch / 2);
+          ctx.stroke();
+          // Service box dividers
+          ctx.beginPath();
+          ctx.moveTo(cx + cw / 2, cy + ch * 0.25); ctx.lineTo(cx + cw / 2, cy + ch * 0.75);
+          ctx.stroke();
+        } else {
+          // Basketball: centre circle + half-court line
+          ctx.beginPath();
+          ctx.moveTo(cx, cy + ch / 2); ctx.lineTo(cx + cw, cy + ch / 2);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.arc(cx + cw / 2, cy + ch / 2, ch * 0.18, 0, Math.PI * 2);
+          ctx.stroke();
+          // Key boxes each end
+          const kw = cw * 0.38, kh = ch * 0.32;
+          ctx.strokeRect(cx + (cw - kw) / 2, cy, kw, kh);
+          ctx.strokeRect(cx + (cw - kw) / 2, cy + ch - kh, kw, kh);
+        }
       }
 
       // Playground
