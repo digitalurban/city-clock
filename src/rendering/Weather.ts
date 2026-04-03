@@ -123,7 +123,7 @@ export class Weather {
   private cloudCover: number = 0; // 0-100 from API
 
   constructor() {
-    this.transitionTimer = 1200 + Math.random() * 2400;
+    this.transitionTimer = 12000 + Math.random() * 24000; // 3–10 min before first change
   }
 
   /** Set location via city name using Open-Meteo Geocoding */
@@ -455,34 +455,34 @@ export class Weather {
 
     if (roll < 0.28) {
       this.scheduleWeatherChange('clear', 0);
-      this.transitionTimer = 1800 + Math.random() * 3600;   // 30–90 s
+      this.transitionTimer = 18000 + Math.random() * 36000;  // 5–15 min
     } else if (roll < 0.50) {
       this.scheduleWeatherChange('cloudy', 0.4);
-      this.transitionTimer = 1200 + Math.random() * 2400;   // 20–60 s
+      this.transitionTimer = 12000 + Math.random() * 24000;  // 3–10 min
     } else if (roll < 0.64) {
       this.scheduleWeatherChange('drizzle', 0.55);
-      this.transitionTimer = 900  + Math.random() * 1500;   // 15–40 s
+      this.transitionTimer = 9000  + Math.random() * 15000;  // 2.5–7 min
     } else if (roll < 0.76) {
       this.scheduleWeatherChange('rain', 0.85);
-      this.transitionTimer = 600  + Math.random() * 1800;   // 10–40 s
+      this.transitionTimer = 6000  + Math.random() * 18000;  // 1.5–6 min
     } else if (roll < 0.84) {
       this.scheduleWeatherChange('fog', 0.45);
-      this.transitionTimer = 1200 + Math.random() * 2400;   // 20–60 s
+      this.transitionTimer = 12000 + Math.random() * 24000;  // 3–10 min
     } else if (roll < 0.90) {
       this.scheduleWeatherChange('heavy_rain', 1.0);
-      this.transitionTimer = 480  + Math.random() * 960;    // 8–24 s
+      this.transitionTimer = 4800  + Math.random() * 9600;   // 1.3–4 min
     } else if (roll < 0.94) {
       this.scheduleWeatherChange('snow', 0.80);
-      this.transitionTimer = 900  + Math.random() * 1500;   // 15–40 s
+      this.transitionTimer = 9000  + Math.random() * 15000;  // 2.5–7 min
     } else if (roll < 0.97) {
       this.scheduleWeatherChange('thunderstorm', 1.0);
-      this.transitionTimer = 480  + Math.random() * 960;    // 8–24 s
+      this.transitionTimer = 4800  + Math.random() * 9600;   // 1.3–4 min
     } else if (roll < 0.99) {
       this.scheduleWeatherChange('heavy_snow', 1.0);
-      this.transitionTimer = 600  + Math.random() * 1200;   // 10–30 s
+      this.transitionTimer = 6000  + Math.random() * 12000;  // 1.7–5 min
     } else {
       this.scheduleWeatherChange('hail', 1.0);
-      this.transitionTimer = 240  + Math.random() * 480;    // 4–12 s
+      this.transitionTimer = 2400  + Math.random() * 4800;   // 40s–2 min
     }
   }
 

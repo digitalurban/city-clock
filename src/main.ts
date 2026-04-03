@@ -1597,13 +1597,40 @@ function _checkTimeEvents() {
   }
 }
 
-// Hook all three checks into the weather.update call site
+// --- Flash mob ---
+let _flashMobActive = false;
+let _nextFlashMobTime = Date.now() + (20 + Math.random() * 40) * 60_000; // 20–60 min from load
+let _flashMobEndTime = 0;
+const FLASH_MOB_DURATION_MS = (2 + Math.random()) * 60_000; // 2–3 min
+
+function _checkFlashMob() {
+  const now = Date.now();
+
+  if (!_flashMobActive && now >= _nextFlashMobTime && !isAlarmActive) {
+    _flashMobActive = true;
+    _flashMobEndTime = now + FLASH_MOB_DURATION_MS;
+    isDancing = true;
+    layout.startBandstand();
+    showToast('🕺 Flash Mob!', 'A flash mob has broken out in the plaza. Everyone is dancing!', 6000);
+    _nextFlashMobTime = now + (20 + Math.random() * 40) * 60_000;
+  }
+
+  if (_flashMobActive && now >= _flashMobEndTime && !isAlarmActive) {
+    _flashMobActive = false;
+    isDancing = false;
+    layout.stopBandstand();
+    showToast('🏙 Flash mob dispersing', 'The crowd returns to their day.', 4000);
+  }
+}
+
+// Hook all checks into the weather.update call site
 const _origWeatherUpdate = weather.update.bind(weather);
 (weather as any).update = function () {
   _origWeatherUpdate();
   _checkWeatherChange();
   _checkCityFact();
   _checkTimeEvents();
+  _checkFlashMob();
 };
 
 createOptionsUI();
