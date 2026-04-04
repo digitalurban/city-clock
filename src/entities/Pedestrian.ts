@@ -1538,9 +1538,10 @@ export class Pedestrian {
       }
       // House repulsion
       if (!repelled) {
-        for (const h of layout.houses) {
+        for (let hi = 0; hi < layout.houses.length; hi++) {
+          const h = layout.houses[hi];
           // Skip own home when going home
-          if (this.isGoingHome && layout.houses.indexOf(h) === this.assignedHome) continue;
+          if (this.isGoingHome && hi === this.assignedHome) continue;
           if (nextX >= h.x - m && nextX <= h.x + h.w + m &&
             nextY >= h.y - m && nextY <= h.y + h.h + m) {
             const rdx = this.x - (h.x + h.w / 2);

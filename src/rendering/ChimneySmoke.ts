@@ -64,7 +64,10 @@ export class ChimneySmoke {
       p.size += 0.055;
       p.alpha -= 0.0038;
     }
-    this.particles = this.particles.filter(p => p.alpha > 0.01);
+    // Splice dead particles in-place (reverse order) to avoid allocating a new array
+    for (let i = this.particles.length - 1; i >= 0; i--) {
+      if (this.particles[i].alpha <= 0.01) this.particles.splice(i, 1);
+    }
   }
 
   draw(ctx: CanvasRenderingContext2D) {

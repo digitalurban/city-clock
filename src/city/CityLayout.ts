@@ -189,6 +189,7 @@ export class CityLayout {
   stationW: number = 0;
   stationH: number = 0;
   trainTrackY: number = 0; // world-space Y of the running rail line
+  railwayRowTopY: number = 0; // top boundary of railway row — used to clip road strokes
   // Train animation — slides in from right, pauses, departs left
   trainX: number = 0;
   trainActive: boolean = false;
@@ -428,8 +429,15 @@ export class CityLayout {
     const rawRoads: RoadSegment[] = [];
     const pb = this.plazaBounds;
 
+    // The bottom row is the railway corridor — cars must not enter it.
+    // Vertical roads are clipped to stop at the top boundary of the railway row.
+    // The bottom horizontal road (r = gridRows) is omitted entirely.
+    const railwayRowTopY = offsetY + (this.gridRows - 1) * cellSize - ROAD_WIDTH / 2;
+    this.railwayRowTopY = railwayRowTopY;
+
     // Horizontal roads
     for (let r = 0; r <= this.gridRows; r++) {
+      if (r >= this.gridRows - 1) continue; // omit both edges of railway row — no cars through corridor
       const ry = offsetY + r * cellSize - ROAD_WIDTH / 2;
       rawRoads.push({ x: offsetX - cellSize, y: ry, w: this.width + cellSize * 2, h: ROAD_WIDTH, horizontal: true });
       this.walkableRects.push({
@@ -440,15 +448,16 @@ export class CityLayout {
       });
     }
 
-    // Vertical roads
+    // Vertical roads — clipped to stop at the railway row top boundary
     for (let c = 0; c <= this.gridCols; c++) {
       const rx = offsetX + c * cellSize - ROAD_WIDTH / 2;
-      rawRoads.push({ x: rx, y: offsetY - cellSize, w: ROAD_WIDTH, h: this.height + cellSize * 2, horizontal: false });
+      const roadH = railwayRowTopY - (offsetY - cellSize);
+      rawRoads.push({ x: rx, y: offsetY - cellSize, w: ROAD_WIDTH, h: roadH, horizontal: false });
       this.walkableRects.push({
-        x: rx - SIDEWALK_WIDTH, y: 0, w: SIDEWALK_WIDTH, h: this.height, type: 'sidewalk',
+        x: rx - SIDEWALK_WIDTH, y: 0, w: SIDEWALK_WIDTH, h: railwayRowTopY, type: 'sidewalk',
       });
       this.walkableRects.push({
-        x: rx + ROAD_WIDTH, y: 0, w: SIDEWALK_WIDTH, h: this.height, type: 'sidewalk',
+        x: rx + ROAD_WIDTH, y: 0, w: SIDEWALK_WIDTH, h: railwayRowTopY, type: 'sidewalk',
       });
     }
 
@@ -473,8 +482,9 @@ export class CityLayout {
       }
     }
 
-    // Crosswalks + intersections at grid crossings (only outside plaza)
+    // Crosswalks + intersections at grid crossings (only outside plaza, not in railway row)
     for (let r = 0; r <= this.gridRows; r++) {
+      if (r >= this.gridRows - 1) continue; // no crosswalks/intersections in railway row
       for (let c = 0; c <= this.gridCols; c++) {
         const ix = offsetX + c * cellSize;
         const iy = offsetY + r * cellSize;
@@ -1234,7 +1244,19 @@ export class CityLayout {
     ctx.lineWidth = 1;
     ctx.setLineDash([]);
     for (const road of this.roads) {
-      ctx.strokeRect(road.x + 0.5, road.y + 0.5, road.w - 1, road.h - 1);
+      // Vertical roads clipped at the railway row top — skip bottom edge to avoid a
+      // visible horizontal line running across the city at the corridor boundary.
+      if (!road.horizontal && this.railwayRowTopY > 0 &&
+          Math.abs((road.y + road.h) - this.railwayRowTopY) < 2) {
+        ctx.beginPath();
+        ctx.moveTo(road.x + 0.5, road.y + road.h);   // bottom-left (no bottom stroke)
+        ctx.lineTo(road.x + 0.5, road.y + 0.5);       // left side up
+        ctx.lineTo(road.x + road.w - 0.5, road.y + 0.5); // top
+        ctx.lineTo(road.x + road.w - 0.5, road.y + road.h); // right side down
+        ctx.stroke();
+      } else {
+        ctx.strokeRect(road.x + 0.5, road.y + 0.5, road.w - 1, road.h - 1);
+      }
     }
 
     // Dashed centre lines
@@ -3289,9 +3311,9 @@ export class CityLayout {
     const stationRow = this.gridRows - 1;
     const stationColA = Math.floor(this.gridCols / 2) - 1;
     const stationColB = stationColA + 1;
-    // Two rails 4px either side of the track centre
-    const track1Y = this.trainTrackY - 4;
-    const track2Y = this.trainTrackY + 4;
+    // Two rails 7px either side of the track centre (matching wider train body)
+    const track1Y = this.trainTrackY - 7;
+    const track2Y = this.trainTrackY + 7;
 
     // Allotment plot colours
     const plotColors = [
@@ -3302,6 +3324,16 @@ export class CityLayout {
       [60, 110, 45],   // deep green
       [120, 95, 50],   // earth / fallow
     ];
+
+    // ── Fill the full-width row strip (including road gaps) with a base colour ──
+    const rowY = stationRow * cellSize;
+    const rowH = cellSize; // full cell including road
+    // Left half → gravel/earth; right half → grass verge
+    const midX = (stationColB + 1) * cellSize;
+    ctx.fillStyle = `rgb(${Math.floor(158*dark)},${Math.floor(148*dark)},${Math.floor(128*dark)})`; // gravel
+    ctx.fillRect(0, rowY, midX, rowH);
+    ctx.fillStyle = `rgb(${Math.floor(105*dark)},${Math.floor(148*dark)},${Math.floor(80*dark)})`; // grass
+    ctx.fillRect(midX, rowY, this.width - midX, rowH);
 
     for (let c = 0; c < this.gridCols; c++) {
       if (c === stationColA || c === stationColB) continue;
@@ -3386,8 +3418,8 @@ export class CityLayout {
     // ── Two rail tracks running full width ──
     // Two rails forming a single track — 4px either side of centre
     const trackCentreY = platformY + platformH * 0.55;
-    const track1Y = trackCentreY - 4;
-    const track2Y = trackCentreY + 4;
+    const track1Y = trackCentreY - 7;
+    const track2Y = trackCentreY + 7;
     ctx.strokeStyle = `rgb(${Math.floor(90*dark)},${Math.floor(85*dark)},${Math.floor(80*dark)})`;
     ctx.lineWidth = 1.5;
     for (const ty of [track1Y, track2Y]) {
@@ -3469,8 +3501,8 @@ export class CityLayout {
     const { stationX: sx, stationW: sw } = this;
     if (sw === 0) return;
 
-    // Loco dimensions (engine + tender + 2 carriages)
-    const locoTotalW = 55 + 4 + 32 + 4 + 46 + 4 + 46; // ≈ 191
+    // Loco dimensions (engine + tender + 2 carriages) — must match drawTrain sizes
+    const locoTotalW = 65 + 4 + 38 + 4 + 65 + 4 + 65; // = 245
     const stoppedX = sx + sw / 2 - locoTotalW / 2;
 
     if (!this.trainActive) {
@@ -3521,7 +3553,7 @@ export class CityLayout {
 
     // Emit smoke from chimney (front of loco) while moving
     if (this.trainState !== 'stopped' && Math.random() < 0.4) {
-      const chimneyX = this.trainX + 7;  // chimney circle x in top-down view
+      const chimneyX = this.trainX + 10;  // chimney circle x in top-down view
       const chimneyY = this.trainTrackY - 6; // slightly above the track line
       this.smokeParticles.push({
         x: chimneyX + (Math.random() - 0.5) * 3,
@@ -3534,7 +3566,7 @@ export class CityLayout {
     }
     // Idle chuff while stopped (slower emit)
     if (this.trainState === 'stopped' && Math.random() < 0.05) {
-      const chimneyX = this.trainX + 7;
+      const chimneyX = this.trainX + 10;
       const chimneyY = this.trainTrackY - 6;
       this.smokeParticles.push({
         x: chimneyX,
@@ -3565,8 +3597,8 @@ export class CityLayout {
     if (!this.trainActive) return;
 
     const tx = this.trainX;
-    // Train body height in top-down view (width of the train as seen from above)
-    const trainH = 8;  // sits between the two rails (4px gap each side)
+    // Train body height — wider than a car (~18×9) so ~14px tall, sitting between the rails
+    const trainH = 14;
     const top = trackY - trainH / 2;
 
     // ── Helper: rounded rect ──
@@ -3581,105 +3613,100 @@ export class CityLayout {
       ctx.fill();
     };
 
-    // ── Locomotive (top-down roof view, 44px long) ──
+    // ── Locomotive (top-down roof view, 65px long) ──
     const lx = tx;
-    const lW = 44;
+    const lW = 65;
 
     // Shadow
-    ctx.fillStyle = `rgba(0,0,0,${0.25 + nightAlpha * 0.1})`;
-    rRect(lx + 1.5, top + 1.5, lW, trainH, 2);
+    ctx.fillStyle = `rgba(0,0,0,${0.28 + nightAlpha * 0.1})`;
+    rRect(lx + 2, top + 2, lW, trainH, 2);
 
-    // Boiler roof — dark iron cylinder seen from above (elliptical highlight)
+    // Boiler roof
     ctx.fillStyle = `rgb(${Math.floor(42*dark)},${Math.floor(40*dark)},${Math.floor(38*dark)})`;
     rRect(lx, top, lW, trainH, 2);
 
-    // Boiler centreline highlight (slightly lighter strip down the middle — curved roof)
+    // Boiler centreline highlight
     ctx.fillStyle = `rgba(${Math.floor(80*dark)},${Math.floor(78*dark)},${Math.floor(75*dark)},0.7)`;
-    ctx.fillRect(lx + 2, trackY - 1, lW - 14, 2);
+    ctx.fillRect(lx + 2, trackY - 1.5, lW - 20, 3);
 
     // Red buffer at front
     ctx.fillStyle = `rgb(${Math.floor(200*dark)},${Math.floor(45*dark)},${Math.floor(45*dark)})`;
-    ctx.fillRect(lx, top + 1, 3, trainH - 2);
+    ctx.fillRect(lx, top + 2, 4, trainH - 4);
 
     // Brass boiler bands
     ctx.fillStyle = `rgb(${Math.floor(185*dark)},${Math.floor(145*dark)},${Math.floor(45*dark)})`;
-    for (const bx2 of [lx + 12, lx + 21]) {
-      ctx.fillRect(bx2, top, 2, trainH);
+    for (const bx2 of [lx + 18, lx + 32]) {
+      ctx.fillRect(bx2, top, 2.5, trainH);
     }
 
-    // Dome (top-down: small brass circle)
+    // Dome (top-down: brass circle)
     ctx.fillStyle = `rgb(${Math.floor(175*dark)},${Math.floor(135*dark)},${Math.floor(40*dark)})`;
-    ctx.beginPath(); ctx.arc(lx + 18, trackY, 2.5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(lx + 26, trackY, 3.5, 0, Math.PI * 2); ctx.fill();
 
-    // Chimney (top-down: small dark circle near front)
+    // Chimney (top-down: dark circle near front)
     ctx.fillStyle = `rgb(${Math.floor(22*dark)},${Math.floor(20*dark)},${Math.floor(18*dark)})`;
-    ctx.beginPath(); ctx.arc(lx + 7, trackY, 2, 0, Math.PI * 2); ctx.fill();
-    // Chimney rim (slightly lighter ring)
-    ctx.strokeStyle = `rgb(${Math.floor(50*dark)},${Math.floor(48*dark)},${Math.floor(46*dark)})`;
-    ctx.lineWidth = 0.8;
-    ctx.beginPath(); ctx.arc(lx + 7, trackY, 2.5, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(lx + 10, trackY, 3, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = `rgb(${Math.floor(55*dark)},${Math.floor(52*dark)},${Math.floor(50*dark)})`;
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(lx + 10, trackY, 3.8, 0, Math.PI * 2); ctx.stroke();
 
-    // Cab roof (back portion — slightly different shade, with window strip)
+    // Cab roof
     ctx.fillStyle = `rgb(${Math.floor(58*dark)},${Math.floor(54*dark)},${Math.floor(52*dark)})`;
-    ctx.fillRect(lx + 30, top, 14, trainH);
+    ctx.fillRect(lx + 44, top, 21, trainH);
     ctx.fillStyle = `rgba(${Math.floor(160*dark)},${Math.floor(200*dark)},${Math.floor(225*dark)},0.55)`;
-    ctx.fillRect(lx + 32, top + 1, 10, trainH - 2);
+    ctx.fillRect(lx + 47, top + 2, 15, trainH - 4);
 
     // ── Coupling gap ──
-    const gap = 3;
+    const gap = 4;
 
-    // ── Tender (top-down, 26px long) ──
+    // ── Tender (38px long) ──
     const tndX = tx + lW + gap;
-    const tndW = 26;
+    const tndW = 38;
 
     ctx.fillStyle = `rgba(0,0,0,${0.25 + nightAlpha * 0.1})`;
-    rRect(tndX + 1.5, top + 1.5, tndW, trainH, 1.5);
-
+    rRect(tndX + 2, top + 2, tndW, trainH, 1.5);
     ctx.fillStyle = `rgb(${Math.floor(48*dark)},${Math.floor(44*dark)},${Math.floor(42*dark)})`;
     rRect(tndX, top, tndW, trainH, 1.5);
-    // Coal — dark textured fill in top half
     ctx.fillStyle = `rgb(${Math.floor(22*dark)},${Math.floor(20*dark)},${Math.floor(20*dark)})`;
-    ctx.fillRect(tndX + 2, top + 1, tndW - 4, Math.floor(trainH * 0.55));
+    ctx.fillRect(tndX + 3, top + 2, tndW - 6, Math.floor(trainH * 0.5));
 
-    // ── Carriages (2 × 46px) ──
-    const cW = 46;
+    // ── Carriages (2 × 65px) ──
+    const cW = 65;
     const carriagePalette = [
-      [210, 192, 158],  // parchment cream
-      [195, 175, 142],  // warm tan
+      [210, 192, 158],
+      [195, 175, 142],
     ];
     for (let i = 0; i < 2; i++) {
       const cx2 = tndX + tndW + gap + i * (cW + gap);
       const [cr, cg, cb] = carriagePalette[i];
 
-      // Shadow
       ctx.fillStyle = `rgba(0,0,0,${0.22 + nightAlpha * 0.08})`;
-      rRect(cx2 + 1.5, top + 1.5, cW, trainH, 2);
+      rRect(cx2 + 2, top + 2, cW, trainH, 2);
 
-      // Body (roof seen from above)
       ctx.fillStyle = `rgb(${Math.floor(cr*dark)},${Math.floor(cg*dark)},${Math.floor(cb*dark)})`;
       rRect(cx2, top, cW, trainH, 2);
 
-      // Roof centreline highlight
+      // Roof highlight
       ctx.fillStyle = `rgba(255,255,255,${0.12 * dark})`;
-      ctx.fillRect(cx2 + 3, trackY - 0.8, cW - 6, 1.6);
+      ctx.fillRect(cx2 + 4, trackY - 1, cW - 8, 2);
 
-      // Darker edge strips (sides of roof)
+      // Side edge strips
       ctx.fillStyle = `rgba(0,0,0,${0.18 * dark})`;
-      ctx.fillRect(cx2, top, cW, 1.5);
-      ctx.fillRect(cx2, top + trainH - 1.5, cW, 1.5);
+      ctx.fillRect(cx2, top, cW, 2);
+      ctx.fillRect(cx2, top + trainH - 2, cW, 2);
 
-      // Windows (top-down: small lit rectangles along each side)
+      // Windows along each side
       ctx.fillStyle = `rgba(${Math.floor(180*dark)},${Math.floor(218*dark)},${Math.floor(235*dark)},0.85)`;
-      for (let wx = cx2 + 5; wx < cx2 + cW - 5; wx += 10) {
-        ctx.fillRect(wx, top, 6, 2);           // near side
-        ctx.fillRect(wx, top + trainH - 2, 6, 2); // far side
+      for (let wx = cx2 + 6; wx < cx2 + cW - 6; wx += 13) {
+        ctx.fillRect(wx, top, 8, 3);
+        ctx.fillRect(wx, top + trainH - 3, 8, 3);
       }
     }
 
-    // ── Headlamp glow at front when at night ──
+    // Headlamp glow at night
     if (nightAlpha > 0.1) {
       ctx.fillStyle = `rgba(255, 240, 160, ${0.5 * nightAlpha})`;
-      ctx.beginPath(); ctx.arc(lx, trackY, 3.5, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(lx, trackY, 5, 0, Math.PI * 2); ctx.fill();
     }
   }
 
@@ -3738,10 +3765,10 @@ export class CityLayout {
   getRandomPlatformPosition(): { x: number; y: number } {
     const platformY = this.stationY + Math.floor(this.stationH * 0.55);
     const platformH = this.stationH - Math.floor(this.stationH * 0.55);
-    // Carriages sit behind loco (55) + gap (4) + tender (32) + gap (4) = 95px offset
-    const locoTotalW = 55 + 4 + 32 + 4 + 46 + 4 + 46;
+    // Carriages sit behind loco (65) + gap (4) + tender (38) + gap (4) = 111px offset
+    const locoTotalW = 65 + 4 + 38 + 4 + 65 + 4 + 65;
     const stoppedX = this.stationX + this.stationW / 2 - locoTotalW / 2;
-    const carriageStartX = stoppedX + 95;
+    const carriageStartX = stoppedX + 111;
     const carriageEndX = stoppedX + locoTotalW;
     return {
       x: carriageStartX + Math.random() * (carriageEndX - carriageStartX),

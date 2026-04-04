@@ -475,9 +475,9 @@ function createOptionsUI() {
     <div style="margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between;">
       <span>City Info</span>
       <button id="city-info-toggle" style="
-        background: #2a7a48; color: #d4f5e0; border: none; border-radius: 20px;
+        background: #444; color: #aaa; border: none; border-radius: 20px;
         padding: 4px 14px; cursor: pointer; font-size: 13px; font-weight: bold;
-        min-width: 64px; transition: background 0.2s;">🏙 On</button>
+        min-width: 64px; transition: background 0.2s;">🏙 Off</button>
     </div>
     <div style="margin-bottom: 6px;">
       <label style="display: flex; justify-content: space-between; margin-bottom: 4px;">
@@ -786,6 +786,7 @@ function buildStaticCanvas(nightAlpha: number) {
 
   layout.drawPlazaBenches(sctx, nightAlpha);
   layout.drawFountainBasin(sctx, nightAlpha);
+  layout.drawRailwayCorridor(sctx, nightAlpha); // base fill first, before houses
   layout.drawShadows(sctx, nightAlpha);
   layout.drawBuildings(sctx, nightAlpha);
   layout.drawBuildingRooftops(sctx, nightAlpha);
@@ -801,7 +802,6 @@ function buildStaticCanvas(nightAlpha: number) {
   layout.drawVenues(sctx, nightAlpha);
   layout.drawDeliveryLanes(sctx, nightAlpha); // on top of venues so stub is visible
   layout.drawPlazaLampPosts(sctx, nightAlpha);
-  layout.drawRailwayCorridor(sctx, nightAlpha);
   layout.drawTrainStation(sctx, nightAlpha);
 
   lastStaticNightAlpha = nightAlpha;
@@ -1535,8 +1535,8 @@ _toastStyle.textContent = `
 `;
 document.head.appendChild(_toastStyle);
 
-// City info enabled flag — controlled from settings panel
-let _cityInfoEnabled = true;
+// City info enabled flag — controlled from settings panel (off by default)
+let _cityInfoEnabled = false;
 
 // Stack management — toasts stack upward from bottom-left
 const _activeToasts: HTMLDivElement[] = [];
@@ -1552,7 +1552,7 @@ function _repositionToasts() {
   }
 }
 
-function showToast(title: string, body: string, durationMs = 5000) {
+function showToast(title: string, body: string, durationMs = 10000) {
   if (!_cityInfoEnabled) return;
   const el = document.createElement('div');
   el.className = 'city-toast';
@@ -1612,7 +1612,7 @@ function _checkWeatherChange() {
   // Weather alerts always show regardless of city info toggle
   const wasEnabled = _cityInfoEnabled;
   _cityInfoEnabled = true;
-  showToast(title, body, 6000);
+  showToast(title, body, 10000);
   _cityInfoEnabled = wasEnabled;
 }
 
@@ -1637,7 +1637,7 @@ let _nextFactTime = Date.now() + (3 + Math.random() * 5) * 60_000; // 3–8 min 
 function _checkCityFact() {
   if (Date.now() < _nextFactTime) return;
   const [title, body] = CITY_FACTS[Math.floor(Math.random() * CITY_FACTS.length)];
-  showToast(title, body, 7000);
+  showToast(title, body, 12000);
   _nextFactTime = Date.now() + (3 + Math.random() * 5) * 60_000;
 }
 
@@ -1670,7 +1670,7 @@ function _checkTimeEvents() {
   for (const ev of TIME_EVENTS) {
     if (!_firedEventHours.has(ev.hour) && hour >= ev.hour && hour < ev.hour + 0.25) {
       _firedEventHours.add(ev.hour);
-      showToast(ev.title, ev.body, 6000);
+      showToast(ev.title, ev.body, 10000);
       break; // one event per minute check
     }
   }
