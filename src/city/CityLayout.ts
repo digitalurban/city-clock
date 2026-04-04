@@ -124,7 +124,7 @@ export interface CityEvent {
 }
 
 // Block type determines what fills a city block
-type BlockType = 'commercial' | 'residential' | 'park' | 'utility' | 'construction' | 'station' | 'railway';
+type BlockType = 'commercial' | 'residential' | 'park' | 'utility' | 'construction' | 'station' | 'railway' | 'branchRailway' | 'branchStation';
 
 export interface ConstructionSiteDef {
   x: number; y: number; w: number; h: number;
@@ -200,6 +200,23 @@ export class CityLayout {
   // Fired once per train event so main.ts can react
   trainJustArrived: boolean = false;   // set for one frame when state → 'stopped'
   trainJustDeparted: boolean = false;  // set for one frame when train leaves the canvas
+
+  // ── Branch railway line (col 0, vertical) ────────────────────────────────
+  branchTrackX: number = 0;        // world-space X of the vertical branch track
+  branchStationX: number = 0;
+  branchStationY: number = 0;
+  branchStationW: number = 0;
+  branchStationH: number = 0;
+  branchTrainY: number = -9999;    // top of branch train (world Y)
+  branchTrainX: number = 0;        // world-space X during horizontal phases
+  branchTrainActive: boolean = false;
+  branchTrainState: 'inbound_h' | 'inbound_curve' | 'inbound_v' | 'stopped' | 'outbound_v' | 'outbound_curve' | 'outbound_h' = 'inbound_h';
+  branchTrainTimer: number = 0;
+  branchTrainCooldown: number = 480;
+  branchTrainCurveT: number = 0;    // progress through junction curve (0 → 1)
+  branchTrainJustArrived: boolean = false;
+  branchTrainJustDeparted: boolean = false;
+  branchTrainStoppedY: number = 0; // branchTrainY when parked at platform
 
   // ── Ice cream van ──────────────────────────────────────────────────────────
   iceCreamActive: boolean = false;
@@ -380,6 +397,13 @@ export class CityLayout {
     }
     this.blockTypes.set(`${stationColA},${stationRow}`, 'station');
     this.blockTypes.set(`${stationColB},${stationRow}`, 'station');
+
+    // Branch line: col 2, rows 0 to gridRows-2 become vertical railway corridor
+    const branchStationRow = 3;
+    for (let r = 0; r < this.gridRows - 1; r++) {
+      this.blockTypes.set(`2,${r}`, 'branchRailway');
+    }
+    this.blockTypes.set(`2,${branchStationRow}`, 'branchStation');
 
     // Pick one outer block to be a construction site
     const candidates: string[] = [];
@@ -586,9 +610,17 @@ export class CityLayout {
             }
             break;
           }
+          case 'branchStation':
+            // Only generate at the designated row
+            if (r === 3) this.generateBranchStation(bx, by, blockW, blockH);
+            break;
+          case 'branchRailway':
+            // No buildings — entire cell is the vertical corridor
+            break;
         }
 
-        // Trees along sidewalks (occasional)
+        // Trees along sidewalks (occasional) — skip for branch corridor
+        if (c === 2) continue;
         if (seededRandom(c * 31 + r * 59) > 0.5) {
           this.trees.push({
             x: bx - SIDEWALK_WIDTH / 2 - 2,
@@ -791,6 +823,36 @@ export class CityLayout {
     // Walkable platform area (bottom portion)
     this.walkableRects.push({
       x: bx, y: by + buildingH, w: totalW, h: blockH - buildingH,
+      type: 'sidewalk',
+    });
+  }
+
+  private generateBranchStation(bx: number, by: number, blockW: number, blockH: number) {
+    const cellSize = BLOCK_SIZE + ROAD_WIDTH;
+    // Branch track runs through the left portion of col 2's block
+    this.branchTrackX = 2 * cellSize + ROAD_WIDTH / 2 + Math.floor(blockW * 0.3);
+    this.branchStationX = bx;
+    this.branchStationY = by;
+    this.branchStationW = blockW;
+    this.branchStationH = blockH;
+
+    // Stopped position: carriages (starting at offset 111) aligned with platform top
+    this.branchTrainStoppedY = by - 111;
+    // Branch train starts below the city, off the bottom
+    this.branchTrainY = this.height + 300;
+
+    // Station building on the left quarter of the block
+    const bldW = Math.floor(blockW * 0.45);
+    this.buildings.push({
+      x: bx, y: by + 4,
+      w: bldW, h: blockH - 8,
+      color: '#7a8fa0',
+      windowSeed: 77777,
+    });
+
+    // Walkable platform (right side of block, beside track)
+    this.walkableRects.push({
+      x: bx + bldW, y: by, w: blockW - bldW, h: blockH,
       type: 'sidewalk',
     });
   }
@@ -3326,14 +3388,60 @@ export class CityLayout {
     ];
 
     // ── Fill the full-width row strip (including road gaps) with a base colour ──
-    const rowY = stationRow * cellSize;
-    const rowH = cellSize; // full cell including road
+    // Start ROAD_WIDTH/2 earlier to cover the gap left by the removed boundary road.
+    const rowY = stationRow * cellSize - ROAD_WIDTH / 2;
+    const rowH = cellSize + ROAD_WIDTH / 2;
     // Left half → gravel/earth; right half → grass verge
     const midX = (stationColB + 1) * cellSize;
     ctx.fillStyle = `rgb(${Math.floor(158*dark)},${Math.floor(148*dark)},${Math.floor(128*dark)})`; // gravel
     ctx.fillRect(0, rowY, midX, rowH);
     ctx.fillStyle = `rgb(${Math.floor(105*dark)},${Math.floor(148*dark)},${Math.floor(80*dark)})`; // grass
     ctx.fillRect(midX, rowY, this.width - midX, rowH);
+
+    // ── Detail strip: the 36px band between the road and the corridor blocks ──
+    const stripY = rowY;
+    const stripH = ROAD_WIDTH; // 36px
+    // Station forecourt approach — paved path connecting to building
+    const stationMidX = (stationColA + stationColB + 1) * cellSize / 2 + (stationColA * cellSize) / 2;
+    const fcX = stationColA * cellSize;
+    const fcW = (stationColB + 1) * cellSize - fcX;
+    ctx.fillStyle = `rgb(${Math.floor(188*dark)},${Math.floor(180*dark)},${Math.floor(162*dark)})`; // paving
+    ctx.fillRect(fcX, stripY, fcW, stripH);
+    // Paving stone grid
+    ctx.strokeStyle = `rgba(0,0,0,${0.08*dark})`;
+    ctx.lineWidth = 0.5;
+    for (let px2 = fcX; px2 < fcX + fcW; px2 += 12) {
+      ctx.beginPath(); ctx.moveTo(px2, stripY); ctx.lineTo(px2, stripY + stripH); ctx.stroke();
+    }
+    ctx.beginPath(); ctx.moveTo(fcX, stripY + stripH / 2); ctx.lineTo(fcX + fcW, stripY + stripH / 2); ctx.stroke();
+    // Central path stripe
+    ctx.fillStyle = `rgb(${Math.floor(200*dark)},${Math.floor(192*dark)},${Math.floor(175*dark)})`;
+    ctx.fillRect(fcX + fcW / 2 - 8, stripY, 16, stripH);
+
+    // Left side (allotments): parking bays
+    const parkW = stationColA * cellSize;
+    ctx.fillStyle = `rgb(${Math.floor(162*dark)},${Math.floor(153*dark)},${Math.floor(133*dark)})`; // tarmac
+    ctx.fillRect(0, stripY, parkW, stripH);
+    // Bay dividers
+    ctx.strokeStyle = `rgba(255,255,255,${0.45*dark})`;
+    ctx.lineWidth = 1;
+    for (let px2 = 14; px2 < parkW - 5; px2 += 22) {
+      ctx.beginPath(); ctx.moveTo(px2, stripY + 2); ctx.lineTo(px2, stripY + stripH - 2); ctx.stroke();
+    }
+    // Disabled bay (blue box)
+    ctx.fillStyle = `rgba(40,80,180,${0.35*dark})`;
+    ctx.fillRect(parkW - 44, stripY + 3, 20, stripH - 6);
+    ctx.strokeStyle = `rgba(255,255,255,${0.5*dark})`;
+    ctx.lineWidth = 0.8;
+    ctx.strokeRect(parkW - 44, stripY + 3, 20, stripH - 6);
+
+    // Right side (houses): narrow pavement edging
+    const rightX = (stationColB + 1) * cellSize;
+    ctx.fillStyle = `rgb(${Math.floor(115*dark)},${Math.floor(158*dark)},${Math.floor(88*dark)})`; // grass verge
+    ctx.fillRect(rightX, stripY, this.width - rightX, stripH);
+    // Path to road
+    ctx.fillStyle = `rgb(${Math.floor(182*dark)},${Math.floor(175*dark)},${Math.floor(158*dark)})`;
+    ctx.fillRect(rightX + 8, stripY, 14, stripH);
 
     for (let c = 0; c < this.gridCols; c++) {
       if (c === stationColA || c === stationColB) continue;
@@ -3365,24 +3473,83 @@ export class CityLayout {
 
             // Crop rows (small stripes)
             ctx.fillStyle = `rgba(0,0,0,${0.12 * dark})`;
-            for (let rowY = gy2 + 3; rowY < gy2 + plotH - 2; rowY += 4) {
-              ctx.fillRect(gx2 + 2, rowY, plotW - 4, 1.5);
+            for (let rowY2 = gy2 + 3; rowY2 < gy2 + plotH - 2; rowY2 += 4) {
+              ctx.fillRect(gx2 + 2, rowY2, plotW - 4, 1.5);
             }
 
-            // Occasional shed or water butt in top-right plot
-            if (px === 1 && py2 === 0 && seededRandom(c * 11) > 0.4) {
+            const seed1 = seededRandom(c * 31 + px * 7 + py2 * 3);
+            const seed2 = seededRandom(c * 17 + px * 13 + py2 * 5 + 2);
+            const seed3 = seededRandom(c * 23 + px * 11 + py2 * 7 + 4);
+
+            // Greenhouse (semi-transparent pale green lean-to)
+            if (seed1 > 0.78) {
+              ctx.fillStyle = `rgba(${Math.floor(180*dark)},${Math.floor(220*dark)},${Math.floor(160*dark)},0.55)`;
+              ctx.fillRect(gx2 + 2, gy2 + 2, plotW - 4, plotH * 0.45);
+              ctx.strokeStyle = `rgba(120,160,100,${0.7*dark})`;
+              ctx.lineWidth = 0.8;
+              ctx.strokeRect(gx2 + 2, gy2 + 2, plotW - 4, plotH * 0.45);
+            }
+            // Shed
+            else if (seed1 > 0.52) {
               ctx.fillStyle = `rgb(${Math.floor(140*dark)},${Math.floor(100*dark)},${Math.floor(60*dark)})`;
-              ctx.fillRect(gx2 + plotW - 10, gy2 + 2, 8, 8);
-              ctx.fillStyle = `rgb(${Math.floor(100*dark)},${Math.floor(75*dark)},${Math.floor(40*dark)})`;
-              ctx.fillRect(gx2 + plotW - 9, gy2 + 3, 6, 3); // darker roof
+              ctx.fillRect(gx2 + plotW - 11, gy2 + 2, 9, 9);
+              ctx.fillStyle = `rgb(${Math.floor(100*dark)},${Math.floor(72*dark)},${Math.floor(38*dark)})`;
+              ctx.fillRect(gx2 + plotW - 10, gy2 + 3, 7, 3);
+              // Water butt next to shed
+              if (seed2 > 0.5) {
+                ctx.fillStyle = `rgb(${Math.floor(60*dark)},${Math.floor(80*dark)},${Math.floor(100*dark)})`;
+                ctx.beginPath();
+                ctx.arc(gx2 + plotW - 13, gy2 + 9, 2.5, 0, Math.PI * 2);
+                ctx.fill();
+              }
+            }
+            // Scarecrow
+            else if (seed1 > 0.38) {
+              const scx = gx2 + plotW * 0.5, scy = gy2 + plotH * 0.4;
+              ctx.strokeStyle = `rgb(${Math.floor(100*dark)},${Math.floor(75*dark)},${Math.floor(45*dark)})`;
+              ctx.lineWidth = 1.2;
+              ctx.beginPath(); ctx.moveTo(scx, scy - 4); ctx.lineTo(scx, scy + 5); ctx.stroke(); // body
+              ctx.beginPath(); ctx.moveTo(scx - 4, scy - 1); ctx.lineTo(scx + 4, scy - 1); ctx.stroke(); // arms
+              ctx.fillStyle = `rgb(${Math.floor(200*dark)},${Math.floor(155*dark)},${Math.floor(80*dark)})`;
+              ctx.beginPath(); ctx.arc(scx, scy - 5.5, 2.5, 0, Math.PI * 2); ctx.fill(); // head
+            }
+            // Compost bin
+            else if (seed2 > 0.6) {
+              ctx.fillStyle = `rgb(${Math.floor(80*dark)},${Math.floor(55*dark)},${Math.floor(25*dark)})`;
+              ctx.fillRect(gx2 + plotW - 8, gy2 + plotH - 9, 7, 7);
+            }
+            // Cloche / row covers (white arcs)
+            else if (seed3 > 0.55) {
+              ctx.strokeStyle = `rgba(240,240,230,${0.55*dark})`;
+              ctx.lineWidth = 1;
+              for (let ci = 0; ci < 3; ci++) {
+                ctx.beginPath();
+                ctx.arc(gx2 + 5 + ci * (plotW * 0.3), gy2 + plotH - 5, 3.5, Math.PI, 0);
+                ctx.stroke();
+              }
             }
           }
         }
 
-        // Low fence around edge
+        // Gate / entrance gap in fence at bottom centre
+        const gateX = bx + BLOCK_SIZE / 2 - 4;
+        ctx.fillStyle = `rgb(${Math.floor(130*dark)},${Math.floor(105*dark)},${Math.floor(60*dark)})`;
+        ctx.fillRect(gateX, by + BLOCK_SIZE - 4, 8, 5); // gap in soil
+
+        // Low fence around edge (with gate gap)
         ctx.strokeStyle = `rgb(${Math.floor(155*dark)},${Math.floor(120*dark)},${Math.floor(70*dark)})`;
         ctx.lineWidth = 1.2;
-        ctx.strokeRect(bx + 1, by + 1, BLOCK_SIZE - 2, BLOCK_SIZE - 2);
+        ctx.beginPath();
+        // Top + sides + bottom with gap for gate
+        ctx.rect(bx + 1, by + 1, BLOCK_SIZE - 2, BLOCK_SIZE - 2);
+        ctx.stroke();
+        // Erase gate gap by overdrawing with soil colour
+        ctx.fillStyle = `rgb(${Math.floor(130*dark)},${Math.floor(105*dark)},${Math.floor(60*dark)})`;
+        ctx.fillRect(gateX, by + BLOCK_SIZE - 1, 8, 3);
+        // Gate posts
+        ctx.fillStyle = `rgb(${Math.floor(160*dark)},${Math.floor(125*dark)},${Math.floor(72*dark)})`;
+        ctx.fillRect(gateX - 1, by + BLOCK_SIZE - 5, 2, 6);
+        ctx.fillRect(gateX + 7, by + BLOCK_SIZE - 5, 2, 6);
 
       }
       // Right side: houses already drawn by drawHouses — no background fill needed here
@@ -3443,6 +3610,70 @@ export class CityLayout {
       ctx.fillRect(cx2 - 1.5, platformY, 3, platformH * 0.45);
     }
 
+    // ── Platform benches ──
+    ctx.fillStyle = `rgb(${Math.floor(160*dark)},${Math.floor(120*dark)},${Math.floor(70*dark)})`;
+    for (let bx2 = sx + 18; bx2 < sx + sw - 20; bx2 += 44) {
+      ctx.fillRect(bx2, platformY + 6, 14, 4);  // seat
+      ctx.fillRect(bx2 + 1, platformY + 4, 2, 6); // left leg
+      ctx.fillRect(bx2 + 11, platformY + 4, 2, 6); // right leg
+    }
+
+    // ── Platform waste bins ──
+    ctx.fillStyle = `rgb(${Math.floor(80*dark)},${Math.floor(90*dark)},${Math.floor(85*dark)})`;
+    for (let bx2 = sx + 36; bx2 < sx + sw - 10; bx2 += 60) {
+      ctx.fillRect(bx2, platformY + 5, 4, 6);
+      ctx.fillStyle = `rgb(${Math.floor(60*dark)},${Math.floor(70*dark)},${Math.floor(65*dark)})`;
+      ctx.fillRect(bx2 - 0.5, platformY + 4, 5, 2); // lid
+      ctx.fillStyle = `rgb(${Math.floor(80*dark)},${Math.floor(90*dark)},${Math.floor(85*dark)})`;
+    }
+
+    // ── Platform lamps ──
+    for (let lx = sx + 14; lx < sx + sw - 10; lx += 52) {
+      ctx.fillStyle = `rgb(${Math.floor(110*dark)},${Math.floor(108*dark)},${Math.floor(105*dark)})`;
+      ctx.fillRect(lx - 1, platformY + 2, 2, platformH * 0.5);  // post
+      ctx.fillStyle = `rgb(${Math.floor(240*dark)},${Math.floor(220*dark)},${Math.floor(150*dark)})`;
+      ctx.beginPath();
+      ctx.arc(lx, platformY + 2, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // ── Tactile paving strip (yellow dots at platform edge) ──
+    ctx.fillStyle = `rgb(${Math.floor(210*dark)},${Math.floor(175*dark)},${Math.floor(30*dark)})`;
+    for (let dx = sx + 4; dx < sx + sw - 4; dx += 5) {
+      ctx.beginPath();
+      ctx.arc(dx, platformY + 7, 1, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // ── Station forecourt (gravel apron in front of building) ──
+    const forecourtY = sy;
+    const forecourtH = buildingH * 0.35;
+    ctx.fillStyle = `rgb(${Math.floor(175*dark)},${Math.floor(165*dark)},${Math.floor(148*dark)})`;
+    ctx.fillRect(sx, forecourtY, sw, forecourtH);
+    // Forecourt centre path
+    ctx.fillStyle = `rgb(${Math.floor(195*dark)},${Math.floor(185*dark)},${Math.floor(165*dark)})`;
+    ctx.fillRect(sx + sw / 2 - 10, forecourtY, 20, forecourtH);
+    // Bollards along forecourt edge
+    ctx.fillStyle = `rgb(${Math.floor(200*dark)},${Math.floor(160*dark)},${Math.floor(40*dark)})`;
+    for (let bx2 = sx + 12; bx2 < sx + sw - 8; bx2 += 20) {
+      if (Math.abs(bx2 - (sx + sw / 2)) < 12) continue; // gap for path
+      ctx.beginPath();
+      ctx.arc(bx2, forecourtY + forecourtH - 2, 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // Taxi rank marking (yellow dashed line left side of forecourt)
+    ctx.strokeStyle = `rgb(${Math.floor(220*dark)},${Math.floor(185*dark)},${Math.floor(35*dark)})`;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath();
+    ctx.moveTo(sx + 8, forecourtY + 2);
+    ctx.lineTo(sx + 8, forecourtY + forecourtH - 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // "TAXI" label stub (small coloured rect)
+    ctx.fillStyle = `rgb(${Math.floor(240*dark)},${Math.floor(200*dark)},${Math.floor(40*dark)})`;
+    ctx.fillRect(sx + 4, forecourtY + 3, 8, 5);
+
     // ── Station name sign above building entrance ──
     // (Text drawn in drawTrainStationLabel for zoom-correct rasterisation)
 
@@ -3493,6 +3724,440 @@ export class CityLayout {
     ctx.font = 'bold 9px sans-serif';
     ctx.fillStyle = `rgba(235,230,220,${0.9 - nightAlpha * 0.3})`;
     ctx.fillText('CENTRAL STATION', this.stationX + this.stationW / 2, this.stationY + 12);
+    ctx.restore();
+  }
+
+  /** Draw vertical gravel corridor for branch line (col 2). Called into static canvas. */
+  drawBranchRailwayCorridor(ctx: CanvasRenderingContext2D, nightAlpha: number) {
+    if (this.branchTrackX === 0) return;
+    const cellSize = BLOCK_SIZE + ROAD_WIDTH;
+    const dark = 1 - nightAlpha * 0.5;
+    const tx = this.branchTrackX;
+    const corridorX = 2 * cellSize;           // left edge of col 2's cell
+    const corridorW = cellSize;               // full col 2 width
+    const corridorH = (this.gridRows - 1) * cellSize; // rows 0–5
+
+    // Base gravel fill for the corridor column
+    ctx.fillStyle = `rgb(${Math.floor(148*dark)},${Math.floor(140*dark)},${Math.floor(122*dark)})`;
+    ctx.fillRect(corridorX, 0, corridorW, corridorH);
+
+    // Subtle gravel texture
+    ctx.fillStyle = `rgba(0,0,0,${0.06*dark})`;
+    for (let i = 0; i < 50; i++) {
+      const gx = corridorX + seededRandom(i * 7 + 1) * corridorW;
+      const gy = seededRandom(i * 13 + 3) * corridorH;
+      ctx.beginPath(); ctx.arc(gx, gy, 1.5, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // Level-crossing road patches (drawn before rails so rails render on top)
+    for (let r = 1; r < this.gridRows - 1; r++) {
+      const crossY = r * cellSize - ROAD_WIDTH / 2;
+      ctx.fillStyle = `rgb(${Math.floor(180*dark)},${Math.floor(172*dark)},${Math.floor(155*dark)})`;
+      ctx.fillRect(corridorX, crossY, corridorW, ROAD_WIDTH);
+      ctx.strokeStyle = `rgb(${Math.floor(220*dark)},${Math.floor(185*dark)},${Math.floor(35*dark)})`;
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(corridorX + 4, crossY + ROAD_WIDTH / 2);
+      ctx.lineTo(corridorX + corridorW - 4, crossY + ROAD_WIDTH / 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // Sleepers along full corridor height
+    ctx.strokeStyle = `rgb(${Math.floor(100*dark)},${Math.floor(82*dark)},${Math.floor(58*dark)})`;
+    ctx.lineWidth = 1.2;
+    for (let sy2 = 0; sy2 < corridorH; sy2 += 10) {
+      ctx.beginPath(); ctx.moveTo(tx - 9, sy2); ctx.lineTo(tx + 9, sy2); ctx.stroke();
+    }
+
+    // Two rails (vertical section)
+    ctx.strokeStyle = `rgb(${Math.floor(90*dark)},${Math.floor(85*dark)},${Math.floor(80*dark)})`;
+    ctx.lineWidth = 1.5;
+    for (const rx of [tx - 7, tx + 7]) {
+      ctx.beginPath(); ctx.moveTo(rx, 0); ctx.lineTo(rx, corridorH); ctx.stroke();
+    }
+
+    // Junction curves are drawn in drawBranchJunction(), called after drawRailwayCorridor()
+    // so they render on top of the main railway corridor fill.
+  }
+
+  /** Draw the branch-to-main junction curves — call AFTER drawRailwayCorridor. */
+  drawBranchJunction(ctx: CanvasRenderingContext2D, nightAlpha: number) {
+    if (this.branchTrackX === 0 || this.trainTrackY === 0) return;
+    const cellSize = BLOCK_SIZE + ROAD_WIDTH;
+    const dark = 1 - nightAlpha * 0.5;
+    const tx = this.branchTrackX;
+    const corridorX = 2 * cellSize;
+    const corridorW = cellSize;
+    const jY = (this.gridRows - 1) * cellSize; // bottom of branch = top of railway row
+    const curveLen = 48;
+
+    // Gravel base for col 2 within the railway row, so it reads as a continuation of the branch
+    ctx.fillStyle = `rgb(${Math.floor(148*dark)},${Math.floor(140*dark)},${Math.floor(122*dark)})`;
+    ctx.fillRect(corridorX, jY, corridorW, this.trainTrackY + 12 - jY);
+
+    // Vertical sleepers extending into junction zone
+    ctx.strokeStyle = `rgb(${Math.floor(100*dark)},${Math.floor(82*dark)},${Math.floor(58*dark)})`;
+    ctx.lineWidth = 1.2;
+    for (let sy2 = jY; sy2 < jY + 30; sy2 += 10) {
+      ctx.beginPath(); ctx.moveTo(tx - 9, sy2); ctx.lineTo(tx + 9, sy2); ctx.stroke();
+    }
+
+    // Vertical rails continuing into junction zone
+    ctx.strokeStyle = `rgb(${Math.floor(90*dark)},${Math.floor(85*dark)},${Math.floor(80*dark)})`;
+    ctx.lineWidth = 1.5;
+    for (const rx of [tx - 7, tx + 7]) {
+      ctx.beginPath(); ctx.moveTo(rx, jY); ctx.lineTo(rx, jY + 22); ctx.stroke();
+    }
+
+    // Curved rails sweeping RIGHT (east) to join the main horizontal track
+    // Control points use the same H/V as the animation so train follows the visible track exactly.
+    const curveEntryY = jY + 22;
+    const dYc = this.trainTrackY - curveEntryY;
+    const Hc = dYc * 0.6;  // horizontal handle strength
+    const Vc = curveLen * 0.6; // vertical handle strength
+    for (const [rx, oy] of [[tx - 7, -7], [tx + 7, 7]] as [number, number][]) {
+      const endX = rx + curveLen;
+      const endY = this.trainTrackY + oy;
+      ctx.beginPath();
+      ctx.moveTo(rx, curveEntryY);
+      ctx.bezierCurveTo(rx, curveEntryY + Vc, endX - Hc, endY, endX, endY);
+      ctx.stroke();
+    }
+
+    // Junction sleepers along the curve (sampled from same bezier)
+    ctx.strokeStyle = `rgb(${Math.floor(100*dark)},${Math.floor(82*dark)},${Math.floor(58*dark)})`;
+    ctx.lineWidth = 1.2;
+    for (let i = 0; i <= 5; i++) {
+      const t = i / 5;
+      const mt = 1 - t;
+      const cx2 = mt*mt*mt*tx + 3*mt*mt*t*tx + 3*mt*t*t*(tx+curveLen-Hc) + t*t*t*(tx+curveLen);
+      const cy2 = mt*mt*mt*curveEntryY + 3*mt*mt*t*(curveEntryY+Vc) + 3*mt*t*t*this.trainTrackY + t*t*t*this.trainTrackY;
+      ctx.beginPath(); ctx.moveTo(cx2 - 9, cy2); ctx.lineTo(cx2 + 9, cy2); ctx.stroke();
+    }
+  }
+
+  /** Draw the branch station platform (static canvas). */
+  drawBranchStation(ctx: CanvasRenderingContext2D, nightAlpha: number) {
+    if (this.branchStationW === 0) return;
+    const { branchStationX: bx, branchStationY: by, branchStationW: bw, branchStationH: bh } = this;
+    const dark = 1 - nightAlpha * 0.5;
+    const tx = this.branchTrackX;
+    const bldW = Math.floor(bw * 0.45);
+
+    // Platform surface (right of building, beside track)
+    ctx.fillStyle = `rgb(${Math.floor(195*dark)},${Math.floor(188*dark)},${Math.floor(178*dark)})`;
+    ctx.fillRect(bx + bldW, by, bw - bldW, bh);
+
+    // Yellow platform edge stripe
+    ctx.fillStyle = `rgb(${Math.floor(230*dark)},${Math.floor(190*dark)},${Math.floor(40*dark)})`;
+    ctx.fillRect(bx + bldW, by, 3, bh);
+
+    // Tactile paving dots along platform edge
+    ctx.fillStyle = `rgb(${Math.floor(210*dark)},${Math.floor(175*dark)},${Math.floor(30*dark)})`;
+    for (let dy = by + 4; dy < by + bh - 4; dy += 5) {
+      ctx.beginPath(); ctx.arc(bx + bldW + 7, dy, 1, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // Canopy over platform
+    ctx.fillStyle = `rgba(${Math.floor(160*dark)},${Math.floor(175*dark)},${Math.floor(200*dark)},0.35)`;
+    ctx.fillRect(bx + bldW + 4, by, (bw - bldW) * 0.55, bh);
+    ctx.fillStyle = `rgb(${Math.floor(130*dark)},${Math.floor(125*dark)},${Math.floor(120*dark)})`;
+    for (let cy2 = by + 12; cy2 < by + bh - 8; cy2 += 28) {
+      ctx.fillRect(bx + bldW + 4, cy2 - 1.5, (bw - bldW) * 0.55, 3);
+    }
+
+    // Platform benches
+    ctx.fillStyle = `rgb(${Math.floor(160*dark)},${Math.floor(120*dark)},${Math.floor(70*dark)})`;
+    for (let by2 = by + 12; by2 < by + bh - 14; by2 += 30) {
+      ctx.fillRect(bx + bldW + 10, by2, 4, 12);
+      ctx.fillRect(bx + bldW + 9, by2 + 2, 6, 2);
+    }
+
+    // Platform lamps
+    for (let ly = by + 8; ly < by + bh - 6; ly += 36) {
+      ctx.fillStyle = `rgb(${Math.floor(110*dark)},${Math.floor(108*dark)},${Math.floor(105*dark)})`;
+      ctx.fillRect(bx + bldW + 20, ly, 2, 12);
+      ctx.fillStyle = `rgb(${Math.floor(240*dark)},${Math.floor(220*dark)},${Math.floor(150*dark)})`;
+      ctx.beginPath(); ctx.arc(bx + bldW + 21, ly, 3, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // Station name sign on building wall
+    ctx.fillStyle = `rgb(${Math.floor(55*dark)},${Math.floor(72*dark)},${Math.floor(90*dark)})`;
+    ctx.fillRect(bx + 3, by + bh / 2 - 7, bldW - 6, 14);
+
+    // Station clock on building
+    ctx.fillStyle = `rgb(${Math.floor(220*dark)},${Math.floor(210*dark)},${Math.floor(195*dark)})`;
+    ctx.beginPath(); ctx.arc(bx + bldW / 2, by + bh / 4, 6, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = `rgb(${Math.floor(80*dark)},${Math.floor(75*dark)},${Math.floor(70*dark)})`;
+    ctx.lineWidth = 0.8; ctx.stroke();
+  }
+
+  drawBranchStationLabel(ctx: CanvasRenderingContext2D, nightAlpha: number) {
+    if (this.branchStationW === 0) return;
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = 'bold 8px sans-serif';
+    ctx.fillStyle = `rgba(235,230,220,${0.9 - nightAlpha * 0.3})`;
+    const bldW = Math.floor(this.branchStationW * 0.45);
+    ctx.fillText('WEST ST.', this.branchStationX + bldW / 2, this.branchStationY + this.branchStationH / 2);
+    ctx.restore();
+  }
+
+  /** Call once per frame — L-shaped path: enters from right along main track, curves north to branch station */
+  updateBranchTrain() {
+    if (this.branchStationW === 0 || this.trainTrackY === 0) return;
+    const speed = 0.7;
+    const trainLen = 65 + 4 + 38 + 4 + 65 + 4 + 65; // 245
+    const tx = this.branchTrackX;
+    // Junction geometry matching drawBranchJunction()
+    const jY = (this.gridRows - 1) * (BLOCK_SIZE + ROAD_WIDTH); // top of railway row
+    const curveEntryY = jY + 22; // bottom of short vertical stub; where curve begins
+    const curveLen = 48;         // horizontal reach of the curve (east)
+    const dY = this.trainTrackY - curveEntryY; // vertical drop through the curve
+    // Approximate arc length for timing
+    const arcLen = Math.sqrt(curveLen * curveLen + dY * dY) * 1.15;
+
+    this.branchTrainJustArrived = false;
+    this.branchTrainJustDeparted = false;
+
+    if (!this.branchTrainActive) {
+      this.branchTrainCooldown--;
+      if (this.branchTrainCooldown <= 0) {
+        this.branchTrainActive = true;
+        this.branchTrainState = 'inbound_h';
+        this.branchTrainX = this.width + trainLen + 60;
+        this.branchTrainY = this.trainTrackY;
+      }
+      return;
+    }
+
+    const emitSmoke = (x: number, y: number) => {
+      if (Math.random() < 0.22) {
+        this.smokeParticles.push({
+          x: x + (Math.random() - 0.5) * 4, y,
+          vx: (Math.random() - 0.5) * 0.18,
+          vy: -(0.22 + Math.random() * 0.18),
+          age: 0, maxAge: 80,
+        });
+      }
+    };
+
+    // Scalar cubic bezier helper
+    const bez = (p0: number, p1: number, p2: number, p3: number, t: number) => {
+      const mt = 1 - t;
+      return mt*mt*mt*p0 + 3*mt*mt*t*p1 + 3*mt*t*t*p2 + t*t*t*p3;
+    };
+
+    if (this.branchTrainState === 'inbound_h') {
+      // Travel left along main track; enter curve when loco reaches curve entry point
+      this.branchTrainX -= speed;
+      emitSmoke(this.branchTrainX + 10, this.trainTrackY - 6);
+      if (this.branchTrainX <= tx + curveLen) {
+        this.branchTrainX = tx + curveLen;
+        this.branchTrainState = 'inbound_curve';
+        this.branchTrainCurveT = 0;
+      }
+
+    } else if (this.branchTrainState === 'inbound_curve') {
+      // Loco sweeps along bezier matching drawn track: (tx+curveLen, trackY) → (tx, curveEntryY)
+      this.branchTrainCurveT += speed / arcLen;
+      if (this.branchTrainCurveT >= 1) {
+        this.branchTrainCurveT = 1;
+        this.branchTrainState = 'inbound_v';
+        this.branchTrainY = curveEntryY;
+      }
+      const t = this.branchTrainCurveT;
+      const px = bez(tx + curveLen, tx + curveLen, tx, tx, t);
+      const py = bez(this.trainTrackY, this.trainTrackY - 10, curveEntryY + 20, curveEntryY, t);
+      emitSmoke(px, py - 6);
+
+    } else if (this.branchTrainState === 'inbound_v') {
+      // Travel north along branch track
+      this.branchTrainY -= speed;
+      emitSmoke(tx + (Math.random() - 0.5) * 4, this.branchTrainY + 8);
+      if (this.branchTrainY <= this.branchTrainStoppedY) {
+        this.branchTrainY = this.branchTrainStoppedY;
+        this.branchTrainState = 'stopped';
+        this.branchTrainTimer = 260;
+        this.branchTrainJustArrived = true;
+      }
+
+    } else if (this.branchTrainState === 'stopped') {
+      this.branchTrainTimer--;
+      if (this.branchTrainTimer <= 0) this.branchTrainState = 'outbound_v';
+
+    } else if (this.branchTrainState === 'outbound_v') {
+      // Travel south; enter curve when loco front reaches curve entry
+      this.branchTrainY += speed;
+      emitSmoke(tx + (Math.random() - 0.5) * 4, this.branchTrainY + trainLen - 8);
+      if (this.branchTrainY + trainLen >= curveEntryY) {
+        this.branchTrainState = 'outbound_curve';
+        this.branchTrainCurveT = 0;
+      }
+
+    } else if (this.branchTrainState === 'outbound_curve') {
+      // Loco sweeps along bezier matching drawn track: (tx, curveEntryY) → (tx+curveLen, trackY)
+      this.branchTrainCurveT += speed / arcLen;
+      if (this.branchTrainCurveT >= 1) {
+        this.branchTrainCurveT = 1;
+        this.branchTrainState = 'outbound_h';
+        this.branchTrainX = tx + curveLen - trainLen; // tail; loco = branchTrainX + trainLen
+      }
+      const t = this.branchTrainCurveT;
+      const px = bez(tx, tx, tx + curveLen, tx + curveLen, t);
+      const py = bez(curveEntryY, curveEntryY + 20, this.trainTrackY - 10, this.trainTrackY, t);
+      emitSmoke(px, py - 6);
+
+    } else if (this.branchTrainState === 'outbound_h') {
+      // Travel right back off-screen
+      this.branchTrainX += speed;
+      emitSmoke(this.branchTrainX + trainLen - 10, this.trainTrackY - 6);
+      if (this.branchTrainX >= this.width + trainLen + 60) {
+        this.branchTrainActive = false;
+        this.branchTrainCooldown = 400 + Math.floor(Math.random() * 200);
+        this.branchTrainJustDeparted = true;
+      }
+    }
+  }
+
+  /** Draw the branch train — horizontal on main track, vertical on branch. */
+  drawBranchTrain(ctx: CanvasRenderingContext2D, nightAlpha: number) {
+    if (!this.branchTrainActive) return;
+    const dark = 1 - nightAlpha * 0.45;
+    const trainH = 14;
+    const state = this.branchTrainState;
+    const trainLen = 245;
+
+    // Set up transform so all drawing is in local space: x=0 = loco front, y=0 = track centre
+    // Local +x always points BACKWARD (opposite direction of travel).
+    const tx = this.branchTrackX;
+    const jY = (this.gridRows - 1) * (BLOCK_SIZE + ROAD_WIDTH);
+    const curveEntryY = jY + 22;
+    const curveLen = 48;
+
+    ctx.save();
+    switch (state) {
+      case 'inbound_h':
+        ctx.translate(this.branchTrainX, this.trainTrackY);
+        break;
+      case 'outbound_h':
+        ctx.translate(this.branchTrainX + trainLen, this.trainTrackY);
+        ctx.scale(-1, 1);
+        break;
+      case 'inbound_v':
+      case 'stopped':
+        ctx.translate(this.branchTrackX, this.branchTrainY);
+        ctx.rotate(Math.PI / 2);
+        break;
+      case 'outbound_v':
+        ctx.translate(this.branchTrackX, this.branchTrainY + trainLen);
+        ctx.rotate(-Math.PI / 2);
+        break;
+      case 'inbound_curve':
+      case 'outbound_curve': {
+        const t = this.branchTrainCurveT;
+        const mt = 1 - t;
+        // Bezier control points match drawBranchJunction() exactly
+        let p0x: number, p0y: number, p1x: number, p1y: number,
+            p2x: number, p2y: number, p3x: number, p3y: number;
+        if (state === 'inbound_curve') {
+          // (tx+curveLen, trackY) → (tx, curveEntryY)
+          p0x = tx + curveLen; p0y = this.trainTrackY;
+          p1x = tx + curveLen; p1y = this.trainTrackY - 10;
+          p2x = tx;            p2y = curveEntryY + 20;
+          p3x = tx;            p3y = curveEntryY;
+        } else {
+          // (tx, curveEntryY) → (tx+curveLen, trackY)
+          p0x = tx;            p0y = curveEntryY;
+          p1x = tx;            p1y = curveEntryY + 20;
+          p2x = tx + curveLen; p2y = this.trainTrackY - 10;
+          p3x = tx + curveLen; p3y = this.trainTrackY;
+        }
+        const px = mt*mt*mt*p0x + 3*mt*mt*t*p1x + 3*mt*t*t*p2x + t*t*t*p3x;
+        const py = mt*mt*mt*p0y + 3*mt*mt*t*p1y + 3*mt*t*t*p2y + t*t*t*p3y;
+        const tdx = 3*mt*mt*(p1x-p0x) + 6*mt*t*(p2x-p1x) + 3*t*t*(p3x-p2x);
+        const tdy = 3*mt*mt*(p1y-p0y) + 6*mt*t*(p2y-p1y) + 3*t*t*(p3y-p2y);
+        ctx.translate(px, py);
+        ctx.rotate(Math.atan2(tdy, tdx) + Math.PI); // +π: local +x points backward
+        break;
+      }
+    }
+
+    const top = -trainH / 2;
+
+    // Helper
+    const rr = (x: number, y: number, w: number, h: number, r2: number) => {
+      ctx.beginPath();
+      ctx.moveTo(x + r2, y); ctx.lineTo(x + w - r2, y);
+      ctx.quadraticCurveTo(x + w, y, x + w, y + r2);
+      ctx.lineTo(x + w, y + h - r2);
+      ctx.quadraticCurveTo(x + w, y + h, x + w - r2, y + h);
+      ctx.lineTo(x + r2, y + h);
+      ctx.quadraticCurveTo(x, y + h, x, y + h - r2);
+      ctx.lineTo(x, y + r2);
+      ctx.quadraticCurveTo(x, y, x + r2, y);
+      ctx.closePath();
+    };
+
+    // Locomotive (65px)
+    ctx.fillStyle = `rgb(${Math.floor(55*dark)},${Math.floor(52*dark)},${Math.floor(48*dark)})`;
+    rr(0, top, 65, trainH, 3); ctx.fill();
+    // Boiler highlight
+    ctx.fillStyle = `rgb(${Math.floor(72*dark)},${Math.floor(68*dark)},${Math.floor(62*dark)})`;
+    ctx.fillRect(4, top + 2, 52, trainH - 4);
+    // Brass bands
+    ctx.fillStyle = `rgb(${Math.floor(185*dark)},${Math.floor(140*dark)},${Math.floor(40*dark)})`;
+    for (const bx2 of [14, 26, 38]) ctx.fillRect(bx2, top + 1, 3, trainH - 2);
+    // Dome
+    ctx.fillStyle = `rgb(${Math.floor(80*dark)},${Math.floor(76*dark)},${Math.floor(70*dark)})`;
+    ctx.beginPath(); ctx.arc(48, top + trainH / 2, 4, 0, Math.PI * 2); ctx.fill();
+    // Chimney
+    ctx.fillStyle = `rgb(${Math.floor(40*dark)},${Math.floor(38*dark)},${Math.floor(35*dark)})`;
+    ctx.beginPath(); ctx.arc(10, top + trainH / 2, 4.5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = `rgb(${Math.floor(60*dark)},${Math.floor(58*dark)},${Math.floor(54*dark)})`;
+    ctx.beginPath(); ctx.arc(10, top + trainH / 2, 3, 0, Math.PI * 2); ctx.fill();
+    // Cab window strip
+    ctx.fillStyle = `rgba(${Math.floor(140*dark)},${Math.floor(160*dark)},${Math.floor(180*dark)},0.7)`;
+    ctx.fillRect(54, top + 3, 8, trainH - 6);
+
+    // Gap
+    ctx.fillStyle = `rgb(${Math.floor(30*dark)},${Math.floor(28*dark)},${Math.floor(26*dark)})`;
+    ctx.fillRect(65, top + 2, 4, trainH - 4);
+
+    // Tender (38px)
+    ctx.fillStyle = `rgb(${Math.floor(48*dark)},${Math.floor(45*dark)},${Math.floor(42*dark)})`;
+    rr(69, top, 38, trainH, 2); ctx.fill();
+    ctx.fillStyle = `rgb(${Math.floor(35*dark)},${Math.floor(28*dark)},${Math.floor(20*dark)})`;
+    ctx.fillRect(72, top + 3, 32, trainH - 6);
+
+    // Gap
+    ctx.fillStyle = `rgb(${Math.floor(30*dark)},${Math.floor(28*dark)},${Math.floor(26*dark)})`;
+    ctx.fillRect(107, top + 2, 4, trainH - 4);
+
+    // Carriages (2 × 65px)
+    for (let ci = 0; ci < 2; ci++) {
+      const cx2 = 111 + ci * 69;
+      ctx.fillStyle = ci === 0
+        ? `rgb(${Math.floor(195*dark)},${Math.floor(178*dark)},${Math.floor(145*dark)})`
+        : `rgb(${Math.floor(185*dark)},${Math.floor(170*dark)},${Math.floor(138*dark)})`;
+      rr(cx2, top, 65, trainH, 2); ctx.fill();
+      // Roof highlight
+      ctx.fillStyle = `rgba(255,255,255,${0.12*dark})`;
+      ctx.fillRect(cx2 + 3, top + 1, 59, 3);
+      // Window strips
+      ctx.fillStyle = `rgba(${Math.floor(140*dark)},${Math.floor(165*dark)},${Math.floor(195*dark)},0.75)`;
+      for (const wy of [top + 3, top + trainH - 5]) {
+        ctx.fillRect(cx2 + 4, wy, 57, 2);
+      }
+      if (ci < 1) {
+        ctx.fillStyle = `rgb(${Math.floor(30*dark)},${Math.floor(28*dark)},${Math.floor(26*dark)})`;
+        ctx.fillRect(cx2 + 65, top + 2, 4, trainH - 4);
+      }
+    }
+
     ctx.restore();
   }
 

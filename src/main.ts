@@ -786,7 +786,9 @@ function buildStaticCanvas(nightAlpha: number) {
 
   layout.drawPlazaBenches(sctx, nightAlpha);
   layout.drawFountainBasin(sctx, nightAlpha);
+  layout.drawBranchRailwayCorridor(sctx, nightAlpha); // branch corridor (col 2)
   layout.drawRailwayCorridor(sctx, nightAlpha); // base fill first, before houses
+  layout.drawBranchJunction(sctx, nightAlpha);  // junction curves — must be after main corridor
   layout.drawShadows(sctx, nightAlpha);
   layout.drawBuildings(sctx, nightAlpha);
   layout.drawBuildingRooftops(sctx, nightAlpha);
@@ -803,6 +805,7 @@ function buildStaticCanvas(nightAlpha: number) {
   layout.drawDeliveryLanes(sctx, nightAlpha); // on top of venues so stub is visible
   layout.drawPlazaLampPosts(sctx, nightAlpha);
   layout.drawTrainStation(sctx, nightAlpha);
+  layout.drawBranchStation(sctx, nightAlpha);
 
   lastStaticNightAlpha = nightAlpha;
 }
@@ -914,6 +917,7 @@ function loop(timestamp: number = 0) {
   // Venue labels — drawn live in world space so text is rasterised at current zoom, never upscaled
   layout.drawVenueLabels(ctx, nightAlpha);
   layout.drawTrainStationLabel(ctx, nightAlpha);
+  layout.drawBranchStationLabel(ctx, nightAlpha);
   layout.drawOutdoorSeating(ctx, nightAlpha, weather.type, time);
 
   // Time-of-day atmosphere (mist, golden hour, Sunday tint) — world space, under everything
@@ -950,6 +954,8 @@ function loop(timestamp: number = 0) {
   // Train station — animated train + passenger cycle
   layout.updateTrain();
   layout.drawTrain(ctx, nightAlpha);
+  layout.updateBranchTrain();
+  layout.drawBranchTrain(ctx, nightAlpha);
 
   // When train arrives: send 3–5 waiting pedestrians to platform, then board
   if (layout.trainJustArrived) {
