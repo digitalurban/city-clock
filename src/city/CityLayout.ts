@@ -210,14 +210,16 @@ export class CityLayout {
   branchTrainY: number = -9999;    // top of branch train (world Y)
   branchTrainX: number = 0;        // world-space X during horizontal phases
   branchTrainActive: boolean = false;
-  branchTrainState: 'inbound_h' | 'inbound_curve' | 'inbound_v' | 'stopped' | 'outbound_v' | 'outbound_curve' | 'outbound_h' = 'inbound_h';
+  branchTrainState: 'waiting_at_central' | 'inbound' | 'stopped' | 'outbound' = 'waiting_at_central';
   branchTrainTimer: number = 0;
   branchTrainCooldown: number = 480;
   branchTrainCurveT: number = 0;    // progress through junction curve (0 → 1)
+  branchTrainD: number = 0;         // distance along path
   branchTrainJustArrived: boolean = false;
   branchTrainJustDeparted: boolean = false;
   branchTrainStoppedY: number = 0; // branchTrainY when parked at platform
 
+  branchStationBuilding: BuildingDef | null = null;
   // ── Ice cream van ──────────────────────────────────────────────────────────
   iceCreamActive: boolean = false;
   iceCreamX: number = 0;
@@ -614,9 +616,34 @@ export class CityLayout {
             // Only generate at the designated row
             if (r === 3) this.generateBranchStation(bx, by, blockW, blockH);
             break;
-          case 'branchRailway':
-            // No buildings — entire cell is the vertical corridor
+          case 'branchRailway': {
+            // Generate buildings/parks on the left and right of the track
+            const trackOffset = Math.floor(blockW * 0.3);
+            const trackLeft = trackOffset - 16;
+            const trackRight = trackOffset + 16;
+            
+            // Left side
+            if (trackLeft > 20) {
+              const roll = seededRandom(c * 100 + r * 10);
+              if (roll < 0.5) {
+                this.generateResidentialBlock(bx, by, trackLeft, blockH, margin, c, r);
+              } else {
+                this.generateParkBlock(bx, by, trackLeft, blockH, c, r);
+              }
+            }
+            
+            // Right side
+            const rightW = blockW - trackRight;
+            if (rightW > 20) {
+              const roll = seededRandom(c * 100 + r * 10 + 1);
+              if (roll < 0.5) {
+                this.generateResidentialBlock(bx + trackRight, by, rightW, blockH, margin, c, r);
+              } else {
+                this.generateParkBlock(bx + trackRight, by, rightW, blockH, c, r);
+              }
+            }
             break;
+          }
         }
 
         // Trees along sidewalks (occasional) — skip for branch corridor
@@ -830,7 +857,7 @@ export class CityLayout {
   private generateBranchStation(bx: number, by: number, blockW: number, blockH: number) {
     const cellSize = BLOCK_SIZE + ROAD_WIDTH;
     // Branch track runs through the left portion of col 2's block
-    this.branchTrackX = 2 * cellSize + ROAD_WIDTH / 2 + Math.floor(blockW * 0.3);
+    this.branchTrackX = bx + Math.floor(blockW * 0.3);
     this.branchStationX = bx;
     this.branchStationY = by;
     this.branchStationW = blockW;
@@ -843,12 +870,12 @@ export class CityLayout {
 
     // Station building on the left quarter of the block
     const bldW = Math.floor(blockW * 0.45);
-    this.buildings.push({
+    this.branchStationBuilding = {
       x: bx, y: by + 4,
       w: bldW, h: blockH - 8,
       color: '#7a8fa0',
       windowSeed: 77777,
-    });
+    };
 
     // Walkable platform (right side of block, beside track)
     this.walkableRects.push({
@@ -1516,6 +1543,69 @@ export class CityLayout {
       ctx.fill();
     }
     ctx.restore();
+  }
+
+  drawBranchStationBuilding(ctx: CanvasRenderingContext2D, nightAlpha: number) {
+    if (!this.branchStationBuilding) return;
+    const b = this.branchStationBuilding;
+    const shadow = this.getShadowOffset();
+    
+    // Directional ground shadow
+    ctx.fillStyle = `rgba(0, 0, 0, ${shadow.alpha + nightAlpha * 0.06})`;
+    ctx.fillRect(b.x + shadow.dx, b.y + shadow.dy, b.w, b.h);
+
+    // Building body
+    const r = parseInt(b.color.slice(1, 3), 16);
+    const g = parseInt(b.color.slice(3, 5), 16);
+    const bl = parseInt(b.color.slice(5, 7), 16);
+    const darkFactor = 1 - nightAlpha * 0.82;
+    ctx.fillStyle = `rgb(${Math.floor(r * darkFactor)}, ${Math.floor(g * darkFactor)}, ${Math.floor(bl * darkFactor)})`;
+    ctx.fillRect(b.x, b.y, b.w, b.h);
+
+    // Parapet walls + recessed roof surface
+    const pW = Math.max(4, Math.min(7, Math.floor(Math.min(b.w, b.h) * 0.09)));
+    const pf = Math.min(1.0, darkFactor * 1.16);
+    ctx.fillStyle = `rgb(${Math.min(255, Math.floor(r * pf))}, ${Math.min(255, Math.floor(g * pf))}, ${Math.min(255, Math.floor(bl * pf))})`;
+    ctx.fillRect(b.x, b.y, b.w, b.h);
+
+    ctx.fillStyle = `rgb(${Math.floor(r * darkFactor)}, ${Math.floor(g * darkFactor)}, ${Math.floor(bl * darkFactor)})`;
+    ctx.fillRect(b.x + pW, b.y + pW, b.w - pW * 2, b.h - pW * 2);
+
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.16)';
+    ctx.fillRect(b.x + pW, b.y + pW, b.w - pW * 2, Math.ceil(pW * 0.65));
+    ctx.fillRect(b.x + pW, b.y + pW, Math.ceil(pW * 0.65), b.h - pW * 2);
+
+    const sf = darkFactor * 0.58;
+    ctx.fillStyle = `rgb(${Math.floor(r * sf)}, ${Math.floor(g * sf)}, ${Math.floor(bl * sf)})`;
+    ctx.fillRect(b.x, b.y + b.h - pW, b.w, pW);
+
+    ctx.fillStyle = `rgba(0, 0, 0, ${0.22 * darkFactor})`;
+    ctx.fillRect(b.x + b.w - pW, b.y, pW, b.h - pW);
+
+    ctx.strokeStyle = `rgba(0, 0, 0, ${0.18 + nightAlpha * 0.1})`;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(b.x, b.y, b.w, b.h);
+
+    // HVAC units (from drawBuildingRooftops)
+    const hvacCount = Math.floor((b.w * b.h) / 2500);
+    for (let i = 0; i < hvacCount; i++) {
+      const hx = b.x + pW + 4 + (seededRandom(b.windowSeed + i * 11) * (b.w - pW * 2 - 20));
+      const hy = b.y + pW + 4 + (seededRandom(b.windowSeed + i * 13) * (b.h - pW * 2 - 20));
+      const hw = 8 + seededRandom(b.windowSeed + i * 17) * 6;
+      const hh = 8 + seededRandom(b.windowSeed + i * 19) * 6;
+
+      ctx.fillStyle = `rgb(${Math.floor(180 * darkFactor)}, ${Math.floor(185 * darkFactor)}, ${Math.floor(190 * darkFactor)})`;
+      ctx.fillRect(hx, hy, hw, hh);
+
+      ctx.fillStyle = `rgba(0, 0, 0, ${0.25 + nightAlpha * 0.1})`;
+      ctx.fillRect(hx + hw, hy + 2, 2, hh - 2);
+      ctx.fillRect(hx + 2, hy + hh, hw, 2);
+
+      ctx.fillStyle = `rgb(${Math.floor(140 * darkFactor)}, ${Math.floor(145 * darkFactor)}, ${Math.floor(150 * darkFactor)})`;
+      ctx.beginPath();
+      ctx.arc(hx + hw / 2, hy + hh / 2, Math.min(hw, hh) * 0.35, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 
   drawBuildings(ctx: CanvasRenderingContext2D, nightAlpha: number) {
@@ -3554,13 +3644,11 @@ export class CityLayout {
       }
       // Right side: houses already drawn by drawHouses — no background fill needed here
 
-      // ── Sleepers for both tracks (drawn over land) ──
+      // ── Sleepers for the track (drawn over land) ──
       ctx.strokeStyle = `rgb(${Math.floor(100*dark)},${Math.floor(82*dark)},${Math.floor(58*dark)})`;
       ctx.lineWidth = 1.2;
-      for (const ty of [track1Y, track2Y]) {
-        for (let slx = bx; slx < bx + BLOCK_SIZE + ROAD_WIDTH; slx += 10) {
-          ctx.beginPath(); ctx.moveTo(slx, ty - 2); ctx.lineTo(slx, ty + 2); ctx.stroke();
-        }
+      for (let slx = bx; slx < bx + BLOCK_SIZE + ROAD_WIDTH; slx += 10) {
+        ctx.beginPath(); ctx.moveTo(slx, track1Y - 2); ctx.lineTo(slx, track2Y + 2); ctx.stroke();
       }
     }
   }
@@ -3591,14 +3679,12 @@ export class CityLayout {
     ctx.lineWidth = 1.5;
     for (const ty of [track1Y, track2Y]) {
       ctx.beginPath(); ctx.moveTo(0, ty); ctx.lineTo(this.width, ty); ctx.stroke();
-      // Rail sleepers (within station area only — outside drawn by drawRailwayCorridor)
-      ctx.lineWidth = 1.2;
-      ctx.strokeStyle = `rgb(${Math.floor(110*dark)},${Math.floor(95*dark)},${Math.floor(75*dark)})`;
-      for (let slx = sx; slx < sx + sw; slx += 10) {
-        ctx.beginPath(); ctx.moveTo(slx, ty - 2); ctx.lineTo(slx, ty + 2); ctx.stroke();
-      }
-      ctx.lineWidth = 1.5;
-      ctx.strokeStyle = `rgb(${Math.floor(90*dark)},${Math.floor(85*dark)},${Math.floor(80*dark)})`;
+    }
+    // Rail sleepers (within station area only — outside drawn by drawRailwayCorridor)
+    ctx.lineWidth = 1.2;
+    ctx.strokeStyle = `rgb(${Math.floor(110*dark)},${Math.floor(95*dark)},${Math.floor(75*dark)})`;
+    for (let slx = sx; slx < sx + sw; slx += 10) {
+      ctx.beginPath(); ctx.moveTo(slx, track1Y - 2); ctx.lineTo(slx, track2Y + 2); ctx.stroke();
     }
 
     // ── Canopy over platform (translucent roof structure) ──
@@ -3733,33 +3819,34 @@ export class CityLayout {
     const cellSize = BLOCK_SIZE + ROAD_WIDTH;
     const dark = 1 - nightAlpha * 0.5;
     const tx = this.branchTrackX;
-    const corridorX = 2 * cellSize;           // left edge of col 2's cell
-    const corridorW = cellSize;               // full col 2 width
     const corridorH = (this.gridRows - 1) * cellSize; // rows 0–5
 
-    // Base gravel fill for the corridor column
+    // Base gravel fill for the track only
+    const gravelX = tx - 16;
+    const gravelW = 32;
     ctx.fillStyle = `rgb(${Math.floor(148*dark)},${Math.floor(140*dark)},${Math.floor(122*dark)})`;
-    ctx.fillRect(corridorX, 0, corridorW, corridorH);
+    ctx.fillRect(gravelX, 0, gravelW, corridorH);
 
     // Subtle gravel texture
     ctx.fillStyle = `rgba(0,0,0,${0.06*dark})`;
-    for (let i = 0; i < 50; i++) {
-      const gx = corridorX + seededRandom(i * 7 + 1) * corridorW;
+    for (let i = 0; i < 30; i++) {
+      const gx = gravelX + seededRandom(i * 7 + 1) * gravelW;
       const gy = seededRandom(i * 13 + 3) * corridorH;
       ctx.beginPath(); ctx.arc(gx, gy, 1.5, 0, Math.PI * 2); ctx.fill();
     }
 
     // Level-crossing road patches (drawn before rails so rails render on top)
     for (let r = 1; r < this.gridRows - 1; r++) {
+      if (r === 3) continue; // Skip level crossing at the station
       const crossY = r * cellSize - ROAD_WIDTH / 2;
       ctx.fillStyle = `rgb(${Math.floor(180*dark)},${Math.floor(172*dark)},${Math.floor(155*dark)})`;
-      ctx.fillRect(corridorX, crossY, corridorW, ROAD_WIDTH);
+      ctx.fillRect(gravelX, crossY, gravelW, ROAD_WIDTH);
       ctx.strokeStyle = `rgb(${Math.floor(220*dark)},${Math.floor(185*dark)},${Math.floor(35*dark)})`;
       ctx.lineWidth = 1.2;
       ctx.setLineDash([4, 4]);
       ctx.beginPath();
-      ctx.moveTo(corridorX + 4, crossY + ROAD_WIDTH / 2);
-      ctx.lineTo(corridorX + corridorW - 4, crossY + ROAD_WIDTH / 2);
+      ctx.moveTo(gravelX, crossY + ROAD_WIDTH / 2);
+      ctx.lineTo(gravelX + gravelW, crossY + ROAD_WIDTH / 2);
       ctx.stroke();
       ctx.setLineDash([]);
     }
@@ -3777,9 +3864,6 @@ export class CityLayout {
     for (const rx of [tx - 7, tx + 7]) {
       ctx.beginPath(); ctx.moveTo(rx, 0); ctx.lineTo(rx, corridorH); ctx.stroke();
     }
-
-    // Junction curves are drawn in drawBranchJunction(), called after drawRailwayCorridor()
-    // so they render on top of the main railway corridor fill.
   }
 
   /** Draw the branch-to-main junction curves — call AFTER drawRailwayCorridor. */
@@ -3788,14 +3872,8 @@ export class CityLayout {
     const cellSize = BLOCK_SIZE + ROAD_WIDTH;
     const dark = 1 - nightAlpha * 0.5;
     const tx = this.branchTrackX;
-    const corridorX = 2 * cellSize;
-    const corridorW = cellSize;
     const jY = (this.gridRows - 1) * cellSize; // bottom of branch = top of railway row
     const curveLen = 48;
-
-    // Gravel base for col 2 within the railway row, so it reads as a continuation of the branch
-    ctx.fillStyle = `rgb(${Math.floor(148*dark)},${Math.floor(140*dark)},${Math.floor(122*dark)})`;
-    ctx.fillRect(corridorX, jY, corridorW, this.trainTrackY + 12 - jY);
 
     // Vertical sleepers extending into junction zone
     ctx.strokeStyle = `rgb(${Math.floor(100*dark)},${Math.floor(82*dark)},${Math.floor(58*dark)})`;
@@ -3812,30 +3890,67 @@ export class CityLayout {
     }
 
     // Curved rails sweeping RIGHT (east) to join the main horizontal track
-    // Control points use the same H/V as the animation so train follows the visible track exactly.
     const curveEntryY = jY + 22;
     const dYc = this.trainTrackY - curveEntryY;
-    const Hc = dYc * 0.6;  // horizontal handle strength
-    const Vc = curveLen * 0.6; // vertical handle strength
-    for (const [rx, oy] of [[tx - 7, -7], [tx + 7, 7]] as [number, number][]) {
-      const endX = rx + curveLen;
-      const endY = this.trainTrackY + oy;
+    
+    // Draw sleepers for the curve
+    ctx.lineWidth = 1.2;
+    ctx.strokeStyle = `rgb(${Math.floor(110*dark)},${Math.floor(95*dark)},${Math.floor(75*dark)})`;
+    for (let t = 0; t <= 1; t += 0.1) {
+      const mt = 1 - t;
+      // Center line bezier
+      const p0x = tx, p0y = curveEntryY;
+      const p1x = tx, p1y = curveEntryY + curveLen * 0.6;
+      const p2x = tx + curveLen - dYc * 0.6, p2y = this.trainTrackY;
+      const p3x = tx + curveLen, p3y = this.trainTrackY;
+      
+      const cx = mt*mt*mt*p0x + 3*mt*mt*t*p1x + 3*mt*t*t*p2x + t*t*t*p3x;
+      const cy = mt*mt*mt*p0y + 3*mt*mt*t*p1y + 3*mt*t*t*p2y + t*t*t*p3y;
+      
+      const tdx = 3*mt*mt*(p1x-p0x) + 6*mt*t*(p2x-p1x) + 3*t*t*(p3x-p2x);
+      const tdy = 3*mt*mt*(p1y-p0y) + 6*mt*t*(p2y-p1y) + 3*t*t*(p3y-p2y);
+      const len = Math.sqrt(tdx*tdx + tdy*tdy);
+      const nx = -tdy / len;
+      const ny = tdx / len;
+      
       ctx.beginPath();
-      ctx.moveTo(rx, curveEntryY);
-      ctx.bezierCurveTo(rx, curveEntryY + Vc, endX - Hc, endY, endX, endY);
+      ctx.moveTo(cx - nx * 9, cy - ny * 9);
+      ctx.lineTo(cx + nx * 9, cy + ny * 9);
       ctx.stroke();
     }
 
-    // Junction sleepers along the curve (sampled from same bezier)
-    ctx.strokeStyle = `rgb(${Math.floor(100*dark)},${Math.floor(82*dark)},${Math.floor(58*dark)})`;
-    ctx.lineWidth = 1.2;
-    for (let i = 0; i <= 5; i++) {
-      const t = i / 5;
-      const mt = 1 - t;
-      const cx2 = mt*mt*mt*tx + 3*mt*mt*t*tx + 3*mt*t*t*(tx+curveLen-Hc) + t*t*t*(tx+curveLen);
-      const cy2 = mt*mt*mt*curveEntryY + 3*mt*mt*t*(curveEntryY+Vc) + 3*mt*t*t*this.trainTrackY + t*t*t*this.trainTrackY;
-      ctx.beginPath(); ctx.moveTo(cx2 - 9, cy2); ctx.lineTo(cx2 + 9, cy2); ctx.stroke();
+    // Draw the two rails
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = `rgb(${Math.floor(90*dark)},${Math.floor(85*dark)},${Math.floor(80*dark)})`;
+    
+    for (const offset of [-7, 7]) {
+      ctx.beginPath();
+      for (let t = 0; t <= 1; t += 0.05) {
+        const mt = 1 - t;
+        const p0x = tx, p0y = curveEntryY;
+        const p1x = tx, p1y = curveEntryY + curveLen * 0.6;
+        const p2x = tx + curveLen - dYc * 0.6, p2y = this.trainTrackY;
+        const p3x = tx + curveLen, p3y = this.trainTrackY;
+        
+        const cx = mt*mt*mt*p0x + 3*mt*mt*t*p1x + 3*mt*t*t*p2x + t*t*t*p3x;
+        const cy = mt*mt*mt*p0y + 3*mt*mt*t*p1y + 3*mt*t*t*p2y + t*t*t*p3y;
+        
+        const tdx = 3*mt*mt*(p1x-p0x) + 6*mt*t*(p2x-p1x) + 3*t*t*(p3x-p2x);
+        const tdy = 3*mt*mt*(p1y-p0y) + 6*mt*t*(p2y-p1y) + 3*t*t*(p3y-p2y);
+        const len = Math.sqrt(tdx*tdx + tdy*tdy);
+        const nx = -tdy / len;
+        const ny = tdx / len;
+        
+        const rx = cx + nx * offset;
+        const ry = cy + ny * offset;
+        
+        if (t === 0) ctx.moveTo(rx, ry);
+        else ctx.lineTo(rx, ry);
+      }
+      ctx.stroke();
     }
+
+    // Old sleepers removed because they are drawn correctly above
   }
 
   /** Draw the branch station platform (static canvas). */
@@ -3906,19 +4021,62 @@ export class CityLayout {
     ctx.restore();
   }
 
-  /** Call once per frame — L-shaped path: enters from right along main track, curves north to branch station */
-  updateBranchTrain() {
-    if (this.branchStationW === 0 || this.trainTrackY === 0) return;
-    const speed = 0.7;
-    const trainLen = 65 + 4 + 38 + 4 + 65 + 4 + 65; // 245
+  getBranchTrackPoint(d: number): { x: number, y: number, angle: number } {
     const tx = this.branchTrackX;
-    // Junction geometry matching drawBranchJunction()
-    const jY = (this.gridRows - 1) * (BLOCK_SIZE + ROAD_WIDTH); // top of railway row
-    const curveEntryY = jY + 22; // bottom of short vertical stub; where curve begins
-    const curveLen = 48;         // horizontal reach of the curve (east)
-    const dY = this.trainTrackY - curveEntryY; // vertical drop through the curve
-    // Approximate arc length for timing
+    const jY = (this.gridRows - 1) * (200 + 40); // BLOCK_SIZE + ROAD_WIDTH
+    const curveEntryY = jY + 22;
+    const curveLen = 48;
+    const dY = this.trainTrackY - curveEntryY;
     const arcLen = Math.sqrt(curveLen * curveLen + dY * dY) * 1.15;
+    
+    const trainLen = 245;
+    const startX = this.stationX + this.stationW / 2 - trainLen / 2;
+    const hLen = startX - (tx + curveLen);
+    
+    if (d <= hLen) {
+      return { x: startX - d, y: this.trainTrackY, angle: Math.PI };
+    } else if (d <= hLen + arcLen) {
+      const t = (d - hLen) / arcLen;
+      const mt = 1 - t;
+      
+      const Hc = dY * 0.6;
+      const Vc = curveLen * 0.6;
+      const q0x = tx + curveLen;      const q0y = this.trainTrackY;
+      const q1x = tx + curveLen - Hc; const q1y = this.trainTrackY;
+      const q2x = tx;                 const q2y = curveEntryY + Vc;
+      const q3x = tx;                 const q3y = curveEntryY;
+      
+      const px = mt*mt*mt*q0x + 3*mt*mt*t*q1x + 3*mt*t*t*q2x + t*t*t*q3x;
+      const py = mt*mt*mt*q0y + 3*mt*mt*t*q1y + 3*mt*t*t*q2y + t*t*t*q3y;
+      
+      const tdx = 3*mt*mt*(q1x-q0x) + 6*mt*t*(q2x-q1x) + 3*t*t*(q3x-q2x);
+      const tdy = 3*mt*mt*(q1y-q0y) + 6*mt*t*(q2y-q1y) + 3*t*t*(q3y-q2y);
+      
+      return { x: px, y: py, angle: Math.atan2(tdy, tdx) };
+    } else {
+      const vDist = d - (hLen + arcLen);
+      return { x: tx, y: curveEntryY - vDist, angle: -Math.PI / 2 };
+    }
+  }
+
+  /** Call once per frame — L-shaped path: enters from Central Station, curves north to branch station */
+  updateBranchTrain() {
+    if (this.branchStationW === 0 || this.trainTrackY === 0 || this.stationW === 0) return;
+    const speed = 0.7;
+    const trainLen = 245;
+    const tx = this.branchTrackX;
+    const jY = (this.gridRows - 1) * (200 + 40); // BLOCK_SIZE + ROAD_WIDTH
+    const curveEntryY = jY + 22;
+    const curveLen = 48;
+    const dY = this.trainTrackY - curveEntryY;
+    const arcLen = Math.sqrt(curveLen * curveLen + dY * dY) * 1.15;
+    
+    const startX = this.stationX + this.stationW / 2 - trainLen / 2;
+    const hLen = startX - (tx + curveLen);
+    
+    const stopD = hLen + arcLen + (curveEntryY - this.branchTrainStoppedY);
+    const endY = -trainLen - 60;
+    const totalPathLen = hLen + arcLen + (curveEntryY - endY);
 
     this.branchTrainJustArrived = false;
     this.branchTrainJustDeparted = false;
@@ -3927,17 +4085,24 @@ export class CityLayout {
       this.branchTrainCooldown--;
       if (this.branchTrainCooldown <= 0) {
         this.branchTrainActive = true;
-        this.branchTrainState = 'inbound_h';
-        this.branchTrainX = this.width + trainLen + 60;
-        this.branchTrainY = this.trainTrackY;
+        this.branchTrainState = 'waiting_at_central';
+        this.branchTrainD = 0;
+        this.branchTrainTimer = 180; // Wait 3 seconds at Central Station before departing
       }
       return;
     }
 
-    const emitSmoke = (x: number, y: number) => {
+    const emitSmoke = (d: number) => {
       if (Math.random() < 0.22) {
+        const ptFront = this.getBranchTrackPoint(d);
+        const ptBack = this.getBranchTrackPoint(d - 10);
+        const angle = Math.atan2(ptBack.y - ptFront.y, ptBack.x - ptFront.x);
+        const chimneyX = ptFront.x + Math.cos(angle) * 10 - Math.sin(angle) * (-6);
+        const chimneyY = ptFront.y + Math.sin(angle) * 10 + Math.cos(angle) * (-6);
+        
         this.smokeParticles.push({
-          x: x + (Math.random() - 0.5) * 4, y,
+          x: chimneyX + (Math.random() - 0.5) * 4,
+          y: chimneyY,
           vx: (Math.random() - 0.5) * 0.18,
           vy: -(0.22 + Math.random() * 0.18),
           age: 0, maxAge: 80,
@@ -3945,77 +4110,55 @@ export class CityLayout {
       }
     };
 
-    // Scalar cubic bezier helper
-    const bez = (p0: number, p1: number, p2: number, p3: number, t: number) => {
-      const mt = 1 - t;
-      return mt*mt*mt*p0 + 3*mt*mt*t*p1 + 3*mt*t*t*p2 + t*t*t*p3;
-    };
-
-    if (this.branchTrainState === 'inbound_h') {
-      // Travel left along main track; enter curve when loco reaches curve entry point
-      this.branchTrainX -= speed;
-      emitSmoke(this.branchTrainX + 10, this.trainTrackY - 6);
-      if (this.branchTrainX <= tx + curveLen) {
-        this.branchTrainX = tx + curveLen;
-        this.branchTrainState = 'inbound_curve';
-        this.branchTrainCurveT = 0;
+    if (this.branchTrainState === 'waiting_at_central') {
+      this.branchTrainTimer--;
+      if (Math.random() < 0.05) {
+        const ptFront = this.getBranchTrackPoint(0);
+        const ptBack = this.getBranchTrackPoint(-10);
+        const angle = Math.atan2(ptBack.y - ptFront.y, ptBack.x - ptFront.x);
+        const chimneyX = ptFront.x + Math.cos(angle) * 10 - Math.sin(angle) * (-6);
+        const chimneyY = ptFront.y + Math.sin(angle) * 10 + Math.cos(angle) * (-6);
+        
+        this.smokeParticles.push({
+          x: chimneyX, y: chimneyY, vx: 0, vy: -0.3 - Math.random() * 0.3,
+          age: 0, maxAge: 40 + Math.floor(Math.random() * 20),
+        });
       }
-
-    } else if (this.branchTrainState === 'inbound_curve') {
-      // Loco sweeps along bezier matching drawn track: (tx+curveLen, trackY) → (tx, curveEntryY)
-      this.branchTrainCurveT += speed / arcLen;
-      if (this.branchTrainCurveT >= 1) {
-        this.branchTrainCurveT = 1;
-        this.branchTrainState = 'inbound_v';
-        this.branchTrainY = curveEntryY;
+      if (this.branchTrainTimer <= 0) {
+        this.branchTrainState = 'inbound';
       }
-      const t = this.branchTrainCurveT;
-      const px = bez(tx + curveLen, tx + curveLen, tx, tx, t);
-      const py = bez(this.trainTrackY, this.trainTrackY - 10, curveEntryY + 20, curveEntryY, t);
-      emitSmoke(px, py - 6);
-
-    } else if (this.branchTrainState === 'inbound_v') {
-      // Travel north along branch track
-      this.branchTrainY -= speed;
-      emitSmoke(tx + (Math.random() - 0.5) * 4, this.branchTrainY + 8);
-      if (this.branchTrainY <= this.branchTrainStoppedY) {
-        this.branchTrainY = this.branchTrainStoppedY;
+    } else if (this.branchTrainState === 'inbound') {
+      this.branchTrainD += speed;
+      emitSmoke(this.branchTrainD);
+      
+      if (this.branchTrainD >= stopD) {
+        this.branchTrainD = stopD;
         this.branchTrainState = 'stopped';
         this.branchTrainTimer = 260;
         this.branchTrainJustArrived = true;
       }
-
     } else if (this.branchTrainState === 'stopped') {
       this.branchTrainTimer--;
-      if (this.branchTrainTimer <= 0) this.branchTrainState = 'outbound_v';
-
-    } else if (this.branchTrainState === 'outbound_v') {
-      // Travel south; enter curve when loco front reaches curve entry
-      this.branchTrainY += speed;
-      emitSmoke(tx + (Math.random() - 0.5) * 4, this.branchTrainY + trainLen - 8);
-      if (this.branchTrainY + trainLen >= curveEntryY) {
-        this.branchTrainState = 'outbound_curve';
-        this.branchTrainCurveT = 0;
+      if (Math.random() < 0.05) {
+        const ptFront = this.getBranchTrackPoint(this.branchTrainD);
+        const ptBack = this.getBranchTrackPoint(this.branchTrainD - 10);
+        const angle = Math.atan2(ptBack.y - ptFront.y, ptBack.x - ptFront.x);
+        const chimneyX = ptFront.x + Math.cos(angle) * 10 - Math.sin(angle) * (-6);
+        const chimneyY = ptFront.y + Math.sin(angle) * 10 + Math.cos(angle) * (-6);
+        
+        this.smokeParticles.push({
+          x: chimneyX, y: chimneyY, vx: 0, vy: -0.3 - Math.random() * 0.3,
+          age: 0, maxAge: 40 + Math.floor(Math.random() * 20),
+        });
       }
-
-    } else if (this.branchTrainState === 'outbound_curve') {
-      // Loco sweeps along bezier matching drawn track: (tx, curveEntryY) → (tx+curveLen, trackY)
-      this.branchTrainCurveT += speed / arcLen;
-      if (this.branchTrainCurveT >= 1) {
-        this.branchTrainCurveT = 1;
-        this.branchTrainState = 'outbound_h';
-        this.branchTrainX = tx + curveLen - trainLen; // tail; loco = branchTrainX + trainLen
+      if (this.branchTrainTimer <= 0) {
+        this.branchTrainState = 'outbound';
       }
-      const t = this.branchTrainCurveT;
-      const px = bez(tx, tx, tx + curveLen, tx + curveLen, t);
-      const py = bez(curveEntryY, curveEntryY + 20, this.trainTrackY - 10, this.trainTrackY, t);
-      emitSmoke(px, py - 6);
-
-    } else if (this.branchTrainState === 'outbound_h') {
-      // Travel right back off-screen
-      this.branchTrainX += speed;
-      emitSmoke(this.branchTrainX + trainLen - 10, this.trainTrackY - 6);
-      if (this.branchTrainX >= this.width + trainLen + 60) {
+    } else if (this.branchTrainState === 'outbound') {
+      this.branchTrainD += speed;
+      emitSmoke(this.branchTrainD);
+      
+      if (this.branchTrainD >= totalPathLen) {
         this.branchTrainActive = false;
         this.branchTrainCooldown = 400 + Math.floor(Math.random() * 200);
         this.branchTrainJustDeparted = true;
@@ -4028,67 +4171,39 @@ export class CityLayout {
     if (!this.branchTrainActive) return;
     const dark = 1 - nightAlpha * 0.45;
     const trainH = 14;
-    const state = this.branchTrainState;
-    const trainLen = 245;
-
-    // Set up transform so all drawing is in local space: x=0 = loco front, y=0 = track centre
-    // Local +x always points BACKWARD (opposite direction of travel).
+    
     const tx = this.branchTrackX;
-    const jY = (this.gridRows - 1) * (BLOCK_SIZE + ROAD_WIDTH);
+    const jY = (this.gridRows - 1) * (200 + 40); // BLOCK_SIZE + ROAD_WIDTH
     const curveEntryY = jY + 22;
     const curveLen = 48;
+    const dY = this.trainTrackY - curveEntryY;
+    const arcLen = Math.sqrt(curveLen * curveLen + dY * dY) * 1.15;
+    const trainLen = 245;
+    const startX = this.stationX + this.stationW / 2 - trainLen / 2;
+    const hLen = startX - (tx + curveLen);
+    const stopD = hLen + arcLen + (curveEntryY - this.branchTrainStoppedY);
 
-    ctx.save();
-    switch (state) {
-      case 'inbound_h':
-        ctx.translate(this.branchTrainX, this.trainTrackY);
-        break;
-      case 'outbound_h':
-        ctx.translate(this.branchTrainX + trainLen, this.trainTrackY);
-        ctx.scale(-1, 1);
-        break;
-      case 'inbound_v':
-      case 'stopped':
-        ctx.translate(this.branchTrackX, this.branchTrainY);
-        ctx.rotate(Math.PI / 2);
-        break;
-      case 'outbound_v':
-        ctx.translate(this.branchTrackX, this.branchTrainY + trainLen);
-        ctx.rotate(-Math.PI / 2);
-        break;
-      case 'inbound_curve':
-      case 'outbound_curve': {
-        const t = this.branchTrainCurveT;
-        const mt = 1 - t;
-        // Bezier control points match drawBranchJunction() exactly
-        let p0x: number, p0y: number, p1x: number, p1y: number,
-            p2x: number, p2y: number, p3x: number, p3y: number;
-        if (state === 'inbound_curve') {
-          // (tx+curveLen, trackY) → (tx, curveEntryY)
-          p0x = tx + curveLen; p0y = this.trainTrackY;
-          p1x = tx + curveLen; p1y = this.trainTrackY - 10;
-          p2x = tx;            p2y = curveEntryY + 20;
-          p3x = tx;            p3y = curveEntryY;
-        } else {
-          // (tx, curveEntryY) → (tx+curveLen, trackY)
-          p0x = tx;            p0y = curveEntryY;
-          p1x = tx;            p1y = curveEntryY + 20;
-          p2x = tx + curveLen; p2y = this.trainTrackY - 10;
-          p3x = tx + curveLen; p3y = this.trainTrackY;
-        }
-        const px = mt*mt*mt*p0x + 3*mt*mt*t*p1x + 3*mt*t*t*p2x + t*t*t*p3x;
-        const py = mt*mt*mt*p0y + 3*mt*mt*t*p1y + 3*mt*t*t*p2y + t*t*t*p3y;
-        const tdx = 3*mt*mt*(p1x-p0x) + 6*mt*t*(p2x-p1x) + 3*t*t*(p3x-p2x);
-        const tdy = 3*mt*mt*(p1y-p0y) + 6*mt*t*(p2y-p1y) + 3*t*t*(p3y-p2y);
-        ctx.translate(px, py);
-        ctx.rotate(Math.atan2(tdy, tdx) + Math.PI); // +π: local +x points backward
-        break;
-      }
+    let dFront = this.branchTrainD;
+    if (this.branchTrainState === 'stopped') {
+      dFront = stopD;
     }
 
-    const top = -trainH / 2;
+    const drawCar = (offset: number, length: number, drawFn: () => void) => {
+      const d1 = dFront - offset;
+      const d2 = dFront - offset - length;
+      
+      const ptFront = this.getBranchTrackPoint(d1);
+      const ptBack = this.getBranchTrackPoint(d2);
+      const angle = Math.atan2(ptBack.y - ptFront.y, ptBack.x - ptFront.x);
+      
+      ctx.save();
+      ctx.translate(ptFront.x, ptFront.y);
+      ctx.rotate(angle);
+      drawFn();
+      ctx.restore();
+    };
 
-    // Helper
+    const top = -trainH / 2;
     const rr = (x: number, y: number, w: number, h: number, r2: number) => {
       ctx.beginPath();
       ctx.moveTo(x + r2, y); ctx.lineTo(x + w - r2, y);
@@ -4103,62 +4218,65 @@ export class CityLayout {
     };
 
     // Locomotive (65px)
-    ctx.fillStyle = `rgb(${Math.floor(55*dark)},${Math.floor(52*dark)},${Math.floor(48*dark)})`;
-    rr(0, top, 65, trainH, 3); ctx.fill();
-    // Boiler highlight
-    ctx.fillStyle = `rgb(${Math.floor(72*dark)},${Math.floor(68*dark)},${Math.floor(62*dark)})`;
-    ctx.fillRect(4, top + 2, 52, trainH - 4);
-    // Brass bands
-    ctx.fillStyle = `rgb(${Math.floor(185*dark)},${Math.floor(140*dark)},${Math.floor(40*dark)})`;
-    for (const bx2 of [14, 26, 38]) ctx.fillRect(bx2, top + 1, 3, trainH - 2);
-    // Dome
-    ctx.fillStyle = `rgb(${Math.floor(80*dark)},${Math.floor(76*dark)},${Math.floor(70*dark)})`;
-    ctx.beginPath(); ctx.arc(48, top + trainH / 2, 4, 0, Math.PI * 2); ctx.fill();
-    // Chimney
-    ctx.fillStyle = `rgb(${Math.floor(40*dark)},${Math.floor(38*dark)},${Math.floor(35*dark)})`;
-    ctx.beginPath(); ctx.arc(10, top + trainH / 2, 4.5, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = `rgb(${Math.floor(60*dark)},${Math.floor(58*dark)},${Math.floor(54*dark)})`;
-    ctx.beginPath(); ctx.arc(10, top + trainH / 2, 3, 0, Math.PI * 2); ctx.fill();
-    // Cab window strip
-    ctx.fillStyle = `rgba(${Math.floor(140*dark)},${Math.floor(160*dark)},${Math.floor(180*dark)},0.7)`;
-    ctx.fillRect(54, top + 3, 8, trainH - 6);
+    drawCar(0, 65, () => {
+      ctx.fillStyle = `rgb(${Math.floor(55*dark)},${Math.floor(52*dark)},${Math.floor(48*dark)})`;
+      rr(0, top, 65, trainH, 3); ctx.fill();
+      ctx.fillStyle = `rgb(${Math.floor(72*dark)},${Math.floor(68*dark)},${Math.floor(62*dark)})`;
+      ctx.fillRect(4, top + 2, 52, trainH - 4);
+      ctx.fillStyle = `rgb(${Math.floor(185*dark)},${Math.floor(140*dark)},${Math.floor(40*dark)})`;
+      for (const bx2 of [14, 26, 38]) ctx.fillRect(bx2, top + 1, 3, trainH - 2);
+      ctx.fillStyle = `rgb(${Math.floor(80*dark)},${Math.floor(76*dark)},${Math.floor(70*dark)})`;
+      ctx.beginPath(); ctx.arc(48, top + trainH / 2, 4, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = `rgb(${Math.floor(40*dark)},${Math.floor(38*dark)},${Math.floor(35*dark)})`;
+      ctx.beginPath(); ctx.arc(10, top + trainH / 2, 4.5, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = `rgb(${Math.floor(60*dark)},${Math.floor(58*dark)},${Math.floor(54*dark)})`;
+      ctx.beginPath(); ctx.arc(10, top + trainH / 2, 3, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = `rgba(${Math.floor(140*dark)},${Math.floor(160*dark)},${Math.floor(180*dark)},0.7)`;
+      ctx.fillRect(54, top + 3, 8, trainH - 6);
+    });
 
-    // Gap
-    ctx.fillStyle = `rgb(${Math.floor(30*dark)},${Math.floor(28*dark)},${Math.floor(26*dark)})`;
-    ctx.fillRect(65, top + 2, 4, trainH - 4);
+    // Gap 1
+    drawCar(65, 4, () => {
+      ctx.fillStyle = `rgb(${Math.floor(30*dark)},${Math.floor(28*dark)},${Math.floor(26*dark)})`;
+      ctx.fillRect(0, top + 2, 4, trainH - 4);
+    });
 
     // Tender (38px)
-    ctx.fillStyle = `rgb(${Math.floor(48*dark)},${Math.floor(45*dark)},${Math.floor(42*dark)})`;
-    rr(69, top, 38, trainH, 2); ctx.fill();
-    ctx.fillStyle = `rgb(${Math.floor(35*dark)},${Math.floor(28*dark)},${Math.floor(20*dark)})`;
-    ctx.fillRect(72, top + 3, 32, trainH - 6);
+    drawCar(69, 38, () => {
+      ctx.fillStyle = `rgb(${Math.floor(48*dark)},${Math.floor(45*dark)},${Math.floor(42*dark)})`;
+      rr(0, top, 38, trainH, 2); ctx.fill();
+      ctx.fillStyle = `rgb(${Math.floor(35*dark)},${Math.floor(28*dark)},${Math.floor(20*dark)})`;
+      ctx.fillRect(3, top + 3, 32, trainH - 6);
+    });
 
-    // Gap
-    ctx.fillStyle = `rgb(${Math.floor(30*dark)},${Math.floor(28*dark)},${Math.floor(26*dark)})`;
-    ctx.fillRect(107, top + 2, 4, trainH - 4);
+    // Gap 2
+    drawCar(107, 4, () => {
+      ctx.fillStyle = `rgb(${Math.floor(30*dark)},${Math.floor(28*dark)},${Math.floor(26*dark)})`;
+      ctx.fillRect(0, top + 2, 4, trainH - 4);
+    });
 
-    // Carriages (2 × 65px)
+    // Carriages
     for (let ci = 0; ci < 2; ci++) {
-      const cx2 = 111 + ci * 69;
-      ctx.fillStyle = ci === 0
-        ? `rgb(${Math.floor(195*dark)},${Math.floor(178*dark)},${Math.floor(145*dark)})`
-        : `rgb(${Math.floor(185*dark)},${Math.floor(170*dark)},${Math.floor(138*dark)})`;
-      rr(cx2, top, 65, trainH, 2); ctx.fill();
-      // Roof highlight
-      ctx.fillStyle = `rgba(255,255,255,${0.12*dark})`;
-      ctx.fillRect(cx2 + 3, top + 1, 59, 3);
-      // Window strips
-      ctx.fillStyle = `rgba(${Math.floor(140*dark)},${Math.floor(165*dark)},${Math.floor(195*dark)},0.75)`;
-      for (const wy of [top + 3, top + trainH - 5]) {
-        ctx.fillRect(cx2 + 4, wy, 57, 2);
-      }
+      const offset = 111 + ci * 69;
+      drawCar(offset, 65, () => {
+        ctx.fillStyle = ci === 0
+          ? `rgb(${Math.floor(195*dark)},${Math.floor(178*dark)},${Math.floor(145*dark)})`
+          : `rgb(${Math.floor(185*dark)},${Math.floor(170*dark)},${Math.floor(138*dark)})`;
+        rr(0, top, 65, trainH, 2); ctx.fill();
+        ctx.fillStyle = `rgba(255,255,255,${0.12*dark})`;
+        ctx.fillRect(3, top + 1, 59, 3);
+        ctx.fillStyle = `rgba(${Math.floor(140*dark)},${Math.floor(165*dark)},${Math.floor(195*dark)},0.75)`;
+        for (const wy of [top + 3, top + trainH - 5]) {
+          ctx.fillRect(4, wy, 57, 2);
+        }
+      });
       if (ci < 1) {
-        ctx.fillStyle = `rgb(${Math.floor(30*dark)},${Math.floor(28*dark)},${Math.floor(26*dark)})`;
-        ctx.fillRect(cx2 + 65, top + 2, 4, trainH - 4);
+        drawCar(offset + 65, 4, () => {
+          ctx.fillStyle = `rgb(${Math.floor(30*dark)},${Math.floor(28*dark)},${Math.floor(26*dark)})`;
+          ctx.fillRect(0, top + 2, 4, trainH - 4);
+        });
       }
     }
-
-    ctx.restore();
   }
 
   /** Call once per frame — manages arriving/departing steam train */

@@ -956,6 +956,9 @@ function loop(timestamp: number = 0) {
   layout.drawTrain(ctx, nightAlpha);
   layout.updateBranchTrain();
   layout.drawBranchTrain(ctx, nightAlpha);
+  
+  // Draw branch station building over the train so it acts as a covered station
+  layout.drawBranchStationBuilding(ctx, nightAlpha);
 
   // When train arrives: send 3–5 waiting pedestrians to platform, then board
   if (layout.trainJustArrived) {

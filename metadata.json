@@ -1,0 +1,5 @@
+{
+  "name": "City Clock",
+  "description": "A beautiful, procedurally generated city clock with day/night cycles, weather, and seasonal events.",
+  "requestFramePermissions": []
+}
