@@ -1597,7 +1597,10 @@ _toastStyle.textContent = `
     border: 1px solid rgba(100,130,200,0.18);
     pointer-events: none;
     transform: translateX(-110%);
-    transition: transform 0.35s cubic-bezier(0.22,1,0.36,1), opacity 0.35s ease;
+    /* bottom is also transitioned so that existing visible toasts slide upward
+       smoothly when a new toast is added, instead of jumping instantly. */
+    transition: transform 0.35s cubic-bezier(0.22,1,0.36,1), opacity 0.35s ease,
+                bottom 0.25s ease;
     opacity: 0;
   }
   .city-toast.city-toast--visible {
@@ -1635,14 +1638,21 @@ function _scheduleRepositionToasts() {
 }
 
 function _repositionToasts() {
+  // Batch all height reads before writing positions to avoid interleaved
+  // forced reflows (layout thrash). Heights are cached on first measurement;
+  // adding city-toast--visible only changes transform/opacity — not layout
+  // dimensions — so the cached value remains valid for the toast's lifetime.
+  for (const t of _activeToasts) {
+    if (_toastHeights.get(t) === undefined) {
+      const h = t.getBoundingClientRect().height;
+      if (h > 0) _toastHeights.set(t, h);
+    }
+  }
   let bottom = TOAST_BOTTOM_BASE;
   for (let i = _activeToasts.length - 1; i >= 0; i--) {
     const t = _activeToasts[i];
     t.style.bottom = `${bottom}px`;
-    // Prefer the cached stable height; fall back to a live rect read, then a fixed estimate.
-    // getBoundingClientRect().height is more reliable than offsetHeight on iOS Safari
-    // because it is unaffected by ongoing CSS transforms.
-    const h = _toastHeights.get(t) ?? (t.getBoundingClientRect().height || TOAST_HEIGHT_ESTIMATE);
+    const h = _toastHeights.get(t) ?? TOAST_HEIGHT_ESTIMATE;
     bottom += h + TOAST_GAP;
   }
 }
@@ -1652,23 +1662,31 @@ function showToast(title: string, body: string, durationMs = 10000) {
   const el = document.createElement('div');
   el.className = 'city-toast';
   el.innerHTML = `<div class="toast-title">${title}</div><div>${body}</div>`;
+
+  // FIX: set style.bottom BEFORE appending to the DOM so the element never
+  // renders at the browser's default "auto" position for position:fixed
+  // (which resolves to the static-flow position — typically the top of the
+  // viewport).  Setting the inline value here suppresses any CSS bottom
+  // transition because the element has no prior DOM state to interpolate from;
+  // the transition only fires for subsequent changes while the element is live.
+  el.style.bottom = `${TOAST_BOTTOM_BASE}px`;
+
   document.body.appendChild(el);
   _activeToasts.push(el);
 
-  // Schedule an initial position pass using the estimate (or any already-cached sibling
-  // heights) so the toast slot is reserved before the transition starts.
+  // Reposition all toasts: heights are read and cached here, then bottom
+  // values are written.  Existing visible toasts slide smoothly upward via
+  // the CSS bottom transition instead of jumping.
   _scheduleRepositionToasts();
 
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
       el.classList.add('city-toast--visible');
 
-      // Measure the settled height now that the visible class (and its padding/font rules)
-      // is applied. Cache it so future repositions don't need to re-measure mid-transition.
-      const h = el.getBoundingClientRect().height;
-      if (h > 0) _toastHeights.set(el, h);
-      // Always reposition after the visible class: uses cached height if available,
-      // otherwise _repositionToasts falls back to TOAST_HEIGHT_ESTIMATE.
+      // Schedule one more reposition in case the first measurement occurred
+      // before font metrics were fully resolved on this element (rare on first
+      // paint).  Heights are cached by _repositionToasts so this is a no-op
+      // when nothing has changed.
       _scheduleRepositionToasts();
     });
   });
