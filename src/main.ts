@@ -957,6 +957,7 @@ function loop(timestamp: number = 0) {
 
   // When train arrives: send 3–5 waiting pedestrians to platform, then board
   if (layout.trainJustArrived) {
+    showToast('🚂 Train arriving', 'Central Station: Eastbound service arriving at platform. Doors opening shortly.', 8000);
     // 1. Spawn 3-5 new arrivals from the train onto the platform, heading into city
     const arrivalCount = 3 + Math.floor(Math.random() * 3);
     for (let i = 0; i < arrivalCount; i++) {
@@ -993,6 +994,8 @@ function loop(timestamp: number = 0) {
 
   // When train departs: remove pedestrians on platform (they've boarded)
   if (layout.trainJustDeparted) {
+    const nextMins = Math.round(layout.trainCooldown / 3600);
+    showToast('🚂 Train departed', `Central Station: Service has departed. Next train in approximately ${nextMins} min.`, 8000);
     for (let i = pedestrians.length - 1; i >= 0; i--) {
       const p = pedestrians[i];
       if (p.isOnPlatform || p.isHeadingToPlatform) {
@@ -1027,6 +1030,7 @@ function loop(timestamp: number = 0) {
 
   // --- Branch Train Boarding Logic ---
   if (layout.branchTrainJustArrived) {
+    showToast('🚂 Branch line arriving', 'West Street: Northbound service arriving at platform. Doors opening shortly.', 8000);
     const arrivalCount = 2 + Math.floor(Math.random() * 3);
     for (let i = 0; i < arrivalCount; i++) {
       const p = new Pedestrian(layout, pedestrians.length, CLOCK_ELIGIBLE_COUNT);
@@ -1060,6 +1064,8 @@ function loop(timestamp: number = 0) {
   }
 
   if (layout.branchTrainJustDeparted) {
+    const nextMins = Math.round(layout.branchTrainCooldown / 3600);
+    showToast('🚂 Branch line departed', `West Street: Service has departed. Next train in approximately ${nextMins} min.`, 8000);
     for (let i = pedestrians.length - 1; i >= 0; i--) {
       const p = pedestrians[i];
       if (p.isOnBranchPlatform || p.isHeadingToBranchPlatform) {

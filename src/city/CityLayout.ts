@@ -4015,7 +4015,8 @@ export class CityLayout {
       
       if (this.branchTrainY <= -trainLen - 60) {
         this.branchTrainActive = false;
-        this.branchTrainCooldown = 400 + Math.floor(Math.random() * 200);
+        // 3–5 minutes between trains (10800–18000 frames at 60 fps)
+        this.branchTrainCooldown = Math.floor(10800 + Math.random() * 7200);
         this.branchTrainJustDeparted = true;
       }
     }
@@ -4166,7 +4167,8 @@ export class CityLayout {
       if (!shouldWait) this.trainX -= trainSpeed;
       if (this.trainX < -locoTotalW - 60) {
         this.trainActive = false;
-        this.trainCooldown = Math.floor(1800 + Math.random() * 3600);
+        // 3–5 minutes between trains (10800–18000 frames at 60 fps)
+        this.trainCooldown = Math.floor(10800 + Math.random() * 7200);
         this.trainJustDeparted = true;
       }
     }
