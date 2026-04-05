@@ -3899,9 +3899,11 @@ export class CityLayout {
     for (let t = 0; t <= 1; t += 0.1) {
       const mt = 1 - t;
       // Center line bezier
+      const Hc = curveLen * 0.55;
+      const Vc = dYc * 0.55;
       const p0x = tx, p0y = curveEntryY;
-      const p1x = tx, p1y = curveEntryY + curveLen * 0.6;
-      const p2x = tx + curveLen - dYc * 0.6, p2y = this.trainTrackY;
+      const p1x = tx, p1y = curveEntryY + Vc;
+      const p2x = tx + curveLen - Hc, p2y = this.trainTrackY;
       const p3x = tx + curveLen, p3y = this.trainTrackY;
       
       const cx = mt*mt*mt*p0x + 3*mt*mt*t*p1x + 3*mt*t*t*p2x + t*t*t*p3x;
@@ -3927,9 +3929,11 @@ export class CityLayout {
       ctx.beginPath();
       for (let t = 0; t <= 1; t += 0.05) {
         const mt = 1 - t;
+        const Hc = curveLen * 0.55;
+        const Vc = dYc * 0.55;
         const p0x = tx, p0y = curveEntryY;
-        const p1x = tx, p1y = curveEntryY + curveLen * 0.6;
-        const p2x = tx + curveLen - dYc * 0.6, p2y = this.trainTrackY;
+        const p1x = tx, p1y = curveEntryY + Vc;
+        const p2x = tx + curveLen - Hc, p2y = this.trainTrackY;
         const p3x = tx + curveLen, p3y = this.trainTrackY;
         
         const cx = mt*mt*mt*p0x + 3*mt*mt*t*p1x + 3*mt*t*t*p2x + t*t*t*p3x;
@@ -4039,8 +4043,8 @@ export class CityLayout {
       const t = (d - hLen) / arcLen;
       const mt = 1 - t;
       
-      const Hc = dY * 0.6;
-      const Vc = curveLen * 0.6;
+      const Hc = curveLen * 0.55;
+      const Vc = dY * 0.55;
       const q0x = tx + curveLen;      const q0y = this.trainTrackY;
       const q1x = tx + curveLen - Hc; const q1y = this.trainTrackY;
       const q2x = tx;                 const q2y = curveEntryY + Vc;
