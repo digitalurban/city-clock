@@ -3945,13 +3945,18 @@ export class CityLayout {
 
   /** Call once per frame — manages arriving/departing steam train */
   updateBranchTrain() {
+    // Clear one-frame event flags unconditionally at the start of every tick so
+    // they are never true for more than a single frame.  Must happen before any
+    // early return — if the branch station is not yet initialised (branchStationW
+    // === 0) or the train is inactive the early returns below would otherwise
+    // leave branchTrainJustDeparted stuck true, causing repeated departure toasts.
+    this.branchTrainJustArrived = false;
+    this.branchTrainJustDeparted = false;
+
     if (this.branchStationW === 0) return;
     const speed = 0.7;
     const trainLen = 245;
     const tx = this.branchTrackX;
-
-    this.branchTrainJustArrived = false;
-    this.branchTrainJustDeparted = false;
 
     if (!this.branchTrainActive) {
       this.branchTrainCooldown--;
@@ -4106,6 +4111,14 @@ export class CityLayout {
     const { stationX: sx, stationW: sw } = this;
     if (sw === 0) return;
 
+    // Clear one-frame event flags unconditionally at the start of every tick so
+    // they are never true for more than a single frame.  Must happen before any
+    // early return — if the train is not active the early return below would
+    // otherwise leave trainJustDeparted stuck true across subsequent frames,
+    // causing the departure toast to fire repeatedly.
+    this.trainJustArrived = false;
+    this.trainJustDeparted = false;
+
     // Loco dimensions (engine + tender + 2 carriages) — must match drawTrain sizes
     const locoTotalW = 65 + 4 + 38 + 4 + 65 + 4 + 65; // = 245
     const stoppedX = sx + sw / 2 - locoTotalW / 2;
@@ -4131,9 +4144,6 @@ export class CityLayout {
     }
 
     if (!this.trainActive) return;
-
-    this.trainJustArrived = false;
-    this.trainJustDeparted = false;
 
     const trainSpeed = 0.7;
     let shouldWait = false;

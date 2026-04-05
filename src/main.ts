@@ -1626,6 +1626,12 @@ const TOAST_HEIGHT_ESTIMATE = 60; // fallback height (px) before a toast has bee
 const _toastHeights = new WeakMap<HTMLDivElement, number>(); // stable per-toast height cache
 let _repositionScheduled = false;
 
+// Deduplicate toasts: track the last time each unique (title, body) pair was
+// shown.  If the same toast fires within its display duration (e.g. because a
+// flag was not cleared quickly enough), subsequent calls are silently dropped.
+// Expired entries are pruned on each insert to keep the Map bounded.
+const _toastLastShown = new Map<string, { shownAt: number; durationMs: number }>();
+
 // Throttle repositions to at most once per animation frame so rapid adds/removes
 // (e.g. several train events firing together) don't cause mid-transition layout thrash.
 function _scheduleRepositionToasts() {
@@ -1659,6 +1665,20 @@ function _repositionToasts() {
 
 function showToast(title: string, body: string, durationMs = 10000) {
   if (!_cityInfoEnabled) return;
+
+  // Secondary guard: drop duplicate toasts that arrive within their display
+  // window.  This prevents accidental spam if a "just departed" flag is not
+  // cleared before the next frame (primary fix is in CityLayout.updateTrain).
+  const dedupeKey = JSON.stringify([title, body]);
+  const now = Date.now();
+  // Prune expired entries to keep the Map bounded in long-running sessions.
+  for (const [key, entry] of _toastLastShown) {
+    if (now - entry.shownAt >= entry.durationMs) _toastLastShown.delete(key);
+  }
+  const lastEntry = _toastLastShown.get(dedupeKey);
+  if (lastEntry && now - lastEntry.shownAt < lastEntry.durationMs) return;
+  _toastLastShown.set(dedupeKey, { shownAt: now, durationMs });
+
   const el = document.createElement('div');
   el.className = 'city-toast';
   el.innerHTML = `<div class="toast-title">${title}</div><div>${body}</div>`;
