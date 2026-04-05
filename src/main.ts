@@ -957,7 +957,6 @@ function loop(timestamp: number = 0) {
 
   // When train arrives: send 3–5 waiting pedestrians to platform, then board
   if (layout.trainJustArrived) {
-    showToast('🚂 Train arriving', 'Central Station: Eastbound service arriving at platform. Doors opening shortly.', 8000);
     // 1. Spawn 3-5 new arrivals from the train onto the platform, heading into city
     const arrivalCount = 3 + Math.floor(Math.random() * 3);
     for (let i = 0; i < arrivalCount; i++) {
@@ -1030,7 +1029,6 @@ function loop(timestamp: number = 0) {
 
   // --- Branch Train Boarding Logic ---
   if (layout.branchTrainJustArrived) {
-    showToast('🚂 Branch line arriving', 'West Street: Northbound service arriving at platform. Doors opening shortly.', 8000);
     const arrivalCount = 2 + Math.floor(Math.random() * 3);
     for (let i = 0; i < arrivalCount; i++) {
       const p = new Pedestrian(layout, pedestrians.length, CLOCK_ELIGIBLE_COUNT);
@@ -1650,12 +1648,21 @@ function showToast(title: string, body: string, durationMs = 10000) {
 
   setTimeout(() => {
     el.classList.remove('city-toast--visible');
-    el.addEventListener('transitionend', () => {
+
+    let cleaned = false;
+    const cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
       el.remove();
       const idx = _activeToasts.indexOf(el);
       if (idx !== -1) _activeToasts.splice(idx, 1);
       _repositionToasts();
-    }, { once: true });
+    };
+
+    el.addEventListener('transitionend', cleanup, { once: true });
+
+    // Fallback: if transitionend never fires (browser quirk), force cleanup after ~600ms
+    setTimeout(cleanup, 600);
   }, durationMs);
 }
 
