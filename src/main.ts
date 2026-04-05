@@ -1619,13 +1619,31 @@ let _cityInfoEnabled = false;
 const _activeToasts: HTMLDivElement[] = [];
 const TOAST_GAP = 8;
 const TOAST_BOTTOM_BASE = 20;
+const TOAST_HEIGHT_ESTIMATE = 60; // fallback height (px) before a toast has been measured
+const _toastHeights = new WeakMap<HTMLDivElement, number>(); // stable per-toast height cache
+let _repositionScheduled = false;
+
+// Throttle repositions to at most once per animation frame so rapid adds/removes
+// (e.g. several train events firing together) don't cause mid-transition layout thrash.
+function _scheduleRepositionToasts() {
+  if (_repositionScheduled) return;
+  _repositionScheduled = true;
+  requestAnimationFrame(() => {
+    _repositionScheduled = false;
+    _repositionToasts();
+  });
+}
 
 function _repositionToasts() {
   let bottom = TOAST_BOTTOM_BASE;
   for (let i = _activeToasts.length - 1; i >= 0; i--) {
     const t = _activeToasts[i];
     t.style.bottom = `${bottom}px`;
-    bottom += t.offsetHeight + TOAST_GAP;
+    // Prefer the cached stable height; fall back to a live rect read, then a fixed estimate.
+    // getBoundingClientRect().height is more reliable than offsetHeight on iOS Safari
+    // because it is unaffected by ongoing CSS transforms.
+    const h = _toastHeights.get(t) ?? (t.getBoundingClientRect().height || TOAST_HEIGHT_ESTIMATE);
+    bottom += h + TOAST_GAP;
   }
 }
 
@@ -1637,12 +1655,21 @@ function showToast(title: string, body: string, durationMs = 10000) {
   document.body.appendChild(el);
   _activeToasts.push(el);
 
-  // Position before animating in (needs to be in DOM for offsetHeight)
-  _repositionToasts();
+  // Schedule an initial position pass using the estimate (or any already-cached sibling
+  // heights) so the toast slot is reserved before the transition starts.
+  _scheduleRepositionToasts();
 
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
       el.classList.add('city-toast--visible');
+
+      // Measure the settled height now that the visible class (and its padding/font rules)
+      // is applied. Cache it so future repositions don't need to re-measure mid-transition.
+      const h = el.getBoundingClientRect().height;
+      if (h > 0) _toastHeights.set(el, h);
+      // Always reposition after the visible class: uses cached height if available,
+      // otherwise _repositionToasts falls back to TOAST_HEIGHT_ESTIMATE.
+      _scheduleRepositionToasts();
     });
   });
 
@@ -1654,9 +1681,10 @@ function showToast(title: string, body: string, durationMs = 10000) {
       if (cleaned) return;
       cleaned = true;
       el.remove();
+      _toastHeights.delete(el);
       const idx = _activeToasts.indexOf(el);
       if (idx !== -1) _activeToasts.splice(idx, 1);
-      _repositionToasts();
+      _scheduleRepositionToasts();
     };
 
     el.addEventListener('transitionend', cleanup, { once: true });
