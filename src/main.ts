@@ -786,9 +786,8 @@ function buildStaticCanvas(nightAlpha: number) {
 
   layout.drawPlazaBenches(sctx, nightAlpha);
   layout.drawFountainBasin(sctx, nightAlpha);
-  layout.drawBranchRailwayCorridor(sctx, nightAlpha); // branch corridor (col 2)
   layout.drawRailwayCorridor(sctx, nightAlpha); // base fill first, before houses
-  layout.drawBranchJunction(sctx, nightAlpha);  // junction curves — must be after main corridor
+  layout.drawBranchRailwayCorridor(sctx, nightAlpha); // branch corridor (col 2)
   layout.drawShadows(sctx, nightAlpha);
   layout.drawBuildings(sctx, nightAlpha);
   layout.drawBuildingRooftops(sctx, nightAlpha);
@@ -917,7 +916,6 @@ function loop(timestamp: number = 0) {
   // Venue labels — drawn live in world space so text is rasterised at current zoom, never upscaled
   layout.drawVenueLabels(ctx, nightAlpha);
   layout.drawTrainStationLabel(ctx, nightAlpha);
-  layout.drawBranchStationLabel(ctx, nightAlpha);
   layout.drawOutdoorSeating(ctx, nightAlpha, weather.type, time);
 
   // Time-of-day atmosphere (mist, golden hour, Sunday tint) — world space, under everything
@@ -956,9 +954,6 @@ function loop(timestamp: number = 0) {
   layout.drawTrain(ctx, nightAlpha);
   layout.updateBranchTrain();
   layout.drawBranchTrain(ctx, nightAlpha);
-  
-  // Draw branch station building over the train so it acts as a covered station
-  layout.drawBranchStationBuilding(ctx, nightAlpha);
 
   // When train arrives: send 3–5 waiting pedestrians to platform, then board
   if (layout.trainJustArrived) {
@@ -1029,6 +1024,71 @@ function loop(timestamp: number = 0) {
       pedestrians.splice(i, 1);
     }
   }
+
+  // --- Branch Train Boarding Logic ---
+  if (layout.branchTrainJustArrived) {
+    const arrivalCount = 2 + Math.floor(Math.random() * 3);
+    for (let i = 0; i < arrivalCount; i++) {
+      const p = new Pedestrian(layout, pedestrians.length, CLOCK_ELIGIBLE_COUNT);
+      const plat = layout.getRandomBranchPlatformPosition();
+      p.x = plat.x;
+      p.y = plat.y;
+      p.vx = 0; p.vy = 0;
+      p.isAlightingBranch = true;
+      p.alightBranchTimer = 120 + Math.floor(Math.random() * 180);
+      const wp = layout.getRandomSidewalkWaypoint();
+      p.waypointX = wp.x;
+      p.waypointY = wp.y;
+      pedestrians.push(p);
+    }
+    let boardCount = 2 + Math.floor(Math.random() * 3);
+    for (const p of pedestrians) {
+      if (boardCount <= 0) break;
+      if (p.isClockEligible || p.isAtHome || p.isAtWorkplace || p.isBoarding || p.isBoardingBranch
+          || p.isOnPlatform || p.isHeadingToPlatform || p.isAlighting
+          || p.isOnBranchPlatform || p.isHeadingToBranchPlatform || p.isAlightingBranch) continue;
+      p.isSitting = false; p.isBenchSitting = false; p.isQueuing = false;
+      p.isWindowShopping = false; p.isCheckingPhone = false; p.socialMode = false;
+      p.isBrowsingMarket = false; p.isSheltering = false;
+      const plat = layout.getRandomBranchPlatformPosition();
+      p.isHeadingToBranchPlatform = true;
+      p.waypointX = plat.x;
+      p.waypointY = plat.y;
+      p.waypointTimer = 0;
+      boardCount--;
+    }
+  }
+
+  if (layout.branchTrainJustDeparted) {
+    for (let i = pedestrians.length - 1; i >= 0; i--) {
+      const p = pedestrians[i];
+      if (p.isOnBranchPlatform || p.isHeadingToBranchPlatform) {
+        p.dispose();
+        pedestrians.splice(i, 1);
+      }
+    }
+  }
+
+  if (layout.branchTrainState === 'outbound') {
+    for (const p of pedestrians) {
+      if (p.isOnBranchPlatform && !p.isBoardingBranch) {
+        p.isOnBranchPlatform = false;
+        p.isBoardingBranch = true;
+        p.boardBranchTimer = 60 + Math.floor(Math.random() * 40);
+        const cy = layout.branchStationY + layout.branchStationH / 2;
+        p.waypointX = layout.branchTrackX;
+        p.waypointY = cy + (Math.random() - 0.5) * 60;
+      }
+    }
+  }
+
+  for (let i = pedestrians.length - 1; i >= 0; i--) {
+    if (pedestrians[i].isBoardingBranch && pedestrians[i].boardBranchTimer <= 0) {
+      pedestrians[i].dispose();
+      pedestrians.splice(i, 1);
+    }
+  }
+  // -----------------------------------
 
   // Fountain — update on/off cycle and draw spray above the static basin
   layout.updateFountain();
@@ -1172,6 +1232,10 @@ function loop(timestamp: number = 0) {
       p.draw(ctx, nightAlpha, weather.intensity, isDancing, zoom);
     }
   }
+
+  // Draw branch station building over the pedestrians so they go under the roof
+  layout.drawBranchStationBuilding(ctx, nightAlpha);
+  layout.drawBranchStationLabel(ctx, nightAlpha);
 
   // Bird feeder event — occasionally someone tosses crumbs in the plaza
   updateBirdFeeder(layout);

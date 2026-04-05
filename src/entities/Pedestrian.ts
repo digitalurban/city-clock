@@ -210,6 +210,14 @@ export class Pedestrian {
   isAlighting: boolean = false;         // arriving from train, heading into city
   alightTimer: number = 0;
 
+  // Branch train station behaviour
+  isHeadingToBranchPlatform: boolean = false;
+  isOnBranchPlatform: boolean = false;
+  isBoardingBranch: boolean = false;
+  boardBranchTimer: number = 0;
+  isAlightingBranch: boolean = false;
+  alightBranchTimer: number = 0;
+
   constructor(layout: CityLayout, index: number, clockEligibleCount: number) {
     this.isClockEligible = index < clockEligibleCount;
     this.name = PEDESTRIAN_NAMES[index % PEDESTRIAN_NAMES.length];
@@ -553,11 +561,42 @@ export class Pedestrian {
         return; // caller will remove this pedestrian when boardTimer <= 0
       }
 
+      // --- Branch Train: boarding ---
+      if (this.isBoardingBranch) {
+        this.boardBranchTimer--;
+        const bdx = this.waypointX - this.x;
+        const bdy = this.waypointY - this.y;
+        ax += bdx * 0.12;
+        ay += bdy * 0.12;
+        this.vx *= 0.82;
+        this.vy *= 0.82;
+        return;
+      }
+
       // --- Train: alighting (just arrived, walk into city) ---
       if (this.isAlighting) {
         this.alightTimer--;
         if (this.alightTimer <= 0) {
           this.isAlighting = false;
+          const wp = layout.getRandomSidewalkWaypoint();
+          this.waypointX = wp.x;
+          this.waypointY = wp.y;
+          this.waypointTimer = 0;
+        } else {
+          const adx = this.waypointX - this.x;
+          const ady = this.waypointY - this.y;
+          ax += adx * 0.06;
+          ay += ady * 0.06;
+          this.vx *= 0.92;
+          this.vy *= 0.92;
+        }
+      }
+
+      // --- Branch Train: alighting ---
+      if (this.isAlightingBranch) {
+        this.alightBranchTimer--;
+        if (this.alightBranchTimer <= 0) {
+          this.isAlightingBranch = false;
           const wp = layout.getRandomSidewalkWaypoint();
           this.waypointX = wp.x;
           this.waypointY = wp.y;
@@ -588,8 +627,24 @@ export class Pedestrian {
         }
       }
 
+      // --- Branch Train: heading to platform ---
+      if (this.isHeadingToBranchPlatform) {
+        const pdx = this.waypointX - this.x;
+        const pdy = this.waypointY - this.y;
+        const pdist = Math.sqrt(pdx * pdx + pdy * pdy);
+        if (pdist < 8) {
+          this.isHeadingToBranchPlatform = false;
+          this.isOnBranchPlatform = true;
+        } else {
+          ax += (pdx / pdist) * this.maxForce * 3.0;
+          ay += (pdy / pdist) * this.maxForce * 3.0;
+          this.vx *= 0.88;
+          this.vy *= 0.88;
+        }
+      }
+
       // --- Train: waiting on platform ---
-      if (this.isOnPlatform) {
+      if (this.isOnPlatform || this.isOnBranchPlatform) {
         // Idle — slow drift
         this.vx *= 0.85;
         this.vy *= 0.85;
@@ -610,6 +665,7 @@ export class Pedestrian {
         || this.isQueuing || this.isWindowShopping || this.isCheckingPhone || this.isTakingPhoto
         || this.isGoingHome || this.isAtHome || this.isAtWorkplace
         || this.isHeadingToPlatform || this.isOnPlatform || this.isAlighting
+        || this.isHeadingToBranchPlatform || this.isOnBranchPlatform || this.isAlightingBranch
         || this.isSheltering || this.isBrowsingMarket;
 
       // --- Social chat mode ---
