@@ -11,45 +11,13 @@ import { getActiveHoliday, drawHolidayDecorations, type Holiday } from './render
 import { TOTAL_PEDESTRIANS, CLOCK_ELIGIBLE_COUNT, TOTAL_CARS, setTotalPedestrians, setTotalCars, SEPARATION_RADIUS } from './utils/constants';
 import { SpatialGrid } from './utils/SpatialGrid';
 
-// ==================== Preference persistence (localStorage) ====================
-const PREF_MUTED       = 'city_muted';
-const PREF_CAR_COUNT   = 'city_carCount';
-const PREF_PED_COUNT   = 'city_pedCount';
-const PREF_LOCATION    = 'city_location';
-const PREF_ALARM       = 'city_alarm';
-const PREF_CITY_INFO   = 'city_infoEnabled';
-
-function _savePref(key: string, value: string | null) {
-  if (value === null) localStorage.removeItem(key);
-  else localStorage.setItem(key, value);
-}
-
 const canvas = document.getElementById('cityCanvas') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d', { alpha: false })!;
-
-// iOS detection — used to disable expensive compositor effects (backdrop-filter,
-// heavy shadows) and to lower the offscreen canvas size cap.
-const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-
-// Pre-computed style fragments: on iOS we skip backdrop-filter and heavy shadows
-// to avoid GPU compositor overdraw over an animating canvas.
-const overlayBlur   = isIOS ? '' : 'backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);';
-const overlayBlur12 = isIOS ? '' : 'backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);';
 
 // --- Procedural audio ---
 const audioEngine = new AudioEngine();
 document.addEventListener('click', () => audioEngine.resume(), { once: true });
 document.addEventListener('touchstart', () => audioEngine.resume(), { once: true });
-
-// Apply saved mute preference once the AudioContext has been created on first gesture.
-// These listeners are registered after the resume() listeners so they fire after
-// the AudioContext exists, allowing setMuted() to ramp the master gain correctly.
-function _applyMutePref() {
-  if (localStorage.getItem(PREF_MUTED) === 'false') audioEngine.setMuted(false);
-}
-document.addEventListener('click', _applyMutePref, { once: true });
-document.addEventListener('touchstart', _applyMutePref, { once: true });
 
 
 // Cached screen-space gradients — rebuilt only on resize, not every frame.
@@ -114,17 +82,13 @@ let panY = 0;
 let minZoom = 0.5;
 const MAX_ZOOM = 5.0;
 
-// Current slider values — initialised from saved prefs so resize() uses them on first load
-const _savedCarCount = parseInt(localStorage.getItem(PREF_CAR_COUNT) ?? '');
-const _savedPedCount = parseInt(localStorage.getItem(PREF_PED_COUNT) ?? '');
-let currentCarCount = isNaN(_savedCarCount) ? TOTAL_CARS : Math.min(300, Math.max(10, _savedCarCount));
-let currentPedCount = isNaN(_savedPedCount) ? TOTAL_PEDESTRIANS : Math.min(500, Math.max(CLOCK_ELIGIBLE_COUNT, _savedPedCount));
-setTotalCars(currentCarCount);
-setTotalPedestrians(currentPedCount);
+// Current slider values (for live adjustment without full resize)
+let currentCarCount = TOTAL_CARS;
 let lastRushHourSegment = -1; // tracks 10-min time segments for density auto-adjustment
+let currentPedCount = TOTAL_PEDESTRIANS;
 
-// Alarm state — restored from prefs so the alarm survives a page reload
-let alarmTime: string | null = localStorage.getItem(PREF_ALARM) || null;
+// Alarm state
+let alarmTime: string | null = null;
 let isAlarmActive = false;
 let isDancing = false;
 
@@ -140,26 +104,18 @@ async function loadAlarmBuffer() {
   if (!alarmAudioCtx || alarmBuffer) return;
   try {
     const resp = await fetch('./alarm.mp3');
-    if (!resp.ok) {
-      throw new Error(`HTTP ${resp.status} ${resp.statusText} — could not load alarm.mp3`);
-    }
     const ab = await resp.arrayBuffer();
     alarmBuffer = await alarmAudioCtx.decodeAudioData(ab);
-  } catch (err) {
-    console.warn('[Alarm] Failed to load alarm.mp3; will fall back to beep:', err);
+  } catch (_) {
+    // File missing or decode failed — ringAlarm() will fall back to beeps
   }
 }
 
 /** Start looping alarm.mp3 (or beeps if the file isn't available). */
-async function ringAlarm() {
+function ringAlarm() {
   if (!alarmAudioCtx) return;
   const ctx = alarmAudioCtx;
   if (ctx.state === 'suspended') ctx.resume();
-
-  // If the buffer hasn't loaded yet (e.g. still in-flight), attempt one more load now.
-  if (!alarmBuffer) {
-    await loadAlarmBuffer();
-  }
 
   if (alarmBuffer) {
     // Play the actual alarm.mp3 in a loop via AudioBufferSourceNode
@@ -284,6 +240,7 @@ let dragMoved = false; // true if pointer moved enough to be a drag (not a click
 
 canvas.addEventListener('mousedown', (e) => {
   audioEngine.resume();
+  audioEngine.resume();
   isDragging = true;
   dragMoved = false;
   dragStartX = e.clientX;
@@ -339,6 +296,7 @@ canvas.addEventListener('dblclick', () => {
 });
 // Separate touchstart to record tap position for distance check
 canvas.addEventListener('touchstart', (e) => {
+  audioEngine.resume();
   audioEngine.resume();
   if (e.touches.length === 1) {
     const t = e.touches[0];
@@ -458,10 +416,10 @@ function createOptionsUI() {
   toggleBtn.innerHTML = '⚙';
   toggleBtn.style.cssText = `
     width: 40px; height: 40px; border-radius: 50%; border: none;
-    background: ${isIOS ? 'rgba(0,0,0,0.85)' : 'rgba(0,0,0,0.6)'}; color: #fff; font-size: 20px;
+    background: rgba(0,0,0,0.6); color: #fff; font-size: 20px;
     cursor: pointer; display: flex; align-items: center; justify-content: center;
-    ${overlayBlur}
-    ${isIOS ? '' : 'box-shadow: 0 2px 8px rgba(0,0,0,0.3);'}
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
     transition: transform 0.2s, background 0.2s;
   `;
   toggleBtn.addEventListener('mouseenter', () => { toggleBtn.style.background = 'rgba(0,0,0,0.8)'; });
@@ -472,10 +430,10 @@ function createOptionsUI() {
   panel.id = 'options-panel';
   panel.style.cssText = `
     display: none; position: absolute; bottom: 50px; right: 0;
-    background: ${isIOS ? 'rgba(15,15,25,0.97)' : 'rgba(15, 15, 25, 0.85)'}; color: #fff; padding: 16px 20px;
+    background: rgba(15, 15, 25, 0.85); color: #fff; padding: 16px 20px;
     border-radius: 12px; min-width: 220px;
-    ${overlayBlur12}
-    ${isIOS ? 'box-shadow: 0 2px 8px rgba(0,0,0,0.4);' : 'box-shadow: 0 4px 20px rgba(0,0,0,0.5);'}
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    box-shadow: 0 4px 20px rgba(0,0,0,0.5);
     font-size: 13px;
   `;
 
@@ -561,7 +519,6 @@ function createOptionsUI() {
     cityInfoToggle.style.background = _cityInfoEnabled ? '#2a7a48' : '#444';
     cityInfoToggle.style.color = _cityInfoEnabled ? '#d4f5e0' : '#aaa';
     cityInfoToggle.textContent = _cityInfoEnabled ? '🏙 On' : '🏙 Off';
-    _savePref(PREF_CITY_INFO, String(_cityInfoEnabled));
     if (_cityInfoEnabled) {
       showToast('🏙 City Information Stream', 'Welcome to the City Information Stream', 4000);
     } else {
@@ -581,14 +538,12 @@ function createOptionsUI() {
     const val = parseInt(carSlider.value);
     carLabel.textContent = String(val);
     adjustCarCount(val);
-    _savePref(PREF_CAR_COUNT, String(val));
   });
 
   pedSlider.addEventListener('input', () => {
     const val = parseInt(pedSlider.value);
     pedLabel.textContent = String(val);
     adjustPedCount(val);
-    _savePref(PREF_PED_COUNT, String(val));
   });
 
   // Location / Weather handlers
@@ -599,7 +554,6 @@ function createOptionsUI() {
     const loc = locationInput.value.trim();
     if (loc) {
       weather.setLocation(loc);
-      _savePref(PREF_LOCATION, loc);
       locationBtn.textContent = 'Set ✓';
       locationBtn.style.background = '#4caf50';
       setTimeout(() => {
@@ -608,7 +562,6 @@ function createOptionsUI() {
       }, 2000);
     } else {
       weather.useRealWeather = false; // Disable if empty
-      _savePref(PREF_LOCATION, null);
     }
   });
 
@@ -622,7 +575,6 @@ function createOptionsUI() {
     if (alarmTime) {
       // Clear alarm
       alarmTime = null;
-      _savePref(PREF_ALARM, null);
       alarmBtn.textContent = 'Set';
       alarmStatusLabel.textContent = 'Off';
       isAlarmActive = false;
@@ -636,7 +588,6 @@ function createOptionsUI() {
     } else {
       if (alarmTimeInput.value) {
         alarmTime = alarmTimeInput.value;
-        _savePref(PREF_ALARM, alarmTime);
         alarmBtn.textContent = 'Clear';
         alarmBtn.style.background = '#ff4a4a';
         alarmStatusLabel.textContent = alarmTime;
@@ -653,7 +604,6 @@ function createOptionsUI() {
     audioEngine.resume(); // Unlock AudioContext from user gesture
     const nowMuted = !audioEngine.muted;
     audioEngine.setMuted(nowMuted);
-    _savePref(PREF_MUTED, String(nowMuted));
     audioToggleBtn.textContent = nowMuted ? '🔇 Off' : '🔊 On';
     audioToggleBtn.style.background = nowMuted ? '#555' : '#4a9eff';
   });
@@ -661,44 +611,6 @@ function createOptionsUI() {
   // Prevent canvas interactions when interacting with sliders
   panel.addEventListener('mousedown', (e) => e.stopPropagation());
   panel.addEventListener('touchstart', (e) => e.stopPropagation());
-
-  // --- Restore saved preferences into the UI ---
-  // Sliders: already reflect currentCarCount/currentPedCount (loaded from prefs at declaration)
-  carSlider.value = String(currentCarCount);
-  carLabel.textContent = String(currentCarCount);
-  pedSlider.value = String(currentPedCount);
-  pedLabel.textContent = String(currentPedCount);
-
-  // Location
-  const savedLocation = localStorage.getItem(PREF_LOCATION);
-  if (savedLocation) {
-    locationInput.value = savedLocation;
-    weather.setLocation(savedLocation);
-  }
-
-  // Alarm — restore visual state (alarmTime was already loaded at variable declaration)
-  if (alarmTime) {
-    alarmTimeInput.value = alarmTime;
-    alarmStatusLabel.textContent = alarmTime;
-    alarmBtn.textContent = 'Clear';
-    alarmBtn.style.background = '#ff4a4a';
-  }
-
-  // Audio button — muted state is applied to AudioEngine on first user gesture via
-  // _applyMutePref; here we just restore the button's visual state.
-  const savedMuted = localStorage.getItem(PREF_MUTED);
-  if (savedMuted === 'true') {
-    audioToggleBtn.textContent = '🔇 Off';
-    audioToggleBtn.style.background = '#555';
-  }
-  // (default: button shows '🔊 On' matching existing first-run behaviour)
-
-  // City Info button — state already loaded into _cityInfoEnabled at declaration
-  if (_cityInfoEnabled) {
-    cityInfoToggle.style.background = '#2a7a48';
-    cityInfoToggle.style.color = '#d4f5e0';
-    cityInfoToggle.textContent = '🏙 On';
-  }
 }
 
 function adjustCarCount(target: number) {
@@ -834,8 +746,7 @@ function buildStaticCanvas(nightAlpha: number) {
 
   // Render at the current zoom level so there's no upscaling when displayed.
   // Cap to avoid exceeding browser/iOS canvas size limits (~4096px per dimension).
-  // Use a lower cap on iOS to reduce memory and texture-upload bandwidth.
-  const MAX_CANVAS_DIM = isIOS ? 3072 : 4096;
+  const MAX_CANVAS_DIM = 4096;
   const maxScale = Math.min(
     MAX_CANVAS_DIM / (worldW * dpr),   // width limit
     MAX_CANVAS_DIM / (worldH * dpr),   // height limit
@@ -1203,13 +1114,6 @@ function loop(timestamp: number = 0) {
   // Construction site (animated crane)
   layout.drawConstructionSite(ctx, nightAlpha, time);
 
-  // Rebuild road-segment car density map (used by Car.update for congestion speed scaling)
-  layout.roadSegmentDensity.clear();
-  for (const car of cars) {
-    const prev = layout.roadSegmentDensity.get(car.road) ?? 0;
-    layout.roadSegmentDensity.set(car.road, prev + 1);
-  }
-
   // Update and draw cars
   for (const car of cars) {
     car.update(layout, pedestrians, cars, trafficPhase);
@@ -1509,12 +1413,12 @@ function buildFollowChip() {
   chip.style.cssText = `
     position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
     z-index: 300; display: none; align-items: center; gap: 5px;
-    background: ${isIOS ? 'rgba(10,12,22,0.97)' : 'rgba(10,12,22,0.88)'}; color: #e0eaff;
+    background: rgba(10,12,22,0.88); color: #e0eaff;
     border: 1px solid rgba(120,150,220,0.4); border-radius: 20px;
     padding: 5px 6px 5px 13px; white-space: nowrap; cursor: default;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    font-size: 12px; ${overlayBlur}
-    ${isIOS ? 'box-shadow: 0 2px 6px rgba(0,0,0,0.4);' : 'box-shadow: 0 3px 14px rgba(0,0,0,0.5);'} user-select: none;
+    font-size: 12px; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    box-shadow: 0 3px 14px rgba(0,0,0,0.5); user-select: none;
   `;
 
   const icon = document.createElement('span');
@@ -1587,13 +1491,13 @@ function createInspectPopup() {
   popup.id = 'ped-inspect';
   popup.style.cssText = `
     position: fixed; z-index: 200;
-    background: ${isIOS ? 'rgba(10,12,22,0.97)' : 'rgba(10, 12, 22, 0.88)'}; color: #e8ecf4;
+    background: rgba(10, 12, 22, 0.88); color: #e8ecf4;
     border: 1px solid rgba(120,150,220,0.35); border-radius: 10px;
     padding: 10px 14px; min-width: 180px;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     font-size: 12px; line-height: 1.6;
-    ${overlayBlur}
-    ${isIOS ? 'box-shadow: 0 2px 8px rgba(0,0,0,0.45);' : 'box-shadow: 0 4px 18px rgba(0,0,0,0.55);'} display: none;
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    box-shadow: 0 4px 18px rgba(0,0,0,0.55); display: none;
   `;
   popup.addEventListener('mousedown', e => e.stopPropagation());
   popup.addEventListener('touchstart', e => e.stopPropagation(), { passive: true });
@@ -1711,8 +1615,8 @@ _toastStyle.textContent = `
 `;
 document.head.appendChild(_toastStyle);
 
-// City info enabled flag — restored from saved pref (off by default)
-let _cityInfoEnabled = localStorage.getItem(PREF_CITY_INFO) === 'true';
+// City info enabled flag — controlled from settings panel (off by default)
+let _cityInfoEnabled = false;
 
 // Stack management — toasts stack upward from bottom-left
 const _activeToasts: HTMLDivElement[] = [];
