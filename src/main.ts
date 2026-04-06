@@ -138,8 +138,10 @@ let alarmSourceNode: AudioBufferSourceNode | null = null; // currently playing n
 /** Fetch and decode alarm.mp3 into the Web Audio buffer (called after ctx is created). */
 async function loadAlarmBuffer() {
   if (!alarmAudioCtx || alarmBuffer) return;
+  const url = `${import.meta.env.BASE_URL}alarm.mp3`;
+  console.info('[Alarm] Loading alarm sound from:', url);
   try {
-    const resp = await fetch('./alarm.mp3');
+    const resp = await fetch(url);
     if (!resp.ok) {
       throw new Error(`HTTP ${resp.status} ${resp.statusText} — could not load alarm.mp3`);
     }
