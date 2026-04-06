@@ -14,6 +14,16 @@ import { SpatialGrid } from './utils/SpatialGrid';
 const canvas = document.getElementById('cityCanvas') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d', { alpha: false })!;
 
+// iOS detection — used to disable expensive compositor effects (backdrop-filter,
+// heavy shadows) and to lower the offscreen canvas size cap.
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+// Pre-computed style fragments: on iOS we skip backdrop-filter and heavy shadows
+// to avoid GPU compositor overdraw over an animating canvas.
+const overlayBlur   = isIOS ? '' : 'backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);';
+const overlayBlur12 = isIOS ? '' : 'backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);';
+
 // --- Procedural audio ---
 const audioEngine = new AudioEngine();
 document.addEventListener('click', () => audioEngine.resume(), { once: true });
@@ -240,7 +250,6 @@ let dragMoved = false; // true if pointer moved enough to be a drag (not a click
 
 canvas.addEventListener('mousedown', (e) => {
   audioEngine.resume();
-  audioEngine.resume();
   isDragging = true;
   dragMoved = false;
   dragStartX = e.clientX;
@@ -296,7 +305,6 @@ canvas.addEventListener('dblclick', () => {
 });
 // Separate touchstart to record tap position for distance check
 canvas.addEventListener('touchstart', (e) => {
-  audioEngine.resume();
   audioEngine.resume();
   if (e.touches.length === 1) {
     const t = e.touches[0];
@@ -416,10 +424,10 @@ function createOptionsUI() {
   toggleBtn.innerHTML = '⚙';
   toggleBtn.style.cssText = `
     width: 40px; height: 40px; border-radius: 50%; border: none;
-    background: rgba(0,0,0,0.6); color: #fff; font-size: 20px;
+    background: ${isIOS ? 'rgba(0,0,0,0.85)' : 'rgba(0,0,0,0.6)'}; color: #fff; font-size: 20px;
     cursor: pointer; display: flex; align-items: center; justify-content: center;
-    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
-    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    ${overlayBlur}
+    ${isIOS ? '' : 'box-shadow: 0 2px 8px rgba(0,0,0,0.3);'}
     transition: transform 0.2s, background 0.2s;
   `;
   toggleBtn.addEventListener('mouseenter', () => { toggleBtn.style.background = 'rgba(0,0,0,0.8)'; });
@@ -430,10 +438,10 @@ function createOptionsUI() {
   panel.id = 'options-panel';
   panel.style.cssText = `
     display: none; position: absolute; bottom: 50px; right: 0;
-    background: rgba(15, 15, 25, 0.85); color: #fff; padding: 16px 20px;
+    background: ${isIOS ? 'rgba(15,15,25,0.97)' : 'rgba(15, 15, 25, 0.85)'}; color: #fff; padding: 16px 20px;
     border-radius: 12px; min-width: 220px;
-    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
-    box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+    ${overlayBlur12}
+    ${isIOS ? 'box-shadow: 0 2px 8px rgba(0,0,0,0.4);' : 'box-shadow: 0 4px 20px rgba(0,0,0,0.5);'}
     font-size: 13px;
   `;
 
@@ -746,7 +754,8 @@ function buildStaticCanvas(nightAlpha: number) {
 
   // Render at the current zoom level so there's no upscaling when displayed.
   // Cap to avoid exceeding browser/iOS canvas size limits (~4096px per dimension).
-  const MAX_CANVAS_DIM = 4096;
+  // Use a lower cap on iOS to reduce memory and texture-upload bandwidth.
+  const MAX_CANVAS_DIM = isIOS ? 3072 : 4096;
   const maxScale = Math.min(
     MAX_CANVAS_DIM / (worldW * dpr),   // width limit
     MAX_CANVAS_DIM / (worldH * dpr),   // height limit
@@ -1413,12 +1422,12 @@ function buildFollowChip() {
   chip.style.cssText = `
     position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
     z-index: 300; display: none; align-items: center; gap: 5px;
-    background: rgba(10,12,22,0.88); color: #e0eaff;
+    background: ${isIOS ? 'rgba(10,12,22,0.97)' : 'rgba(10,12,22,0.88)'}; color: #e0eaff;
     border: 1px solid rgba(120,150,220,0.4); border-radius: 20px;
     padding: 5px 6px 5px 13px; white-space: nowrap; cursor: default;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    font-size: 12px; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
-    box-shadow: 0 3px 14px rgba(0,0,0,0.5); user-select: none;
+    font-size: 12px; ${overlayBlur}
+    ${isIOS ? 'box-shadow: 0 2px 6px rgba(0,0,0,0.4);' : 'box-shadow: 0 3px 14px rgba(0,0,0,0.5);'} user-select: none;
   `;
 
   const icon = document.createElement('span');
@@ -1491,13 +1500,13 @@ function createInspectPopup() {
   popup.id = 'ped-inspect';
   popup.style.cssText = `
     position: fixed; z-index: 200;
-    background: rgba(10, 12, 22, 0.88); color: #e8ecf4;
+    background: ${isIOS ? 'rgba(10,12,22,0.97)' : 'rgba(10, 12, 22, 0.88)'}; color: #e8ecf4;
     border: 1px solid rgba(120,150,220,0.35); border-radius: 10px;
     padding: 10px 14px; min-width: 180px;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     font-size: 12px; line-height: 1.6;
-    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
-    box-shadow: 0 4px 18px rgba(0,0,0,0.55); display: none;
+    ${overlayBlur}
+    ${isIOS ? 'box-shadow: 0 2px 8px rgba(0,0,0,0.45);' : 'box-shadow: 0 4px 18px rgba(0,0,0,0.55);'} display: none;
   `;
   popup.addEventListener('mousedown', e => e.stopPropagation());
   popup.addEventListener('touchstart', e => e.stopPropagation(), { passive: true });
