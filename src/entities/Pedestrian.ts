@@ -358,6 +358,10 @@ export class Pedestrian {
     if (phase === 'working' || phase === 'working_afternoon') return 'Working';
     if (phase === 'lunch_break') return 'On lunch break';
     if (phase === 'evening_out') return 'Out for the evening';
+    // Surface low-need states while wandering
+    if (this.hunger < 35) return 'Feeling peckish';
+    if (this.energy < 30) return 'Feeling tired';
+    if (this.social < 30) return 'Feeling lonely';
     return 'Wandering';
   }
 
@@ -670,6 +674,7 @@ export class Pedestrian {
 
       // --- Social chat mode ---
       if (this.socialMode) {
+        this.social = Math.min(100, this.social + 0.15); // recharge social need while chatting
         this.socialTimer--;
         if (this.socialTimer <= 0) {
           this.socialMode = false;
@@ -698,6 +703,7 @@ export class Pedestrian {
 
       // --- Sitting at venue ---
       if (this.isSitting) {
+        this.hunger = Math.min(100, this.hunger + 0.1); // recharge hunger while eating/drinking
         this.sitTimer++;
         if (this.sitTimer >= this.sitDuration) {
           this.isSitting = false;
@@ -720,6 +726,7 @@ export class Pedestrian {
 
       // --- Bench sitting ---
       if (this.isBenchSitting) {
+        this.energy = Math.min(100, this.energy + 0.02); // gentle energy recharge while resting
         this.sitTimer++;
         if (this.sitTimer >= this.sitDuration) {
           this.isBenchSitting = false;
@@ -980,6 +987,7 @@ export class Pedestrian {
 
       // --- At home ---
       if (this.isAtHome) {
+        this.energy = Math.min(100, this.energy + 0.06); // recharge energy while resting at home
         this.homeTimer++;
         const home = layout.houses[this.assignedHome];
 
@@ -1185,17 +1193,21 @@ export class Pedestrian {
               }
             }
 
-            // Override roll based on needs (fallback when not scheduled)
+            // Override roll based on needs (fallback when not scheduled).
+            // Needs decay gradually during activity and are recharged while resting/eating/chatting.
+            // Roll values map to activity ranges in the random-waypoint switch below:
+            //   0.82 → go-home range (0.78–0.88)   0.05 → venue-sit range (<0.12)   0.50 → social range (0.42–0.56)
             if (!scheduledAction) {
-              if (this.energy < 20 && this.assignedHome >= 0) {
+              if (this.energy < 30 && this.assignedHome >= 0 && !this.isGoingHome) {
+                this.thoughtBubble = 'home';
+                this.thoughtTimer = 100; // ~1.7 s at 60 fps, consistent with other thought bubbles
                 roll = 0.82; // Force -> Go home
-                this.energy = 100; // Reset need
-              } else if (this.hunger < 25) {
+              } else if (this.hunger < 35 && !this.isSitting) {
+                this.thoughtBubble = 'food';
+                this.thoughtTimer = 100; // ~1.7 s at 60 fps
                 roll = 0.05; // Force -> Venue sitting (Cafe/Restaurant)
-                this.hunger = 100; // Reset need
-              } else if (this.social < 20) {
-                roll = 0.50; // Force -> Social chat
-                this.social = 100; // Reset need
+              } else if (this.social < 30) {
+                roll = 0.50; // Force -> Social chat (thought bubble shown in chat block below)
               }
             }
 

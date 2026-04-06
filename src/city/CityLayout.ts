@@ -160,6 +160,8 @@ export class CityLayout {
   streetLights: StreetLightDef[] = [];
   walkableRects: WalkableRect[] = [];
   roads: RoadSegment[] = [];
+  /** Cars per road segment — rebuilt every frame by the main update loop. */
+  roadSegmentDensity: Map<RoadSegment, number> = new Map();
   venues: VenueDef[] = [];
   entrances: PlazaEntrance[] = [];
   deliveryLanes: DeliveryLane[] = [];
