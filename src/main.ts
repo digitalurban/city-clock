@@ -11,6 +11,19 @@ import { getActiveHoliday, drawHolidayDecorations, type Holiday } from './render
 import { TOTAL_PEDESTRIANS, CLOCK_ELIGIBLE_COUNT, TOTAL_CARS, setTotalPedestrians, setTotalCars, SEPARATION_RADIUS } from './utils/constants';
 import { SpatialGrid } from './utils/SpatialGrid';
 
+// ==================== Preference persistence (localStorage) ====================
+const PREF_MUTED       = 'city_muted';
+const PREF_CAR_COUNT   = 'city_carCount';
+const PREF_PED_COUNT   = 'city_pedCount';
+const PREF_LOCATION    = 'city_location';
+const PREF_ALARM       = 'city_alarm';
+const PREF_CITY_INFO   = 'city_infoEnabled';
+
+function _savePref(key: string, value: string | null) {
+  if (value === null) localStorage.removeItem(key);
+  else localStorage.setItem(key, value);
+}
+
 const canvas = document.getElementById('cityCanvas') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d', { alpha: false })!;
 
@@ -28,6 +41,15 @@ const overlayBlur12 = isIOS ? '' : 'backdrop-filter: blur(12px); -webkit-backdro
 const audioEngine = new AudioEngine();
 document.addEventListener('click', () => audioEngine.resume(), { once: true });
 document.addEventListener('touchstart', () => audioEngine.resume(), { once: true });
+
+// Apply saved mute preference once the AudioContext has been created on first gesture.
+// These listeners are registered after the resume() listeners so they fire after
+// the AudioContext exists, allowing setMuted() to ramp the master gain correctly.
+function _applyMutePref() {
+  if (localStorage.getItem(PREF_MUTED) === 'false') audioEngine.setMuted(false);
+}
+document.addEventListener('click', _applyMutePref, { once: true });
+document.addEventListener('touchstart', _applyMutePref, { once: true });
 
 
 // Cached screen-space gradients — rebuilt only on resize, not every frame.
@@ -92,13 +114,17 @@ let panY = 0;
 let minZoom = 0.5;
 const MAX_ZOOM = 5.0;
 
-// Current slider values (for live adjustment without full resize)
-let currentCarCount = TOTAL_CARS;
+// Current slider values — initialised from saved prefs so resize() uses them on first load
+const _savedCarCount = parseInt(localStorage.getItem(PREF_CAR_COUNT) ?? '');
+const _savedPedCount = parseInt(localStorage.getItem(PREF_PED_COUNT) ?? '');
+let currentCarCount = isNaN(_savedCarCount) ? TOTAL_CARS : Math.min(300, Math.max(10, _savedCarCount));
+let currentPedCount = isNaN(_savedPedCount) ? TOTAL_PEDESTRIANS : Math.min(500, Math.max(CLOCK_ELIGIBLE_COUNT, _savedPedCount));
+setTotalCars(currentCarCount);
+setTotalPedestrians(currentPedCount);
 let lastRushHourSegment = -1; // tracks 10-min time segments for density auto-adjustment
-let currentPedCount = TOTAL_PEDESTRIANS;
 
-// Alarm state
-let alarmTime: string | null = null;
+// Alarm state — restored from prefs so the alarm survives a page reload
+let alarmTime: string | null = localStorage.getItem(PREF_ALARM) || null;
 let isAlarmActive = false;
 let isDancing = false;
 
@@ -535,6 +561,7 @@ function createOptionsUI() {
     cityInfoToggle.style.background = _cityInfoEnabled ? '#2a7a48' : '#444';
     cityInfoToggle.style.color = _cityInfoEnabled ? '#d4f5e0' : '#aaa';
     cityInfoToggle.textContent = _cityInfoEnabled ? '🏙 On' : '🏙 Off';
+    _savePref(PREF_CITY_INFO, String(_cityInfoEnabled));
     if (_cityInfoEnabled) {
       showToast('🏙 City Information Stream', 'Welcome to the City Information Stream', 4000);
     } else {
@@ -554,12 +581,14 @@ function createOptionsUI() {
     const val = parseInt(carSlider.value);
     carLabel.textContent = String(val);
     adjustCarCount(val);
+    _savePref(PREF_CAR_COUNT, String(val));
   });
 
   pedSlider.addEventListener('input', () => {
     const val = parseInt(pedSlider.value);
     pedLabel.textContent = String(val);
     adjustPedCount(val);
+    _savePref(PREF_PED_COUNT, String(val));
   });
 
   // Location / Weather handlers
@@ -570,6 +599,7 @@ function createOptionsUI() {
     const loc = locationInput.value.trim();
     if (loc) {
       weather.setLocation(loc);
+      _savePref(PREF_LOCATION, loc);
       locationBtn.textContent = 'Set ✓';
       locationBtn.style.background = '#4caf50';
       setTimeout(() => {
@@ -578,6 +608,7 @@ function createOptionsUI() {
       }, 2000);
     } else {
       weather.useRealWeather = false; // Disable if empty
+      _savePref(PREF_LOCATION, null);
     }
   });
 
@@ -591,6 +622,7 @@ function createOptionsUI() {
     if (alarmTime) {
       // Clear alarm
       alarmTime = null;
+      _savePref(PREF_ALARM, null);
       alarmBtn.textContent = 'Set';
       alarmStatusLabel.textContent = 'Off';
       isAlarmActive = false;
@@ -604,6 +636,7 @@ function createOptionsUI() {
     } else {
       if (alarmTimeInput.value) {
         alarmTime = alarmTimeInput.value;
+        _savePref(PREF_ALARM, alarmTime);
         alarmBtn.textContent = 'Clear';
         alarmBtn.style.background = '#ff4a4a';
         alarmStatusLabel.textContent = alarmTime;
@@ -620,6 +653,7 @@ function createOptionsUI() {
     audioEngine.resume(); // Unlock AudioContext from user gesture
     const nowMuted = !audioEngine.muted;
     audioEngine.setMuted(nowMuted);
+    _savePref(PREF_MUTED, String(nowMuted));
     audioToggleBtn.textContent = nowMuted ? '🔇 Off' : '🔊 On';
     audioToggleBtn.style.background = nowMuted ? '#555' : '#4a9eff';
   });
@@ -627,6 +661,44 @@ function createOptionsUI() {
   // Prevent canvas interactions when interacting with sliders
   panel.addEventListener('mousedown', (e) => e.stopPropagation());
   panel.addEventListener('touchstart', (e) => e.stopPropagation());
+
+  // --- Restore saved preferences into the UI ---
+  // Sliders: already reflect currentCarCount/currentPedCount (loaded from prefs at declaration)
+  carSlider.value = String(currentCarCount);
+  carLabel.textContent = String(currentCarCount);
+  pedSlider.value = String(currentPedCount);
+  pedLabel.textContent = String(currentPedCount);
+
+  // Location
+  const savedLocation = localStorage.getItem(PREF_LOCATION);
+  if (savedLocation) {
+    locationInput.value = savedLocation;
+    weather.setLocation(savedLocation);
+  }
+
+  // Alarm — restore visual state (alarmTime was already loaded at variable declaration)
+  if (alarmTime) {
+    alarmTimeInput.value = alarmTime;
+    alarmStatusLabel.textContent = alarmTime;
+    alarmBtn.textContent = 'Clear';
+    alarmBtn.style.background = '#ff4a4a';
+  }
+
+  // Audio button — muted state is applied to AudioEngine on first user gesture via
+  // _applyMutePref; here we just restore the button's visual state.
+  const savedMuted = localStorage.getItem(PREF_MUTED);
+  if (savedMuted === 'true') {
+    audioToggleBtn.textContent = '🔇 Off';
+    audioToggleBtn.style.background = '#555';
+  }
+  // (default: button shows '🔊 On' matching existing first-run behaviour)
+
+  // City Info button — state already loaded into _cityInfoEnabled at declaration
+  if (_cityInfoEnabled) {
+    cityInfoToggle.style.background = '#2a7a48';
+    cityInfoToggle.style.color = '#d4f5e0';
+    cityInfoToggle.textContent = '🏙 On';
+  }
 }
 
 function adjustCarCount(target: number) {
@@ -1632,8 +1704,8 @@ _toastStyle.textContent = `
 `;
 document.head.appendChild(_toastStyle);
 
-// City info enabled flag — controlled from settings panel (off by default)
-let _cityInfoEnabled = false;
+// City info enabled flag — restored from saved pref (off by default)
+let _cityInfoEnabled = localStorage.getItem(PREF_CITY_INFO) === 'true';
 
 // Stack management — toasts stack upward from bottom-left
 const _activeToasts: HTMLDivElement[] = [];
