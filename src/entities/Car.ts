@@ -401,13 +401,20 @@ export class Car {
     this.turnToY = this.y;
 
     if (isTurn) {
-      // Quadratic Bezier: control point = intersection corner for a natural arc
+      // Quadratic Bezier: use the intersection CENTRE as the control point.
+      // Using the lane-snapped position (turnToX/Y) can place the control point
+      // behind the car when it triggers close to the intersection, giving an
+      // initial Bezier tangent that faces backward — causing the visual "spin".
+      // The intersection centre is always ahead of the car (guaranteed by the
+      // `ahead` check in findNextIntersection), so the arc always starts
+      // pointing forward.  Falls back to the lane position when no intersection
+      // is available (road-end fallback).
       if (wasHorizontal) {
-        this.turnControlX = this.turnToX;
+        this.turnControlX = inter ? inter.x : this.turnToX;
         this.turnControlY = this.turnFromY;
       } else {
         this.turnControlX = this.turnFromX;
-        this.turnControlY = this.turnToY;
+        this.turnControlY = inter ? inter.y : this.turnToY;
       }
     } else {
       // Same-direction continuation (parallel road segments): linear interpolation
@@ -727,6 +734,46 @@ export class Car {
     return best;
   }
 
+  /**
+   * Level crossings: return a target speed for a car approaching the railway
+   * boundary while the main train is actively moving through that X range.
+   *
+   * Vertical roads terminate at railwayRowTopY.  When the train (which runs
+   * below that boundary at trainTrackY) is active and its bounding box
+   * overlaps this road's X span, cars in the crossing zone brake smoothly to
+   * a stop, simulating level-crossing gates.  The car resumes once the train
+   * has cleared the crossing zone.
+   *
+   * Returns `baseSpeed` when no crossing applies (no-op fast path).
+   */
+  private getLevelCrossingTargetSpeed(layout: CityLayout): number {
+    // Only applies when the main train is actively moving (not parked at station)
+    if (!layout.trainActive || layout.trainState === 'stopped') return this.baseSpeed;
+    // Only vertical-road cars are blocked (train runs horizontally)
+    if (this.road.horizontal) return this.baseSpeed;
+
+    const crossingY = layout.railwayRowTopY;
+    const crossingZone = 60; // px: braking begins this far above the crossing
+
+    // Car must be heading south (toward the railway) and within the zone
+    if (this.dirY <= 0) return this.baseSpeed;
+    const distToCrossing = crossingY - this.y;
+    if (distToCrossing > crossingZone || distToCrossing < -10) return this.baseSpeed;
+
+    // Check whether the train's X range overlaps this road (with a small gate buffer)
+    const gateBuffer = 80; // px either side — gates extend beyond the train body
+    const trainLen = 245;
+    const trainLeft  = layout.trainX - gateBuffer;
+    const trainRight = layout.trainX + trainLen + gateBuffer;
+    const roadLeft   = this.road.x;
+    const roadRight  = this.road.x + this.road.w;
+    if (trainRight < roadLeft || trainLeft > roadRight) return this.baseSpeed;
+
+    // Smooth braking curve toward zero, reaching full stop 5 px before the crossing
+    if (distToCrossing <= 5) return 0;
+    return this.baseSpeed * Math.max(0, (distToCrossing - 5) / (crossingZone - 5));
+  }
+
   /** Check if the car is approaching an intersection with a red/yellow light */
   private getTrafficSignal(layout: CityLayout, trafficPhase: number): 'green' | 'yellow' | 'red' {
     const lookAhead = 40;
@@ -852,6 +899,13 @@ export class Car {
       targetSpeed = 0;
     }
 
+    // Level crossing — even emergency vehicles stop for trains
+    const crossingSpeed = this.getLevelCrossingTargetSpeed(layout);
+    if (crossingSpeed < targetSpeed) {
+      targetSpeed = crossingSpeed;
+    }
+    const stoppedAtCrossing = crossingSpeed < this.baseSpeed * 0.1;
+
     // Pedestrian avoidance
     for (const p of pedestrians) {
       const dx = p.x - frontX;
@@ -903,8 +957,8 @@ export class Car {
     this.currentSpeed += (targetSpeed - this.currentSpeed) * 0.12;
 
     // Gridlock resolution: if stopped too long (>6 seconds = ~360 frames), try to reverse or nudge
-    // ONLY if not stopped at a red light. This prevents cars from turning around at traffic signals.
-    if (this.stoppedFrames > 720 && !stoppedAtRedLight) {
+    // ONLY if not stopped at a red light or level crossing.
+    if (this.stoppedFrames > 720 && !stoppedAtRedLight && !stoppedAtCrossing) {
       if (Math.random() < 0.2 && this.deliveryState === 'road') {
         this.reverseDirection();
       } else {
@@ -920,8 +974,8 @@ export class Car {
       return;
     }
 
-    // Creep forward slightly to prevent permanent jams, but only when not at a red light
-    if (this.currentSpeed < 0.05 && targetSpeed <= 0 && !stoppedAtRedLight) {
+    // Creep forward slightly to prevent permanent jams, but only when not at a red light or crossing
+    if (this.currentSpeed < 0.05 && targetSpeed <= 0 && !stoppedAtRedLight && !stoppedAtCrossing) {
       this.currentSpeed = 0.05;
     } else if (this.currentSpeed < 0.02) {
       this.currentSpeed = 0;
@@ -1008,7 +1062,7 @@ export class Car {
     switch (this.busState) {
       case 'road':
         this.updateNormal(layout, pedestrians, cars, trafficPhase, stoppedAtRedLight);
-        if (!stoppedAtRedLight) this.busStopTimer--;
+        if (!stoppedAtRedLight && this.getLevelCrossingTargetSpeed(layout) >= this.baseSpeed * 0.1) this.busStopTimer--;
         if (this.busStopTimer <= 0 && this.currentSpeed > 0.2) {
           this.busState = 'stopping';
           this.busDwellDuration = 180 + Math.floor(Math.random() * 120);
@@ -1066,7 +1120,7 @@ export class Car {
     switch (this.garbageState) {
       case 'road':
         this.updateNormal(layout, pedestrians, cars, trafficPhase, stoppedAtRedLight);
-        if (!stoppedAtRedLight) this.garbageStopTimer--;
+        if (!stoppedAtRedLight && this.getLevelCrossingTargetSpeed(layout) >= this.baseSpeed * 0.1) this.garbageStopTimer--;
         if (this.garbageStopTimer <= 0 && this.currentSpeed > 0.1) {
           this.garbageState = 'collecting';
           this.garbageDwellDuration = 180 + Math.floor(Math.random() * 60);
