@@ -1195,14 +1195,16 @@ export class Pedestrian {
 
             // Override roll based on needs (fallback when not scheduled).
             // Needs decay gradually during activity and are recharged while resting/eating/chatting.
+            // Roll values map to activity ranges in the random-waypoint switch below:
+            //   0.82 → go-home range (0.78–0.88)   0.05 → venue-sit range (<0.12)   0.50 → social range (0.42–0.56)
             if (!scheduledAction) {
               if (this.energy < 30 && this.assignedHome >= 0 && !this.isGoingHome) {
                 this.thoughtBubble = 'home';
-                this.thoughtTimer = 100;
+                this.thoughtTimer = 100; // ~1.7 s at 60 fps, consistent with other thought bubbles
                 roll = 0.82; // Force -> Go home
               } else if (this.hunger < 35 && !this.isSitting) {
                 this.thoughtBubble = 'food';
-                this.thoughtTimer = 100;
+                this.thoughtTimer = 100; // ~1.7 s at 60 fps
                 roll = 0.05; // Force -> Venue sitting (Cafe/Restaurant)
               } else if (this.social < 30) {
                 roll = 0.50; // Force -> Social chat (thought bubble shown in chat block below)
