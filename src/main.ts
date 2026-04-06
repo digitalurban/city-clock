@@ -114,18 +114,26 @@ async function loadAlarmBuffer() {
   if (!alarmAudioCtx || alarmBuffer) return;
   try {
     const resp = await fetch('./alarm.mp3');
+    if (!resp.ok) {
+      throw new Error(`HTTP ${resp.status} ${resp.statusText} — could not load alarm.mp3`);
+    }
     const ab = await resp.arrayBuffer();
     alarmBuffer = await alarmAudioCtx.decodeAudioData(ab);
-  } catch (_) {
-    // File missing or decode failed — ringAlarm() will fall back to beeps
+  } catch (err) {
+    console.warn('[Alarm] Failed to load alarm.mp3; will fall back to beep:', err);
   }
 }
 
 /** Start looping alarm.mp3 (or beeps if the file isn't available). */
-function ringAlarm() {
+async function ringAlarm() {
   if (!alarmAudioCtx) return;
   const ctx = alarmAudioCtx;
   if (ctx.state === 'suspended') ctx.resume();
+
+  // If the buffer hasn't loaded yet (e.g. still in-flight), attempt one more load now.
+  if (!alarmBuffer) {
+    await loadAlarmBuffer();
+  }
 
   if (alarmBuffer) {
     // Play the actual alarm.mp3 in a loop via AudioBufferSourceNode
