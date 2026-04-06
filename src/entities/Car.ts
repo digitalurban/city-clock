@@ -10,6 +10,24 @@ const CAR_COLORS = [
 
 const DELIVERY_COLOR = '#e67e22';
 
+// ── Congestion scoring constants ────────────────────────────────────────────
+/** Cars per road segment below which there is no speed reduction. */
+const CONGESTION_FREE_THRESHOLD = 2;
+/** Range of cars above threshold over which the multiplier falls from 1→MIN. */
+const CONGESTION_SCALE_RANGE = 8;
+/** Minimum speed multiplier at full congestion (50% of base speed). */
+const MIN_CONGESTION_MULT = 0.5;
+
+// ── Level crossing constants ─────────────────────────────────────────────────
+/** Braking begins this many px above the level crossing (railwayRowTopY). */
+const CROSSING_BRAKE_ZONE = 60;
+/** Hard stop threshold — full stop when car is within this many px of crossing. */
+const CROSSING_STOP_MARGIN = 5;
+/** Gate buffer: the crossing is treated as blocked this many px beyond the train body. */
+const CROSSING_GATE_BUFFER = 80;
+/** Locomotive + tender + 2 carriages — must match drawTrain dimensions (245 px). */
+const TRAIN_TOTAL_LEN = 245;
+
 /** A dropped-off package sitting outside a venue */
 export interface DroppedPackage {
   x: number;
@@ -753,25 +771,22 @@ export class Car {
     if (this.road.horizontal) return this.baseSpeed;
 
     const crossingY = layout.railwayRowTopY;
-    const crossingZone = 60; // px: braking begins this far above the crossing
 
-    // Car must be heading south (toward the railway) and within the zone
+    // Car must be heading south (toward the railway) and within the braking zone
     if (this.dirY <= 0) return this.baseSpeed;
     const distToCrossing = crossingY - this.y;
-    if (distToCrossing > crossingZone || distToCrossing < -10) return this.baseSpeed;
+    if (distToCrossing > CROSSING_BRAKE_ZONE || distToCrossing < -10) return this.baseSpeed;
 
-    // Check whether the train's X range overlaps this road (with a small gate buffer)
-    const gateBuffer = 80; // px either side — gates extend beyond the train body
-    const trainLen = 245;
-    const trainLeft  = layout.trainX - gateBuffer;
-    const trainRight = layout.trainX + trainLen + gateBuffer;
+    // Check whether the train's X range overlaps this road (with a gate buffer either side)
+    const trainLeft  = layout.trainX - CROSSING_GATE_BUFFER;
+    const trainRight = layout.trainX + TRAIN_TOTAL_LEN + CROSSING_GATE_BUFFER;
     const roadLeft   = this.road.x;
     const roadRight  = this.road.x + this.road.w;
     if (trainRight < roadLeft || trainLeft > roadRight) return this.baseSpeed;
 
-    // Smooth braking curve toward zero, reaching full stop 5 px before the crossing
-    if (distToCrossing <= 5) return 0;
-    return this.baseSpeed * Math.max(0, (distToCrossing - 5) / (crossingZone - 5));
+    // Smooth braking curve toward zero, reaching full stop CROSSING_STOP_MARGIN px before the line
+    if (distToCrossing <= CROSSING_STOP_MARGIN) return 0;
+    return this.baseSpeed * Math.max(0, (distToCrossing - CROSSING_STOP_MARGIN) / (CROSSING_BRAKE_ZONE - CROSSING_STOP_MARGIN));
   }
 
   /** Check if the car is approaching an intersection with a red/yellow light */
@@ -890,7 +905,17 @@ export class Car {
   private stoppedFrames: number = 0;
 
   private updateNormal(layout: CityLayout, pedestrians: Pedestrian[], cars: Car[], trafficPhase: number, stoppedAtRedLight: boolean) {
-    let targetSpeed = this.baseSpeed;
+    const isEmergency = this.carType === 'police' || this.carType === 'ambulance' || this.carType === 'firetruck';
+
+    // Congestion speed multiplier: more cars on this road → slower target speed.
+    // Emergency vehicles are exempt — they drive at full speed regardless of density.
+    const density = layout.roadSegmentDensity.get(this.road) ?? 0;
+    const congestionMult = isEmergency
+      ? 1.0
+      : Math.max(MIN_CONGESTION_MULT, 1 - (Math.max(0, density - CONGESTION_FREE_THRESHOLD) / CONGESTION_SCALE_RANGE) * (1 - MIN_CONGESTION_MULT));
+    const effectiveBase = this.baseSpeed * congestionMult;
+
+    let targetSpeed = effectiveBase;
     const frontX = this.x + this.dirX * this.length * 0.5;
     const frontY = this.y + this.dirY * this.length * 0.5;
 
@@ -913,7 +938,7 @@ export class Car {
       const along = dx * this.dirX + dy * this.dirY;
       const perp = Math.abs(dx * this.dirY - dy * this.dirX);
       if (along > 0 && along < 40 && perp < 12) {
-        targetSpeed = Math.min(targetSpeed, this.baseSpeed * (along / 40) * 0.5);
+        targetSpeed = Math.min(targetSpeed, effectiveBase * (along / 40) * 0.5);
       }
     }
 

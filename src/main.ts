@@ -1203,6 +1203,13 @@ function loop(timestamp: number = 0) {
   // Construction site (animated crane)
   layout.drawConstructionSite(ctx, nightAlpha, time);
 
+  // Rebuild road-segment car density map (used by Car.update for congestion speed scaling)
+  layout.roadSegmentDensity.clear();
+  for (const car of cars) {
+    const prev = layout.roadSegmentDensity.get(car.road) ?? 0;
+    layout.roadSegmentDensity.set(car.road, prev + 1);
+  }
+
   // Update and draw cars
   for (const car of cars) {
     car.update(layout, pedestrians, cars, trafficPhase);
