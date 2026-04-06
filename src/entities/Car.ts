@@ -913,6 +913,7 @@ export class Car {
     const congestionMult = isEmergency
       ? 1.0
       : Math.max(MIN_CONGESTION_MULT, 1 - (Math.max(0, density - CONGESTION_FREE_THRESHOLD) / CONGESTION_SCALE_RANGE) * (1 - MIN_CONGESTION_MULT));
+    const allowQueueEscape = isEmergency || density <= CONGESTION_FREE_THRESHOLD;
     const effectiveBase = this.baseSpeed * congestionMult;
 
     let targetSpeed = effectiveBase;
@@ -983,7 +984,7 @@ export class Car {
 
     // Gridlock resolution: if stopped too long (>6 seconds = ~360 frames), try to reverse or nudge
     // ONLY if not stopped at a red light or level crossing.
-    if (this.stoppedFrames > 720 && !stoppedAtRedLight && !stoppedAtCrossing) {
+    if (this.stoppedFrames > 720 && allowQueueEscape && !stoppedAtRedLight && !stoppedAtCrossing) {
       if (Math.random() < 0.2 && this.deliveryState === 'road') {
         this.reverseDirection();
       } else {
@@ -1000,7 +1001,7 @@ export class Car {
     }
 
     // Creep forward slightly to prevent permanent jams, but only when not at a red light or crossing
-    if (this.currentSpeed < 0.05 && targetSpeed <= 0 && !stoppedAtRedLight && !stoppedAtCrossing) {
+    if (this.currentSpeed < 0.05 && targetSpeed <= 0 && allowQueueEscape && !stoppedAtRedLight && !stoppedAtCrossing) {
       this.currentSpeed = 0.05;
     } else if (this.currentSpeed < 0.02) {
       this.currentSpeed = 0;
