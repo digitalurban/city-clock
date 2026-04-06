@@ -10,24 +10,6 @@ const CAR_COLORS = [
 
 const DELIVERY_COLOR = '#e67e22';
 
-// ── Congestion scoring constants ────────────────────────────────────────────
-/** Cars per road segment below which there is no speed reduction. */
-const CONGESTION_FREE_THRESHOLD = 2;
-/** Range of cars above threshold over which the multiplier falls from 1→MIN. */
-const CONGESTION_SCALE_RANGE = 8;
-/** Minimum speed multiplier at full congestion (50% of base speed). */
-const MIN_CONGESTION_MULT = 0.5;
-
-// ── Level crossing constants ─────────────────────────────────────────────────
-/** Braking begins this many px above the level crossing (railwayRowTopY). */
-const CROSSING_BRAKE_ZONE = 60;
-/** Hard stop threshold — full stop when car is within this many px of crossing. */
-const CROSSING_STOP_MARGIN = 5;
-/** Gate buffer: the crossing is treated as blocked this many px beyond the train body. */
-const CROSSING_GATE_BUFFER = 80;
-/** Locomotive + tender + 2 carriages — must match drawTrain dimensions (245 px). */
-const TRAIN_TOTAL_LEN = 245;
-
 /** A dropped-off package sitting outside a venue */
 export interface DroppedPackage {
   x: number;
@@ -419,20 +401,13 @@ export class Car {
     this.turnToY = this.y;
 
     if (isTurn) {
-      // Quadratic Bezier: use the intersection CENTRE as the control point.
-      // Using the lane-snapped position (turnToX/Y) can place the control point
-      // behind the car when it triggers close to the intersection, giving an
-      // initial Bezier tangent that faces backward — causing the visual "spin".
-      // The intersection centre is always ahead of the car (guaranteed by the
-      // `ahead` check in findNextIntersection), so the arc always starts
-      // pointing forward.  Falls back to the lane position when no intersection
-      // is available (road-end fallback).
+      // Quadratic Bezier: control point = intersection corner for a natural arc
       if (wasHorizontal) {
-        this.turnControlX = inter ? inter.x : this.turnToX;
+        this.turnControlX = this.turnToX;
         this.turnControlY = this.turnFromY;
       } else {
         this.turnControlX = this.turnFromX;
-        this.turnControlY = inter ? inter.y : this.turnToY;
+        this.turnControlY = this.turnToY;
       }
     } else {
       // Same-direction continuation (parallel road segments): linear interpolation
@@ -752,43 +727,6 @@ export class Car {
     return best;
   }
 
-  /**
-   * Level crossings: return a target speed for a car approaching the railway
-   * boundary while the main train is actively moving through that X range.
-   *
-   * Vertical roads terminate at railwayRowTopY.  When the train (which runs
-   * below that boundary at trainTrackY) is active and its bounding box
-   * overlaps this road's X span, cars in the crossing zone brake smoothly to
-   * a stop, simulating level-crossing gates.  The car resumes once the train
-   * has cleared the crossing zone.
-   *
-   * Returns `baseSpeed` when no crossing applies (no-op fast path).
-   */
-  private getLevelCrossingTargetSpeed(layout: CityLayout): number {
-    // Only applies when the main train is actively moving (not parked at station)
-    if (!layout.trainActive || layout.trainState === 'stopped') return this.baseSpeed;
-    // Only vertical-road cars are blocked (train runs horizontally)
-    if (this.road.horizontal) return this.baseSpeed;
-
-    const crossingY = layout.railwayRowTopY;
-
-    // Car must be heading south (toward the railway) and within the braking zone
-    if (this.dirY <= 0) return this.baseSpeed;
-    const distToCrossing = crossingY - this.y;
-    if (distToCrossing > CROSSING_BRAKE_ZONE || distToCrossing < -10) return this.baseSpeed;
-
-    // Check whether the train's X range overlaps this road (with a gate buffer either side)
-    const trainLeft  = layout.trainX - CROSSING_GATE_BUFFER;
-    const trainRight = layout.trainX + TRAIN_TOTAL_LEN + CROSSING_GATE_BUFFER;
-    const roadLeft   = this.road.x;
-    const roadRight  = this.road.x + this.road.w;
-    if (trainRight < roadLeft || trainLeft > roadRight) return this.baseSpeed;
-
-    // Smooth braking curve toward zero, reaching full stop CROSSING_STOP_MARGIN px before the line
-    if (distToCrossing <= CROSSING_STOP_MARGIN) return 0;
-    return this.baseSpeed * Math.max(0, (distToCrossing - CROSSING_STOP_MARGIN) / (CROSSING_BRAKE_ZONE - CROSSING_STOP_MARGIN));
-  }
-
   /** Check if the car is approaching an intersection with a red/yellow light */
   private getTrafficSignal(layout: CityLayout, trafficPhase: number): 'green' | 'yellow' | 'red' {
     const lookAhead = 40;
@@ -905,18 +843,7 @@ export class Car {
   private stoppedFrames: number = 0;
 
   private updateNormal(layout: CityLayout, pedestrians: Pedestrian[], cars: Car[], trafficPhase: number, stoppedAtRedLight: boolean) {
-    const isEmergency = this.carType === 'police' || this.carType === 'ambulance' || this.carType === 'firetruck';
-
-    // Congestion speed multiplier: more cars on this road → slower target speed.
-    // Emergency vehicles are exempt — they drive at full speed regardless of density.
-    const density = layout.roadSegmentDensity.get(this.road) ?? 0;
-    const congestionMult = isEmergency
-      ? 1.0
-      : Math.max(MIN_CONGESTION_MULT, 1 - (Math.max(0, density - CONGESTION_FREE_THRESHOLD) / CONGESTION_SCALE_RANGE) * (1 - MIN_CONGESTION_MULT));
-    const allowQueueEscape = isEmergency || density <= CONGESTION_FREE_THRESHOLD;
-    const effectiveBase = this.baseSpeed * congestionMult;
-
-    let targetSpeed = effectiveBase;
+    let targetSpeed = this.baseSpeed;
     const frontX = this.x + this.dirX * this.length * 0.5;
     const frontY = this.y + this.dirY * this.length * 0.5;
 
@@ -925,13 +852,6 @@ export class Car {
       targetSpeed = 0;
     }
 
-    // Level crossing — even emergency vehicles stop for trains
-    const crossingSpeed = this.getLevelCrossingTargetSpeed(layout);
-    if (crossingSpeed < targetSpeed) {
-      targetSpeed = crossingSpeed;
-    }
-    const stoppedAtCrossing = crossingSpeed < this.baseSpeed * 0.1;
-
     // Pedestrian avoidance
     for (const p of pedestrians) {
       const dx = p.x - frontX;
@@ -939,7 +859,7 @@ export class Car {
       const along = dx * this.dirX + dy * this.dirY;
       const perp = Math.abs(dx * this.dirY - dy * this.dirX);
       if (along > 0 && along < 40 && perp < 12) {
-        targetSpeed = Math.min(targetSpeed, effectiveBase * (along / 40) * 0.5);
+        targetSpeed = Math.min(targetSpeed, this.baseSpeed * (along / 40) * 0.5);
       }
     }
 
@@ -983,8 +903,8 @@ export class Car {
     this.currentSpeed += (targetSpeed - this.currentSpeed) * 0.12;
 
     // Gridlock resolution: if stopped too long (>6 seconds = ~360 frames), try to reverse or nudge
-    // ONLY if not stopped at a red light or level crossing.
-    if (this.stoppedFrames > 720 && allowQueueEscape && !stoppedAtRedLight && !stoppedAtCrossing) {
+    // ONLY if not stopped at a red light. This prevents cars from turning around at traffic signals.
+    if (this.stoppedFrames > 720 && !stoppedAtRedLight) {
       if (Math.random() < 0.2 && this.deliveryState === 'road') {
         this.reverseDirection();
       } else {
@@ -1000,8 +920,8 @@ export class Car {
       return;
     }
 
-    // Creep forward slightly to prevent permanent jams, but only when not at a red light or crossing
-    if (this.currentSpeed < 0.05 && targetSpeed <= 0 && allowQueueEscape && !stoppedAtRedLight && !stoppedAtCrossing) {
+    // Creep forward slightly to prevent permanent jams, but only when not at a red light
+    if (this.currentSpeed < 0.05 && targetSpeed <= 0 && !stoppedAtRedLight) {
       this.currentSpeed = 0.05;
     } else if (this.currentSpeed < 0.02) {
       this.currentSpeed = 0;
@@ -1088,7 +1008,7 @@ export class Car {
     switch (this.busState) {
       case 'road':
         this.updateNormal(layout, pedestrians, cars, trafficPhase, stoppedAtRedLight);
-        if (!stoppedAtRedLight && this.getLevelCrossingTargetSpeed(layout) >= this.baseSpeed * 0.1) this.busStopTimer--;
+        if (!stoppedAtRedLight) this.busStopTimer--;
         if (this.busStopTimer <= 0 && this.currentSpeed > 0.2) {
           this.busState = 'stopping';
           this.busDwellDuration = 180 + Math.floor(Math.random() * 120);
@@ -1146,7 +1066,7 @@ export class Car {
     switch (this.garbageState) {
       case 'road':
         this.updateNormal(layout, pedestrians, cars, trafficPhase, stoppedAtRedLight);
-        if (!stoppedAtRedLight && this.getLevelCrossingTargetSpeed(layout) >= this.baseSpeed * 0.1) this.garbageStopTimer--;
+        if (!stoppedAtRedLight) this.garbageStopTimer--;
         if (this.garbageStopTimer <= 0 && this.currentSpeed > 0.1) {
           this.garbageState = 'collecting';
           this.garbageDwellDuration = 180 + Math.floor(Math.random() * 60);
