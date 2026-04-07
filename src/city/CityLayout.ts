@@ -216,6 +216,7 @@ export class CityLayout {
   branchTrainCooldown: number = 480;
   branchTrainCurveT: number = 0;    // progress through junction curve (0 → 1)
   branchTrainD: number = 0;         // distance along path
+  branchTrainJustStartedInbound: boolean = false;
   branchTrainJustArrived: boolean = false;
   branchTrainJustStartedDeparting: boolean = false;
   branchTrainJustDeparted: boolean = false;
@@ -3952,6 +3953,7 @@ export class CityLayout {
     // early return — if the branch station is not yet initialised (branchStationW
     // === 0) or the train is inactive the early returns below would otherwise
     // leave branchTrainJustDeparted stuck true, causing repeated departure toasts.
+    this.branchTrainJustStartedInbound = false;
     this.branchTrainJustArrived = false;
     this.branchTrainJustStartedDeparting = false;
     this.branchTrainJustDeparted = false;
@@ -3967,6 +3969,7 @@ export class CityLayout {
         this.branchTrainActive = true;
         this.branchTrainState = 'inbound';
         this.branchTrainY = this.height + trainLen + 60;
+        this.branchTrainJustStartedInbound = true;
       }
       return;
     }

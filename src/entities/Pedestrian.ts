@@ -184,6 +184,7 @@ export class Pedestrian {
   scheduleJitter: number = 0; // +/- hours offset for transitions
   isAtWorkplace: boolean = false;
   workplaceTimer: number = 0;
+  hadCoffeeBreak: boolean = false; // reset each working day
 
   // Dog walking
   hasDog: boolean = false;
@@ -316,6 +317,16 @@ export class Pedestrian {
   getSchedulePhase(): string {
     const d = new Date();
     const hour = d.getHours() + d.getMinutes() / 60 + this.scheduleJitter;
+    const isWeekend = d.getDay() === 0 || d.getDay() === 6;
+
+    // Weekends: lie in until 08:30, no work, just wander → evening → home
+    if (isWeekend) {
+      if (hour >= 22 || hour < 8.5) return 'sleeping';
+      if (hour < 21) return 'evening_out'; // free all day; includes lunch/dinner naturally
+      return 'going_home';
+    }
+
+    // Weekdays
     if (hour >= 22 || hour < 7) return 'sleeping';
     if (hour < 7.5) return 'commuting_to_work';
     if (hour < 12) return 'working';
@@ -1131,6 +1142,8 @@ export class Pedestrian {
                 // Clear workplace state on phase change
                 this.isAtWorkplace = false;
                 this.workplaceTimer = 0;
+                // New working day starts — reset coffee break flag
+                if (targetPhase === 'commuting_to_work') this.hadCoffeeBreak = false;
               }
 
               // Route based on current schedule phase
@@ -1149,6 +1162,21 @@ export class Pedestrian {
                   if (this.assignedWorkplace >= 0) {
                     const b = layout.buildings[this.assignedWorkplace];
                     const distToWork = Math.hypot(this.x - (b.x + b.w / 2), this.y - (b.y + b.h));
+
+                    // Morning coffee break — once per day, 08:00–09:30, when at workplace
+                    if (this.schedulePhase === 'working' && !this.hadCoffeeBreak
+                        && !this.isSitting && distToWork <= 80
+                        && this.assignedLunchVenue >= 0) {
+                      const nowHour = new Date().getHours() + new Date().getMinutes() / 60 + this.scheduleJitter;
+                      if (nowHour >= 8 && nowHour < 9.5 && Math.random() < 0.001) {
+                        this.hadCoffeeBreak = true;
+                        this.setWaypointToVenue(layout, this.assignedLunchVenue);
+                        this.waypointTimer = 0;
+                        scheduledAction = true;
+                        break;
+                      }
+                    }
+
                     if (distToWork > 30) {
                       // Walk toward workplace
                       this.setWaypointToBuilding(layout, this.assignedWorkplace);

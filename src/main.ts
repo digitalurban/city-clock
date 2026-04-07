@@ -403,8 +403,9 @@ let forecastOverlay: HTMLDivElement | null = null;
 let lastForecastVersion = -1;
 
 /** Map a WMO weather code to a simple emoji for the forecast strip. */
-function wmoToForecastEmoji(code: number): string {
-  if (code <= 1)  return '☀️';
+function wmoToForecastEmoji(code: number, hour: number): string {
+  const isNight = hour >= 21 || hour < 6;
+  if (code <= 1)  return isNight ? '🌙' : '☀️';
   if (code <= 3)  return '⛅';
   if (code <= 48) return '🌫️';
   if (code >= 51 && code <= 57) return '🌦️';
@@ -421,7 +422,7 @@ function createForecastOverlay() {
   const div = document.createElement('div');
   div.id = 'forecast-overlay';
   div.style.cssText = `
-    position: fixed; top: 12px; left: 8px; z-index: 200;
+    position: fixed; top: 37px; left: 8px; z-index: 200;
     display: none;
     background: rgba(10, 12, 22, 0.72);
     border-radius: 10px;
@@ -447,7 +448,7 @@ function updateForecastOverlay(slots: HourlyForecast[]) {
 
   const items = slots.map(s => {
     const hourLabel = String(s.hour).padStart(2, '0');
-    const emoji = wmoToForecastEmoji(s.weatherCode);
+    const emoji = wmoToForecastEmoji(s.weatherCode, s.hour);
     const tempStr = `${s.temp > 0 ? '' : ''}${Math.round(s.temp)}°`;
     return `<div style="display:flex;flex-direction:column;align-items:center;width:28px;flex-shrink:0;">` +
       `<span style="font-size:9px;opacity:0.65;line-height:1.3;">${hourLabel}</span>` +
@@ -1098,6 +1099,36 @@ function loop(timestamp: number = 0) {
   }
 
   // --- Branch Train Boarding Logic ---
+
+  // When the train starts its ~25-second inbound journey, dispatch pedestrians
+  // toward West St immediately so they have time to walk there.
+  if (layout.branchTrainJustStartedInbound) {
+    const bsx = layout.branchStationX + layout.branchStationW / 2;
+    const bsy = layout.branchStationY + layout.branchStationH / 2;
+    const candidates = pedestrians
+      .filter(p => !p.isClockEligible && !p.isAtHome && !p.isAtWorkplace
+        && !p.isBoarding && !p.isBoardingBranch && !p.isOnPlatform
+        && !p.isHeadingToPlatform && !p.isAlighting
+        && !p.isOnBranchPlatform && !p.isHeadingToBranchPlatform && !p.isAlightingBranch)
+      .sort((a, b) => {
+        const da = (a.x - bsx) ** 2 + (a.y - bsy) ** 2;
+        const db = (b.x - bsx) ** 2 + (b.y - bsy) ** 2;
+        return da - db;
+      });
+    const boardCount = 2 + Math.floor(Math.random() * 3);
+    for (let i = 0; i < boardCount && i < candidates.length; i++) {
+      const p = candidates[i];
+      p.isSitting = false; p.isBenchSitting = false; p.isQueuing = false;
+      p.isWindowShopping = false; p.isCheckingPhone = false; p.socialMode = false;
+      p.isBrowsingMarket = false; p.isSheltering = false;
+      const plat = layout.getRandomBranchPlatformPosition();
+      p.isHeadingToBranchPlatform = true;
+      p.waypointX = plat.x;
+      p.waypointY = plat.y;
+      p.waypointTimer = 0;
+    }
+  }
+
   if (layout.branchTrainJustArrived) {
     const arrivalCount = 2 + Math.floor(Math.random() * 3);
     for (let i = 0; i < arrivalCount; i++) {
@@ -1112,22 +1143,6 @@ function loop(timestamp: number = 0) {
       p.waypointX = wp.x;
       p.waypointY = wp.y;
       pedestrians.push(p);
-    }
-    let boardCount = 2 + Math.floor(Math.random() * 3);
-    for (const p of pedestrians) {
-      if (boardCount <= 0) break;
-      if (p.isClockEligible || p.isAtHome || p.isAtWorkplace || p.isBoarding || p.isBoardingBranch
-          || p.isOnPlatform || p.isHeadingToPlatform || p.isAlighting
-          || p.isOnBranchPlatform || p.isHeadingToBranchPlatform || p.isAlightingBranch) continue;
-      p.isSitting = false; p.isBenchSitting = false; p.isQueuing = false;
-      p.isWindowShopping = false; p.isCheckingPhone = false; p.socialMode = false;
-      p.isBrowsingMarket = false; p.isSheltering = false;
-      const plat = layout.getRandomBranchPlatformPosition();
-      p.isHeadingToBranchPlatform = true;
-      p.waypointX = plat.x;
-      p.waypointY = plat.y;
-      p.waypointTimer = 0;
-      boardCount--;
     }
   }
 
