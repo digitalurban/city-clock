@@ -68,7 +68,7 @@ Full rainbow bunting (red / orange / yellow / green / blue / purple / pink / cya
 - **Fruit & veg market** - a colourful street market sets up in the plaza on weekends and roughly 30% of weekdays. Eight stalls with striped awnings and produce displays are arranged as a perimeter market — four along the north inner edge and four along the south inner edge — keeping the central clock formation area clear. Pedestrians wander over to browse and stand in front of stalls
 - **Cafe rush hours** - outdoor seating fills up noticeably during morning coffee (8–9:30am) and lunch (12–1:30pm). Pedestrians stay seated 1.4–1.8× longer, and more people spontaneously head to cafes and restaurants during these windows
 - **Rain sheltering** - during rain, heavy rain, thunderstorms, and hail, pedestrians in the plaza dash for the nearest venue awning and wait under it until the weather eases, then resume their normal routines
-- **Train station & railway** - Central Station occupies the bottom-centre of the city. A steam locomotive (drawn top-down) slowly arrives from the right, stops at the platform, then departs left. Passengers gather on the platform and board as the train departs; new arrivals alight from the carriages and walk into the city. The entire bottom row is a railway corridor — left side has allotment plots (crop rows, sheds, fenced beds) and right side has small terraced houses matching the city style. Two close-set rails run the full width of the map
+- **Train station & railway** - Central Station occupies the bottom-centre of the city. A steam locomotive (drawn top-down) slowly arrives from the right, stops at the platform, then departs left. Passengers gather on the platform and board as the train departs (fading out as they step onto the carriages); new arrivals alight from the carriages and fade into view before walking into the city. A departure toast appears just after the train leaves. West St station on the branch line (column 0, vertical track) follows the same boarding and alighting cycle — pedestrians walk to the platform when the branch train arrives, wait, then board and fade out as it departs, while fresh arrivals fade in and disperse into the city. The entire bottom row is a railway corridor — left side has allotment plots (crop rows, sheds, fenced beds) and right side has small terraced houses matching the city style. Two close-set rails run the full width of the map
 - **Construction site** - one city block is a construction zone with dirt ground, a partial concrete frame, orange/white safety barriers, material piles, and a slowly rotating crane
 - **Directional shadows** - buildings and trees cast ground shadows whose direction sweeps from west (dawn) through a short northward stub at solar noon to east (dusk), with length and opacity scaling with sun angle
 - **Time-of-day atmosphere** - three subtle world-space overlays: a gradient morning mist that burns off between 5–9am; a warm amber golden-hour wash that peaks around 6pm and fades into dusk; a barely-there cool blue Sunday-morning tint that gives the city a distinctly quieter feel on Sundays before noon
@@ -158,18 +158,18 @@ Dynamic live weather powered by the Open-Meteo API, with all 10 weather types fu
 | Rain | 12% | |
 | Fog | 8% | |
 | Heavy rain | 6% | |
-| Snow | 4% | ground accumulation |
+| Snow | 4% | falling particles only |
 | Thunderstorm | 3% | lightning flashes |
 | Heavy snow | 2% | |
 | Hail | 1% | bouncing ice particles |
 
-- **Two modes:** set a real city in Options to pull live WMO weather codes from Open-Meteo (refreshed every 5 minutes); without a city the system cycles through all 10 types with the weighted distribution above
+- **Two modes:** set a real city in Options to pull live WMO weather codes from Open-Meteo (refreshed every 30 minutes to stay within API limits); without a city the system cycles through all 10 types with the weighted distribution above
 - **Smooth cross-fade transitions:** weather never cuts harshly between types. When a change is due, the current weather fades out first (particles thin gradually over ~7 s) before the new type fades in at its own pace — so rain doesn't vanish mid-drop and fog doesn't snap off. The next-cycle timer is paused during the fade to prevent transitions from being interrupted
 - **Atmospheric Effects:**
   - Procedural parallax clouds darken dynamically into storm clouds and drift over the city in top-down volumetric rendering
   - Rain and hail particles fall visibly below the cloud layer, dynamically bouncing and melting on the plaza
   - Widespread reflective puddles with sky and building silhouette reflections, ripple rings, and splash effects that dry gradually over time
-  - Ground accumulative snow cover creates spreading white patches
+  - Snow particles fall visibly from the cloud layer with a gentle side-to-side drift
   - Jagged lightning flash overlays during thunderstorms and hail
   - Animated fog tendrils — two sin-wave noise layers scroll in opposite directions, creating organic wisps rather than a flat grey overlay
   - Wet road sheen — a specular gradient scales with puddle level, giving roads a convincing reflective quality during and after rain
@@ -187,6 +187,7 @@ Beyond the core day/night cycle, three time-of-day atmosphere overlays run in wo
 
 Several passes work together to give the city depth and visual polish:
 
+- **Warm colour palette** — building colours, the daytime sky, road surfaces, and station structures all use a warm neutral palette (sandy stones, warm greys, ochres, muted sage) rather than blue-grey tones, giving the city a coherent earthy feel rather than a cold cast
 - **Building parapet walls** — commercial buildings and venues have proper flat-roofed parapet construction: a lighter rim on the north and west edges (sky-lit parapet top), a recessed darker roof interior behind the walls, a dark south face (exterior wall visible from the elevated viewpoint), and an east face shadow. Buildings read as genuine 3D flat-roofed structures rather than flat rectangles
 - **Rooftop variety** — every commercial building has 1–2 raised stairwell/access shaft boxes with SE cast-shadow, south-face darkness, door hatch, and N/W highlight; plus 0–2 optional features: water towers (circular tank with hoop rings, stave lines, support legs, conical cap), AC/HVAC units (raised box with horizontal louver slats, fan housing with blades), or satellite dishes (round bowl with thick rim, concave interior highlight, feed arm, LNB receiver, mounting pad)
 - **Residential roof styles** — houses are generated with a maximum of 3 per block (ensuring each is wide enough to be recognisable), and draw one of three roof styles: gabled (ridge runs left↔right with light/dark slope shading and tile lines), hip roof (all four edges slope to a flat centre with four distinct shaded faces), or rotated gabled (ridge runs top↔bottom)

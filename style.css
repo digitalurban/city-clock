@@ -21,6 +21,11 @@ canvas {
   display: block;
   /* Width/height set by JS resize() using visualViewport */
   touch-action: none;
+  /* Promote to a dedicated GPU compositor layer so the browser (especially
+     Safari / WKWebView / Capacitor) never re-encodes the canvas pixels for
+     compositing. This is the single biggest 60fps win on iOS. */
+  will-change: transform;
+  transform: translateZ(0);
 }
 
 /* Tilt-shift is drawn directly on the canvas — no CSS backdrop-filter needed.

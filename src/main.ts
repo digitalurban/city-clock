@@ -5,7 +5,7 @@ import { Bird, Flock, createFlock, createSparrowFlock, updateBirdFeeder, birdFee
 import { ChimneySmoke } from './rendering/ChimneySmoke';
 import { ClockManager } from './clock/ClockManager';
 import { DayNightCycle } from './rendering/DayNightCycle';
-import { Weather } from './rendering/Weather';
+import { Weather, type HourlyForecast } from './rendering/Weather';
 import { AudioEngine } from './rendering/AudioEngine';
 import { getActiveHoliday, drawHolidayDecorations, type Holiday } from './rendering/HolidayDecorations';
 import { TOTAL_PEDESTRIANS, CLOCK_ELIGIBLE_COUNT, TOTAL_CARS, setTotalPedestrians, setTotalCars, SEPARATION_RADIUS } from './utils/constants';
@@ -240,7 +240,6 @@ let dragMoved = false; // true if pointer moved enough to be a drag (not a click
 
 canvas.addEventListener('mousedown', (e) => {
   audioEngine.resume();
-  audioEngine.resume();
   isDragging = true;
   dragMoved = false;
   dragStartX = e.clientX;
@@ -398,6 +397,69 @@ canvas.addEventListener('touchend', (e) => {
     touchDragStartPanY = panY;
   }
 }, { passive: true });
+
+// ==================== 12-Hour Forecast Overlay ====================
+let forecastOverlay: HTMLDivElement | null = null;
+let lastForecastVersion = -1;
+
+/** Map a WMO weather code to a simple emoji for the forecast strip. */
+function wmoToForecastEmoji(code: number): string {
+  if (code <= 1)  return '☀️';
+  if (code <= 3)  return '⛅';
+  if (code <= 48) return '🌫️';
+  if (code >= 51 && code <= 57) return '🌦️';
+  if (code >= 61 && code <= 67) return '🌧️';
+  if (code >= 71 && code <= 77) return '❄️';
+  if (code >= 80 && code <= 82) return '🌧️';
+  if (code >= 85 && code <= 86) return '❄️';
+  if (code === 95) return '⛈️';
+  if (code >= 96) return '🌨️';
+  return '🌤️';
+}
+
+function createForecastOverlay() {
+  const div = document.createElement('div');
+  div.id = 'forecast-overlay';
+  div.style.cssText = `
+    position: fixed; top: 12px; left: 8px; z-index: 200;
+    display: none;
+    background: rgba(10, 12, 22, 0.72);
+    border-radius: 10px;
+    padding: 5px 7px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    color: #d8e8ff;
+    user-select: none;
+    pointer-events: none;
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    box-shadow: 0 2px 10px rgba(0,0,0,0.45);
+  `;
+  document.body.appendChild(div);
+  forecastOverlay = div;
+}
+
+function updateForecastOverlay(slots: HourlyForecast[]) {
+  if (!forecastOverlay) return;
+  if (slots.length === 0) {
+    forecastOverlay.style.display = 'none';
+    return;
+  }
+
+  const items = slots.map(s => {
+    const hourLabel = String(s.hour).padStart(2, '0');
+    const emoji = wmoToForecastEmoji(s.weatherCode);
+    const tempStr = `${s.temp > 0 ? '' : ''}${Math.round(s.temp)}°`;
+    return `<div style="display:flex;flex-direction:column;align-items:center;width:28px;flex-shrink:0;">` +
+      `<span style="font-size:9px;opacity:0.65;line-height:1.3;">${hourLabel}</span>` +
+      `<span style="font-size:13px;line-height:1.2;">${emoji}</span>` +
+      `<span style="font-size:9px;opacity:0.85;line-height:1.3;">${tempStr}</span>` +
+      `</div>`;
+  }).join('');
+
+  forecastOverlay.innerHTML =
+    `<div style="display:flex;flex-direction:row;gap:1px;">${items}</div>`;
+  forecastOverlay.style.display = 'block';
+}
 
 // ==================== Options UI ====================
 function createOptionsUI() {
@@ -824,7 +886,9 @@ document.addEventListener('visibilitychange', () => {
 function loop(timestamp: number = 0) {
   if (!loopRunning) return; // tab hidden — stop scheduling frames
 
-  const time = Date.now() / 1000;
+  // Use the rAF high-resolution timestamp (performance.now() basis) for animation
+  // offsets — it avoids a Date.now() system call and is more accurate on iOS.
+  const time = timestamp / 1000;
   const nightAlpha = dayNight.getNightAlpha();
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const w = window.innerWidth;
@@ -931,6 +995,14 @@ function loop(timestamp: number = 0) {
     drawHolidayDecorations(ctx, layout, nightAlpha, time, activeHoliday);
   }
 
+  // Forecast overlay — refresh whenever Open-Meteo delivers new hourly data
+  if (weather.useRealWeather && weather.forecastVersion !== lastForecastVersion) {
+    lastForecastVersion = weather.forecastVersion;
+    updateForecastOverlay(weather.hourlyForecast);
+  } else if (!weather.useRealWeather && forecastOverlay?.style.display !== 'none') {
+    forecastOverlay!.style.display = 'none';
+  }
+
 
   // Chimney smoke — above rooftops, below everything else
   chimneySmoke.update();
@@ -993,8 +1065,6 @@ function loop(timestamp: number = 0) {
 
   // When train departs: remove pedestrians on platform (they've boarded)
   if (layout.trainJustDeparted) {
-    const nextMins = Math.round(layout.trainCooldown / 3600);
-    showToast('🚂 Train departed', `Central Station: Service has departed. Next train in approximately ${nextMins} min.`, 8000);
     for (let i = pedestrians.length - 1; i >= 0; i--) {
       const p = pedestrians[i];
       if (p.isOnPlatform || p.isHeadingToPlatform) {
@@ -1062,8 +1132,6 @@ function loop(timestamp: number = 0) {
   }
 
   if (layout.branchTrainJustDeparted) {
-    const nextMins = Math.round(layout.branchTrainCooldown / 3600);
-    showToast('🚂 Branch line departed', `West Street: Service has departed. Next train in approximately ${nextMins} min.`, 8000);
     for (let i = pedestrians.length - 1; i >= 0; i--) {
       const p = pedestrians[i];
       if (p.isOnBranchPlatform || p.isHeadingToBranchPlatform) {
@@ -1878,6 +1946,29 @@ function _checkSundayMarket() {
   }
 }
 
+// --- Train departure toasts ---
+const MAIN_LINE_DESTINATIONS = [
+  'Northgate', 'Riverside', 'Eastfield', 'Harbour View', 'Central Junction',
+];
+const BRANCH_LINE_DESTINATIONS = [
+  'West End', 'Parkside', 'The Meadows', 'Old Town', 'Lakeside',
+];
+let _mainLineDestIdx = 0;
+let _branchLineDestIdx = 0;
+
+function _checkTrainDepartures() {
+  if (layout.trainJustStartedDeparting) {
+    const dest = MAIN_LINE_DESTINATIONS[_mainLineDestIdx % MAIN_LINE_DESTINATIONS.length];
+    _mainLineDestIdx++;
+    showToast('🚂 Train departing', `Central Station: The service to ${dest} is now departing. Next service in 3–5 min.`, 8000);
+  }
+  if (layout.branchTrainJustStartedDeparting) {
+    const dest = BRANCH_LINE_DESTINATIONS[_branchLineDestIdx % BRANCH_LINE_DESTINATIONS.length];
+    _branchLineDestIdx++;
+    showToast('🚃 Branch line departing', `West St: The service to ${dest} is now departing. Next service in 3–5 min.`, 8000);
+  }
+}
+
 // Hook all checks into the weather.update call site
 const _origWeatherUpdate = weather.update.bind(weather);
 (weather as any).update = function () {
@@ -1888,8 +1979,10 @@ const _origWeatherUpdate = weather.update.bind(weather);
   _checkFlashMob();
   _checkIceCreamVan();
   _checkSundayMarket();
+  _checkTrainDepartures();
 };
 
 createOptionsUI();
+createForecastOverlay();
 resize();
 requestAnimationFrame(loop);

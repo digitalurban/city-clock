@@ -198,8 +198,9 @@ export class CityLayout {
   trainCooldown: number = 600; // frames until first train (~10s)
   smokeParticles: { x: number; y: number; vx: number; vy: number; age: number; maxAge: number }[] = [];
   // Fired once per train event so main.ts can react
-  trainJustArrived: boolean = false;   // set for one frame when state → 'stopped'
-  trainJustDeparted: boolean = false;  // set for one frame when train leaves the canvas
+  trainJustArrived: boolean = false;          // set for one frame when state → 'stopped'
+  trainJustStartedDeparting: boolean = false; // set for one frame when state → 'departing'
+  trainJustDeparted: boolean = false;         // set for one frame when train leaves the canvas
 
   // ── Branch railway line (col 0, vertical) ────────────────────────────────
   branchTrackX: number = 0;        // world-space X of the vertical branch track
@@ -216,6 +217,7 @@ export class CityLayout {
   branchTrainCurveT: number = 0;    // progress through junction curve (0 → 1)
   branchTrainD: number = 0;         // distance along path
   branchTrainJustArrived: boolean = false;
+  branchTrainJustStartedDeparting: boolean = false;
   branchTrainJustDeparted: boolean = false;
   branchTrainStoppedY: number = 0; // branchTrainY when parked at platform
 
@@ -843,7 +845,7 @@ export class CityLayout {
     this.buildings.push({
       x: bx + 4, y: by + 4,
       w: totalW - 8, h: buildingH - 4,
-      color: '#8a8fa8',
+      color: '#8f8a7a',
       windowSeed: 88888,
     });
 
@@ -1323,7 +1325,7 @@ export class CityLayout {
 
   drawRoads(ctx: CanvasRenderingContext2D, nightAlpha: number) {
     const roadLight = Math.max(0, 44 - nightAlpha * 25);
-    ctx.fillStyle = `hsl(220, 6%, ${roadLight}%)`;
+    ctx.fillStyle = `hsl(220, 2%, ${roadLight}%)`;
     for (const road of this.roads) {
       ctx.fillRect(road.x, road.y, road.w, road.h);
     }
@@ -3698,7 +3700,7 @@ export class CityLayout {
     }
 
     // ── Canopy over platform (translucent roof structure) ──
-    ctx.fillStyle = `rgba(${Math.floor(160*dark)},${Math.floor(175*dark)},${Math.floor(200*dark)},0.35)`;
+    ctx.fillStyle = `rgba(${Math.floor(175*dark)},${Math.floor(168*dark)},${Math.floor(155*dark)},0.35)`;
     ctx.fillRect(sx + 10, platformY, sw - 20, platformH * 0.45);
     // Canopy support columns
     ctx.fillStyle = `rgb(${Math.floor(130*dark)},${Math.floor(125*dark)},${Math.floor(120*dark)})`;
@@ -3908,7 +3910,7 @@ export class CityLayout {
     }
 
     // Canopy over platform
-    ctx.fillStyle = `rgba(${Math.floor(160*dark)},${Math.floor(175*dark)},${Math.floor(200*dark)},0.35)`;
+    ctx.fillStyle = `rgba(${Math.floor(175*dark)},${Math.floor(168*dark)},${Math.floor(155*dark)},0.35)`;
     ctx.fillRect(bx + bldW + 4, by, (bw - bldW) * 0.55, bh);
     ctx.fillStyle = `rgb(${Math.floor(130*dark)},${Math.floor(125*dark)},${Math.floor(120*dark)})`;
     for (let cy2 = by + 12; cy2 < by + bh - 8; cy2 += 28) {
@@ -3951,6 +3953,7 @@ export class CityLayout {
     // === 0) or the train is inactive the early returns below would otherwise
     // leave branchTrainJustDeparted stuck true, causing repeated departure toasts.
     this.branchTrainJustArrived = false;
+    this.branchTrainJustStartedDeparting = false;
     this.branchTrainJustDeparted = false;
 
     if (this.branchStationW === 0) return;
@@ -4013,6 +4016,7 @@ export class CityLayout {
       }
       if (this.branchTrainTimer <= 0) {
         this.branchTrainState = 'outbound';
+        this.branchTrainJustStartedDeparting = true;
       }
     } else if (this.branchTrainState === 'outbound') {
       this.branchTrainY -= speed; // Continue going up off the screen
@@ -4117,6 +4121,7 @@ export class CityLayout {
     // otherwise leave trainJustDeparted stuck true across subsequent frames,
     // causing the departure toast to fire repeatedly.
     this.trainJustArrived = false;
+    this.trainJustStartedDeparting = false;
     this.trainJustDeparted = false;
 
     // Loco dimensions (engine + tender + 2 carriages) — must match drawTrain sizes
@@ -4172,7 +4177,10 @@ export class CityLayout {
       }
     } else if (this.trainState === 'stopped') {
       this.trainTimer--;
-      if (this.trainTimer <= 0) this.trainState = 'departing';
+      if (this.trainTimer <= 0) {
+        this.trainState = 'departing';
+        this.trainJustStartedDeparting = true;
+      }
     } else {
       if (!shouldWait) this.trainX -= trainSpeed;
       if (this.trainX < -locoTotalW - 60) {

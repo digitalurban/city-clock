@@ -11,8 +11,8 @@ export class DayNightCycle {
   }
 
   getSkyColor(nightAlpha: number): string {
-    // Interpolate between day sky (#c8d8e8) and night sky (#050a1a)
-    const dayR = 200, dayG = 215, dayB = 230;
+    // Interpolate between day sky and night sky (#050a1a)
+    const dayR = 210, dayG = 207, dayB = 198;
     const nightR = 5, nightG = 10, nightB = 26;
     const t = nightAlpha / 0.6; // normalize to 0-1
     const r = Math.floor(dayR + (nightR - dayR) * t);
@@ -23,7 +23,7 @@ export class DayNightCycle {
 
   /** Like getSkyColor but with a small lightness offset (0–1) for gradient ends. */
   getSkyColorOffset(nightAlpha: number, lightnessBoost: number): string {
-    const dayR = 200, dayG = 215, dayB = 230;
+    const dayR = 210, dayG = 207, dayB = 198;
     const nightR = 5, nightG = 10, nightB = 26;
     const t = nightAlpha / 0.6;
     const boost = Math.floor(lightnessBoost * 30 * (1 - t));

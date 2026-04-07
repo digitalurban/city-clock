@@ -1809,6 +1809,10 @@ export class Pedestrian {
       ctx.globalAlpha = Math.max(0, this.boardTimer / 80); // fade out as they board
     } else if (this.isAlighting) {
       ctx.globalAlpha = Math.min(1, 1 - this.alightTimer / 180); // fade in from train
+    } else if (this.isBoardingBranch) {
+      ctx.globalAlpha = Math.max(0, this.boardBranchTimer / 60); // fade out as they board branch train
+    } else if (this.isAlightingBranch) {
+      ctx.globalAlpha = Math.min(1, 1 - this.alightBranchTimer / 120); // fade in from branch train
     }
 
     const s = this.size * 5.5;

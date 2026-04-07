@@ -58,6 +58,13 @@ interface SnowPatch {
   rotation: number;
 }
 
+/** One hourly slot returned by Open-Meteo, trimmed to what the overlay needs. */
+export interface HourlyForecast {
+  hour: number;       // 0–23 local
+  weatherCode: number;
+  temp: number;       // °C, rounded to 1 decimal
+}
+
 // WMO Weather interpretation codes → WeatherType
 function wmoToWeather(code: number): WeatherType {
   // 0-1: clear, 2-3: cloudy, 45-48: fog (cloudy),
@@ -117,10 +124,18 @@ export class Weather {
   // Real weather from Open-Meteo
   public useRealWeather: boolean = false;
   private realWeatherFetched: boolean = false;
-  private fetchTimer: number = 0;
+  // 30 min × 60 s × 60 fps = 108 000 frames between fetches.
+  // Initialised high so the update() loop doesn't double-fetch while the
+  // first setLocation() call is already in-flight.
+  private fetchTimer: number = 108000;
   private userLat: number = 0;
   private userLon: number = 0;
   private cloudCover: number = 0; // 0-100 from API
+
+  /** Next 12 hourly forecast slots (populated after first fetch). */
+  public hourlyForecast: HourlyForecast[] = [];
+  /** Incremented each time hourlyForecast is refreshed — lets callers detect changes cheaply. */
+  public forecastVersion: number = 0;
 
   constructor() {
     this.transitionTimer = 12000 + Math.random() * 24000; // 3–10 min before first change
@@ -142,6 +157,7 @@ export class Weather {
         this.userLat = geoData.results[0].latitude;
         this.userLon = geoData.results[0].longitude;
         this.useRealWeather = true;
+        this.fetchTimer = 108000; // arm the 30-min interval before the async fetch starts
         this.fetchWeather(true); // pass true for instant
         console.log(`Weather location set to: ${geoData.results[0].name}, ${geoData.results[0].country}`);
       } else {
@@ -152,11 +168,16 @@ export class Weather {
     }
   }
 
-  /** Fetch current weather from Open-Meteo */
+  /** Fetch current + next-12h hourly weather from Open-Meteo */
   private async fetchWeather(instant: boolean = false) {
     if (!this.useRealWeather) return;
     try {
-      const url = `https://api.open-meteo.com/v1/forecast?latitude=${this.userLat}&longitude=${this.userLon}&current=weather_code,cloud_cover`;
+      const url =
+        `https://api.open-meteo.com/v1/forecast` +
+        `?latitude=${this.userLat}&longitude=${this.userLon}` +
+        `&current=weather_code,cloud_cover` +
+        `&hourly=weather_code,temperature_2m` +
+        `&forecast_days=2&timezone=auto`;
       const resp = await fetch(url);
       const data = await resp.json();
       const code = data.current.weather_code as number;
@@ -175,7 +196,6 @@ export class Weather {
       }
 
       if (instant) {
-        // Initial load — apply immediately with no transition
         this.current = weatherType;
         this.targetAlpha = newAlpha;
         this.alpha = newAlpha;
@@ -183,16 +203,46 @@ export class Weather {
         this.snowLevel = ['snow', 'heavy_snow'].includes(weatherType) ? 1.0 : 0.0;
         this.lightningPhase = 0;
       } else {
-        // Periodic refresh — cross-fade so the change is smooth
         this.scheduleWeatherChange(weatherType, newAlpha);
       }
 
+      // Parse next 12 hourly slots starting from the current hour
+      if (data.hourly && Array.isArray(data.hourly.time)) {
+        const times: string[] = data.hourly.time;
+        const codes: number[] = data.hourly.weather_code;
+        const temps: number[] = data.hourly.temperature_2m;
+        const nowHourStr = new Date().toISOString().slice(0, 13); // "YYYY-MM-DDTHH"
+        // Find the index whose ISO prefix matches the current local hour.
+        // The API returns local-time strings when timezone=auto, e.g. "2024-01-15T14:00".
+        const nowLocal = new Date();
+        const padded = (n: number) => String(n).padStart(2, '0');
+        const localHourPrefix =
+          `${nowLocal.getFullYear()}-${padded(nowLocal.getMonth() + 1)}-${padded(nowLocal.getDate())}T${padded(nowLocal.getHours())}`;
+        let startIdx = times.findIndex(t => t.startsWith(localHourPrefix));
+        // Fallback: match against UTC if timezone offset made local prefix miss
+        if (startIdx === -1) startIdx = times.findIndex(t => t.startsWith(nowHourStr));
+        if (startIdx === -1) startIdx = 0;
+
+        const slots: HourlyForecast[] = [];
+        for (let i = startIdx; i < times.length && slots.length < 12; i++) {
+          // Parse the hour from the time string "YYYY-MM-DDTHH:00"
+          const hour = parseInt(times[i].slice(11, 13), 10);
+          slots.push({
+            hour,
+            weatherCode: codes[i] ?? 0,
+            temp: Math.round((temps[i] ?? 0) * 10) / 10,
+          });
+        }
+        this.hourlyForecast = slots;
+        this.forecastVersion++;
+      }
+
       this.realWeatherFetched = true;
-      // Next fetch in 5 minutes (18000 frames at 60fps)
-      this.fetchTimer = 36000;
+      // Re-fetch every 30 minutes (108 000 frames at 60 fps) to respect Open-Meteo rate limits
+      this.fetchTimer = 108000;
     } catch {
-      // Network error — retry in 1 minute
-      this.fetchTimer = 7200;
+      // Network error — retry in 5 minutes
+      this.fetchTimer = 18000;
     }
   }
 
@@ -593,20 +643,6 @@ export class Weather {
       }
     }
 
-    // --- Snow Cover (gathers on ground) ---
-    if (this.snowLevel > 0.01) {
-      const sl = this.snowLevel * (1 - nightAlpha * 0.3); // lightly shaded at night
-      ctx.fillStyle = `rgba(240, 245, 255, ${sl * 0.65})`;
-      for (const patch of this.snowPatches) {
-        ctx.save();
-        ctx.translate(patch.x, patch.y);
-        ctx.rotate(patch.rotation);
-        ctx.beginPath();
-        ctx.ellipse(0, 0, patch.radiusX * (0.2 + 0.8 * this.snowLevel), patch.radiusY * (0.2 + 0.8 * this.snowLevel), 0, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
-      }
-    }
     // --- Parallax clouds ---
     // Each cloud is rendered once to an offscreen canvas and cached.
     // The cache is only rebuilt when the cloud's colour (grey) changes by >3

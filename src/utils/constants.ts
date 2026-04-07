@@ -26,10 +26,10 @@ export const CAR_SPEED = 0.6;
 
 // Building color palettes (day)
 export const BUILDING_COLORS = [
-  '#8b9dc3', '#a3b5cc', '#c9b8a8', '#b8a88c',
-  '#9ca8b8', '#a8b4a0', '#bfb0a0', '#c4a882',
-  '#7a8fa6', '#a09080', '#b0a898', '#98a0b0',
-  '#c0b090', '#a8a0c0', '#b8c0a8', '#c8b0a0',
+  '#9ba08e', '#b5a88e', '#c9b8a8', '#b8a88c',
+  '#a8a898', '#a8b4a0', '#bfb0a0', '#c4a882',
+  '#8a8880', '#a09080', '#b0a898', '#a09888',
+  '#c0b090', '#a8a090', '#b8c0a8', '#c8b0a0',
 ];
 
 // House color palettes
