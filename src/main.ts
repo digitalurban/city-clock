@@ -539,9 +539,9 @@ function createOptionsUI() {
     <div style="margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between;">
       <span>City Info</span>
       <button id="city-info-toggle" style="
-        background: #444; color: #aaa; border: none; border-radius: 20px;
+        background: #2a7a48; color: #d4f5e0; border: none; border-radius: 20px;
         padding: 4px 14px; cursor: pointer; font-size: 13px; font-weight: bold;
-        min-width: 64px; transition: background 0.2s;">🏙 Off</button>
+        min-width: 64px; transition: background 0.2s;">🏙 On</button>
     </div>
     <div style="margin-bottom: 6px;">
       <label style="display: flex; justify-content: space-between; margin-bottom: 4px;">
@@ -1726,7 +1726,7 @@ _toastStyle.textContent = `
 document.head.appendChild(_toastStyle);
 
 // City info enabled flag — controlled from settings panel (off by default)
-let _cityInfoEnabled = false;
+let _cityInfoEnabled = true;
 
 // Stack management — toasts stack upward from bottom-left
 const _activeToasts: HTMLDivElement[] = [];
