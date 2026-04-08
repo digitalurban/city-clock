@@ -839,6 +839,7 @@ function buildStaticCanvas(nightAlpha: number) {
   sctx.fillRect(0, 0, worldW, worldH);
 
   // Render layers
+  layout.drawCanalCorridor(sctx, nightAlpha);   // canal water + towpath (col 11)
   layout.drawRoads(sctx, nightAlpha);
   layout.drawSidewalks(sctx, nightAlpha);
   layout.drawCrosswalks(sctx, nightAlpha);
@@ -1027,6 +1028,9 @@ function loop(timestamp: number = 0) {
   layout.drawTrain(ctx, nightAlpha);
   layout.updateBranchTrain();
   layout.drawBranchTrain(ctx, nightAlpha);
+  layout.drawCanalWaterShimmer(ctx, nightAlpha, time);
+  layout.updateCanalBoats();
+  layout.drawCanalBoats(ctx, nightAlpha);
 
   // When train arrives: send 3–5 waiting pedestrians to platform, then board
   if (layout.trainJustArrived) {

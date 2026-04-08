@@ -124,7 +124,18 @@ export interface CityEvent {
 }
 
 // Block type determines what fills a city block
-type BlockType = 'commercial' | 'residential' | 'park' | 'utility' | 'construction' | 'station' | 'railway' | 'branchRailway' | 'branchStation';
+type BlockType = 'commercial' | 'residential' | 'park' | 'utility' | 'construction' | 'station' | 'railway' | 'branchRailway' | 'branchStation' | 'canal';
+
+interface CanalBoat {
+  y: number;
+  speed: number;
+  baseSpeed: number;   // cruise speed (restored after bridges / pauses)
+  dir: 1 | -1;        // 1 = southbound, -1 = northbound
+  length: number;
+  hullColor: string;
+  cabinColor: string;
+  stripeColor: string;
+}
 
 export interface ConstructionSiteDef {
   x: number; y: number; w: number; h: number;
@@ -223,6 +234,15 @@ export class CityLayout {
   branchTrainStoppedY: number = 0; // branchTrainY when parked at platform
 
   branchStationBuilding: BuildingDef | null = null;
+
+  // ── Canal (right edge, col 11) ─────────────────────────────────────────────
+  canalX: number = 0;         // left edge of canal water
+  canalWidth: number = 40;    // width of water channel
+  canalTowpathX: number = 0;  // left edge of towpath
+  canalTowpathW: number = 12; // width of towpath
+  canalBoats: CanalBoat[] = [];
+  canalLen: number = 0;       // vertical length (top of city to railway row)
+
   // ── Ice cream van ──────────────────────────────────────────────────────────
   iceCreamActive: boolean = false;
   iceCreamX: number = 0;
@@ -357,6 +377,7 @@ export class CityLayout {
     this.generateAwningSheltPositions();
     this.generateBins();
     this.initPersistentFixtures();
+    this.trimRoadsAtCanal(); // clip horizontal roads to stop at canal towpath; add bridge stubs
     this.buildPfGrid();
   }
 
@@ -409,6 +430,11 @@ export class CityLayout {
       this.blockTypes.set(`2,${r}`, 'branchRailway');
     }
     this.blockTypes.set(`2,${branchStationRow}`, 'branchStation');
+
+    // Canal: col 11 (rightmost), all rows except the bottom railway row
+    for (let r = 0; r < this.gridRows - 1; r++) {
+      this.blockTypes.set(`${this.gridCols - 1},${r}`, 'canal');
+    }
 
     // Pick one outer block to be a construction site
     const candidates: string[] = [];
@@ -647,10 +673,34 @@ export class CityLayout {
             }
             break;
           }
+          case 'canal': {
+            // Buildings/parks occupy the left part of the block; right side is towpath + water
+            const towpathW = 8;
+            const waterW = 54;
+            const buildingW = blockW - towpathW - waterW; // ~58px
+            if (buildingW > 24) {
+              const roll = seededRandom(c * 100 + r * 10);
+              if (roll < 0.55) {
+                this.generateResidentialBlock(bx, by, buildingW, blockH, margin, c, r);
+              } else {
+                this.generateParkBlock(bx, by, buildingW, blockH, c, r);
+              }
+            }
+            // Initialise canal geometry once (first row sets it up)
+            if (this.canalX === 0) {
+              this.canalTowpathX = bx + buildingW;
+              this.canalTowpathW = towpathW;
+              this.canalX = bx + buildingW + towpathW;
+              this.canalWidth = waterW;
+              this.canalLen = this.trainTrackY > 0 ? this.trainTrackY : this.height * 0.84;
+              this.initCanalBoats();
+            }
+            break;
+          }
         }
 
-        // Trees along sidewalks (occasional) — skip for branch corridor
-        if (c === 2) continue;
+        // Trees along sidewalks (occasional) — skip for branch/canal corridors
+        if (c === 2 || c === this.gridCols - 1) continue;
         if (seededRandom(c * 31 + r * 59) > 0.5) {
           this.trees.push({
             x: bx - SIDEWALK_WIDTH / 2 - 2,
@@ -1328,6 +1378,7 @@ export class CityLayout {
     const roadLight = Math.max(0, 44 - nightAlpha * 25);
     ctx.fillStyle = `hsl(220, 2%, ${roadLight}%)`;
     for (const road of this.roads) {
+      ctx.fillStyle = `hsl(220, 2%, ${roadLight}%)`;
       ctx.fillRect(road.x, road.y, road.w, road.h);
     }
 
@@ -4518,8 +4569,56 @@ export class CityLayout {
   }
 
   /**
+   * After the canal geometry is set up, trim any horizontal road segment that
+   * extends into the canal water, and insert short bridge-crossing stubs so cars
+   * can still pass over the water at every grid-row road crossing.
+   */
+  private trimRoadsAtCanal() {
+    if (this.canalX === 0) return;
+    const cellSize = BLOCK_SIZE + ROAD_WIDTH;
+
+    // 1) Trim horizontal road segments so they end at the towpath edge (canalTowpathX).
+    //    We never want cars driving over open water; bridges handle crossings visually.
+    const trimEdge = this.canalTowpathX; // left edge of towpath = right limit for city roads
+    for (const road of this.roads) {
+      if (!road.horizontal) continue;
+      const roadRight = road.x + road.w;
+      if (roadRight > trimEdge && road.x < trimEdge) {
+        // Road extends into/past the towpath — trim it
+        road.w = trimEdge - road.x;
+      } else if (road.x >= trimEdge) {
+        // Road starts inside the canal area — neutralise it by collapsing width
+        road.w = 0;
+      }
+    }
+    // Remove zero-width roads and any vertical roads overlapping the canal (at far right of city)
+    this.roads = this.roads.filter(r => r.w > 0 && r.h > 0 && (r.horizontal || r.x < this.canalX));
+    // Also remove vertical sidewalks that overlap the far right canal
+    this.walkableRects = this.walkableRects.filter(w => {
+      if (w.w <= SIDEWALK_WIDTH && w.x >= this.canalX - SIDEWALK_WIDTH) return false;
+      return true;
+    });
+
+    // 2) Insert bridge-crossing road stubs at every horizontal road row so cars
+    //    can continue east beyond the canal if needed (and so routing is correct).
+    //    Each stub spans the full canal+towpath width at the bridge Y positions.
+    for (let row = 0; row < this.gridRows - 1; row++) {
+      const ry = row * cellSize - ROAD_WIDTH / 2;
+      this.roads.push({
+        x: trimEdge,
+        y: ry,
+        w: this.canalWidth + this.canalTowpathW + 6, // towpath + water + small margin
+        h: ROAD_WIDTH,
+        horizontal: true,
+        plazaBordering: false,
+      });
+    }
+  }
+
+  /**
    * Build a walkability grid over the whole city.
-   * Cell size = PF_STEP (9px). A cell is blocked if it overlaps any building, house, or venue.
+   * Cell size = PF_STEP (9px). A cell is blocked if it overlaps any building, house, or venue,
+   * or if it falls inside the canal water between bridges.
    * Called once at the end of the constructor after all structures are placed.
    */
   buildPfGrid() {
@@ -4530,12 +4629,29 @@ export class CityLayout {
     this.pfRows = rows;
     const grid = new Uint8Array(cols * rows); // default 0 = blocked
 
+    const cellSize = BLOCK_SIZE + ROAD_WIDTH;
+
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         const wx = c * step;
         const wy = r * step;
         // walkable if not inside any solid structure (use a 1px margin so path stays off wall edges)
-        grid[r * cols + c] = this.isInBuilding(wx, wy, 1) ? 0 : 1;
+        let walkable = !this.isInBuilding(wx, wy, 1);
+
+        // Block canal water cells between bridges
+        if (walkable && this.canalX > 0 && wx >= this.canalX && wx < this.canalX + this.canalWidth) {
+          // Check if this Y is at a bridge crossing (bridge = grid road row)
+          let atBridge = false;
+          for (let row2 = 0; row2 <= this.gridRows; row2++) {
+            const bTop = row2 * cellSize - ROAD_WIDTH / 2;
+            const bBot = bTop + ROAD_WIDTH;
+            // Pad the bridge bounds inwardly by 2 pixels to forbid edge-clipping on water
+            if (wy >= bTop + 2 && wy <= bBot - 2) { atBridge = true; break; }
+          }
+          if (!atBridge) walkable = false; // block water between bridges
+        }
+
+        grid[r * cols + c] = walkable ? 1 : 0;
       }
     }
     this.pfGrid = grid;
@@ -4918,6 +5034,421 @@ export class CityLayout {
       ctx.globalAlpha = 0.75 * dark;
       ctx.fillRect(-bw / 2, -bh / 2 - 1.5, bw, 1);
       ctx.globalAlpha = 1;
+
+      ctx.restore();
+    }
+  }
+
+  // ── Canal ────────────────────────────────────────────────────────────────
+
+  private initCanalBoats() {
+    // Narrowboats: ~70 feet real → roughly 3-4× a car length in game scale.
+    // Cars are 14-20 px long; narrowboats at ~55-70 px look proportionally correct.
+    const configs: Array<{ yFrac: number; speed: number; dir: 1 | -1; len: number; hull: string; cabin: string; stripe: string }> = [
+      { yFrac: 0.10, speed: 0.05, dir:  1, len: 62, hull: '#3d2e1e', cabin: '#7a5c3a', stripe: '#c0392b' },
+      { yFrac: 0.45, speed: 0.04, dir: -1, len: 55, hull: '#1c3d2c', cabin: '#3d6e50', stripe: '#e67e22' },
+      { yFrac: 0.72, speed: 0.06, dir:  1, len: 68, hull: '#2a2a3f', cabin: '#4a4a6a', stripe: '#2980b9' },
+    ];
+    this.canalBoats = configs.map(cfg => ({
+      y: this.canalLen * cfg.yFrac,
+      speed: cfg.speed,
+      baseSpeed: cfg.speed,
+      dir: cfg.dir,
+      length: cfg.len,
+      hullColor: cfg.hull,
+      cabinColor: cfg.cabin,
+      stripeColor: cfg.stripe,
+    }));
+  }
+
+
+  /** Draw canal water, towpath and bridges — baked into the static canvas. */
+  drawCanalCorridor(ctx: CanvasRenderingContext2D, nightAlpha: number) {
+    if (this.canalX === 0) return;
+    const dark = 1 - nightAlpha * 0.5;
+    const top = 0;
+    const bottom = this.canalLen;
+    const cellSize = BLOCK_SIZE + ROAD_WIDTH;
+    const tx = this.canalTowpathX;
+    const tw = this.canalTowpathW;
+    const cx = this.canalX;
+    const cw = this.canalWidth;
+
+    // Towpath — warm sun-bleached gravel with a midsummer tint
+    const tpg = ctx.createLinearGradient(tx, 0, tx + tw, 0);
+    tpg.addColorStop(0, `rgb(${Math.floor(148*dark)},${Math.floor(138*dark)},${Math.floor(118*dark)})`);
+    tpg.addColorStop(1, `rgb(${Math.floor(170*dark)},${Math.floor(158*dark)},${Math.floor(135*dark)})`);
+    ctx.fillStyle = tpg;
+    ctx.fillRect(tx, top, tw, bottom);
+    // Railing dots along towpath edge
+    ctx.fillStyle = `rgba(80,70,55,${0.55*dark})`;
+    for (let ry = top + 8; ry < bottom - 4; ry += 18) {
+      ctx.fillRect(tx + tw - 3, ry, 2, 3);
+    }
+
+    // Canal base water — rich cool blue-green
+    ctx.fillStyle = `rgb(${Math.floor(28*dark)},${Math.floor(66*dark)},${Math.floor(98*dark)})`;
+    ctx.fillRect(cx, top, cw, bottom);
+
+    // Depth gradient: lighter midwater, darker edges (simulates depth)
+    const wg = ctx.createLinearGradient(cx, 0, cx + cw, 0);
+    wg.addColorStop(0,    `rgba(${Math.floor(10*dark)},${Math.floor(40*dark)},${Math.floor(70*dark)},0.55)`);
+    wg.addColorStop(0.25, `rgba(${Math.floor(60*dark)},${Math.floor(115*dark)},${Math.floor(160*dark)},0.20)`);
+    wg.addColorStop(0.5,  `rgba(${Math.floor(80*dark)},${Math.floor(145*dark)},${Math.floor(195*dark)},0.10)`);
+    wg.addColorStop(0.75, `rgba(${Math.floor(60*dark)},${Math.floor(115*dark)},${Math.floor(160*dark)},0.20)`);
+    wg.addColorStop(1,    `rgba(${Math.floor(10*dark)},${Math.floor(40*dark)},${Math.floor(70*dark)},0.55)`);
+    ctx.fillStyle = wg;
+    ctx.fillRect(cx, top, cw, bottom);
+
+    // Canal stone coping walls — dressed limestone look
+    ctx.fillStyle = `rgb(${Math.floor(125*dark)},${Math.floor(115*dark)},${Math.floor(98*dark)})`;
+    ctx.fillRect(cx - 4, top, 4, bottom);
+    ctx.fillRect(cx + cw, top, 4, bottom);
+    // Darker inner edge (under water shadow)
+    ctx.fillStyle = `rgba(0,0,0,0.28)`;
+    ctx.fillRect(cx, top, 2, bottom);
+    ctx.fillRect(cx + cw - 2, top, 2, bottom);
+
+  }
+
+  /** Draw animated water shimmer and ripple lines — called every frame in the dynamic layer. */
+  drawCanalWaterShimmer(ctx: CanvasRenderingContext2D, nightAlpha: number, time: number) {
+    if (this.canalX === 0) return;
+    const cellSize = BLOCK_SIZE + ROAD_WIDTH;
+    const cx = this.canalX;
+    const cw = this.canalWidth;
+    const bottom = this.canalLen;
+    const dayAlpha = 1 - nightAlpha * 0.5;
+
+    ctx.save();
+    // Clip to canal water strip, excluding bridges
+    ctx.beginPath();
+    for (let row = 0; row <= this.gridRows; row++) {
+      const bridgeYTop = row * cellSize - ROAD_WIDTH / 2 - SIDEWALK_WIDTH;
+      const prevBridgeYBot = (row - 1) * cellSize + ROAD_WIDTH / 2 + SIDEWALK_WIDTH;
+      const segTop = row === 0 ? 0 : prevBridgeYBot;
+      const segBottom = Math.min(bridgeYTop, bottom);
+      if (segBottom > segTop) ctx.rect(cx, segTop, cw, segBottom - segTop);
+    }
+    ctx.clip();
+
+    // At night, moonlight glint strip down centre
+    if (nightAlpha > 0.3) {
+      const moonGlintAlpha = (nightAlpha - 0.3) * 0.35;
+      const mg = ctx.createLinearGradient(cx, 0, cx + cw, 0);
+      mg.addColorStop(0,   `rgba(180,210,240,0)`);
+      mg.addColorStop(0.4, `rgba(180,210,240,${moonGlintAlpha})`);
+      mg.addColorStop(0.5, `rgba(220,235,255,${moonGlintAlpha * 1.4})`);
+      mg.addColorStop(0.6, `rgba(180,210,240,${moonGlintAlpha})`);
+      mg.addColorStop(1,   `rgba(180,210,240,0)`);
+      ctx.fillStyle = mg;
+      ctx.fillRect(cx, 0, cw, bottom);
+    }
+
+    ctx.restore();
+  }
+
+  updateCanalBoats() {
+    if (this.canalX === 0) return;
+    const cellSize = BLOCK_SIZE + ROAD_WIDTH;
+    const topY = ROAD_WIDTH / 2;
+    const MIN_GAP = 14; // minimum clear water between boats (px)
+
+    for (const boat of this.canalBoats) {
+      // ── Bridge-speed logic ──────────────────────────────────────────────
+      let nearBridge = false;
+      for (let row = 0; row <= this.gridRows; row++) {
+        const bridgeTop = row * cellSize - ROAD_WIDTH / 2;
+        const bridgeBot = bridgeTop + ROAD_WIDTH;
+        const boatMid = boat.y + boat.length / 2;
+        if (boatMid > bridgeTop - 20 && boatMid < bridgeBot + 20) {
+          nearBridge = true;
+          boat.speed = Math.max(0.05, boat.speed * 0.985);
+          break;
+        }
+      }
+      if (!nearBridge && boat.speed < boat.baseSpeed) {
+        boat.speed = Math.min(boat.baseSpeed, boat.speed * 1.01 + 0.001);
+      }
+
+      // ── Boat-to-boat collision (no overtaking, keep minimum gap) ────────
+      let blockedByBoat = false;
+      for (const other of this.canalBoats) {
+        if (other === boat || other.dir !== boat.dir) continue;
+        // Check if `other` is immediately ahead of `boat` in direction of travel
+        if (boat.dir === 1) {
+          // Southbound: boat bow is at boat.y + boat.length; other stern is at other.y
+          const gap = other.y - (boat.y + boat.length);
+          if (gap >= 0 && gap < MIN_GAP + 2) { blockedByBoat = true; break; }
+        } else {
+          // Northbound: boat bow is at boat.y; other stern is at other.y + other.length
+          const gap = boat.y - (other.y + other.length);
+          if (gap >= 0 && gap < MIN_GAP + 2) { blockedByBoat = true; break; }
+        }
+      }
+      if (blockedByBoat) {
+        boat.speed = Math.max(0, boat.speed - 0.02);
+      }
+
+      // ── Move ────────────────────────────────────────────────────────────
+      boat.y += boat.speed * boat.dir;
+
+      // ── Wrap when fully off either end, with gap check ──────────────────
+      if (boat.dir === 1 && boat.y > this.canalLen + 10) {
+        // Re-enter at top — find a clear spot
+        let newY = topY - boat.length - MIN_GAP;
+        for (const other of this.canalBoats) {
+          if (other === boat) continue;
+          // Push further back if we'd overlap another boat near the top
+          const gap = other.y - (newY + boat.length);
+          if (gap < MIN_GAP) newY = other.y - boat.length - MIN_GAP;
+        }
+        boat.y = newY;
+      } else if (boat.dir === -1 && boat.y + boat.length < -10) {
+        // Re-enter at bottom — find a clear spot
+        let newY = this.canalLen + MIN_GAP;
+        for (const other of this.canalBoats) {
+          if (other === boat) continue;
+          const gap = newY - (other.y + other.length);
+          if (gap < MIN_GAP) newY = other.y + other.length + MIN_GAP;
+        }
+        boat.y = newY;
+      }
+    }
+  }
+
+  drawCanalBoats(ctx: CanvasRenderingContext2D, nightAlpha: number) {
+    if (this.canalX === 0 || this.canalBoats.length === 0) return;
+    const dark = 1 - nightAlpha * 0.65;
+    const cellSize = BLOCK_SIZE + ROAD_WIDTH;
+    const cx = this.canalX;
+    const cw = this.canalWidth;
+    
+    // Narrowboat: fills about 35% of water width, allowing boats to pass side-by-side
+    const bw = Math.round(cw * 0.35);
+
+    for (const boat of this.canalBoats) {
+      const by = boat.y;
+      const bl = boat.length;
+      
+      // Draw on the proper side (port-to-port passing -> keep right).
+      // dir=1 (southbound) stays to the right of the canal (larger X)
+      // dir=-1 (northbound) stays to the left of the canal (smaller X)
+      const laneInset = 3;
+      const bxBase = boat.dir === 1 ? cx + cw - bw - laneInset : cx + laneInset;
+
+      // Skip boats fully hidden under a bridge
+      let hiddenByBridge = false;
+      for (let row = 0; row <= this.gridRows; row++) {
+        const brgTop = row * cellSize - ROAD_WIDTH / 2;
+        if (by >= brgTop && by + bl <= brgTop + ROAD_WIDTH) { hiddenByBridge = true; break; }
+      }
+      if (hiddenByBridge) continue;
+
+      // Clip to canal water between bridges
+      ctx.save();
+      ctx.beginPath();
+      for (let row = 0; row <= this.gridRows; row++) {
+        const bridgeYTop = row * cellSize - ROAD_WIDTH / 2 - SIDEWALK_WIDTH;
+        const prevBridgeYBot = (row - 1) * cellSize + ROAD_WIDTH / 2 + SIDEWALK_WIDTH;
+        const segTop = row === 0 ? 0 : prevBridgeYBot;
+        const segBot = Math.min(bridgeYTop, this.canalLen);
+        if (segBot > segTop) ctx.rect(cx, segTop, cw, segBot - segTop);
+      }
+      ctx.clip();
+
+      const hr = parseInt(boat.hullColor.slice(1,3),16);
+      const hg = parseInt(boat.hullColor.slice(3,5),16);
+      const hb = parseInt(boat.hullColor.slice(5,7),16);
+
+      const sr = parseInt(boat.stripeColor.slice(1,3),16);
+      const sg = parseInt(boat.stripeColor.slice(3,5),16);
+      const sb = parseInt(boat.stripeColor.slice(5,7),16);
+
+      const cr2 = parseInt(boat.cabinColor.slice(1,3),16);
+      const cg2 = parseInt(boat.cabinColor.slice(3,5),16);
+      const cb2 = parseInt(boat.cabinColor.slice(5,7),16);
+
+      // ── Water shadow / reflection under hull ──────────────────────────────
+      ctx.fillStyle = `rgba(0,0,0,0.25)`;
+      ctx.fillRect(bxBase + 2, by + 2, bw + 2, bl + 2);
+
+      // ── Hull — tapering bow shape (narrowboat top-down) ───────────────────
+      // The bow tapers to a point; stern is flat. We draw as a polygon.
+      const bowLen  = Math.round(bl * 0.14); // length of tapered bow section
+
+      ctx.fillStyle = `rgb(${Math.floor(hr*dark)},${Math.floor(hg*dark)},${Math.floor(hb*dark)})`;
+      ctx.beginPath();
+      if (boat.dir === 1) {
+        // Moving down → bow at bottom (by + bl)
+        ctx.moveTo(bxBase,            by);           // stern top-left
+        ctx.lineTo(bxBase + bw,       by);           // stern top-right
+        ctx.lineTo(bxBase + bw,       by + bl - bowLen); // hull right
+        ctx.lineTo(bxBase + bw / 2,   by + bl);          // bow tip
+        ctx.lineTo(bxBase,            by + bl - bowLen); // hull left
+      } else {
+        // Moving up → bow at top (by)
+        ctx.moveTo(bxBase,            by + bl);           // stern bottom-left
+        ctx.lineTo(bxBase + bw,       by + bl);           // stern bottom-right
+        ctx.lineTo(bxBase + bw,       by + bowLen);       // hull right
+        ctx.lineTo(bxBase + bw / 2,   by);                // bow tip
+        ctx.lineTo(bxBase,            by + bowLen);       // hull left
+      }
+      ctx.closePath();
+      ctx.fill();
+
+      // ── Gunwale highlight (bright rim along top of hull sides) ────────────
+      ctx.strokeStyle = `rgba(255,255,255,${0.22*dark})`;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      if (boat.dir === 1) {
+        ctx.moveTo(bxBase + 1, by);
+        ctx.lineTo(bxBase + 1, by + bl - bowLen);
+        ctx.moveTo(bxBase + bw - 1, by);
+        ctx.lineTo(bxBase + bw - 1, by + bl - bowLen);
+      } else {
+        ctx.moveTo(bxBase + 1, by + bl);
+        ctx.lineTo(bxBase + 1, by + bowLen);
+        ctx.moveTo(bxBase + bw - 1, by + bl);
+        ctx.lineTo(bxBase + bw - 1, by + bowLen);
+      }
+      ctx.stroke();
+
+      // ── Decorative stripe down both sides ────────────────────────────────
+      ctx.fillStyle = `rgb(${Math.floor(sr*dark)},${Math.floor(sg*dark)},${Math.floor(sb*dark)})`;
+      const stripeInset = 3;
+      const stripeW = 3;
+      const stripeStart = boat.dir === 1 ? by + 2 : by + bowLen;
+      const stripeEnd   = boat.dir === 1 ? by + bl - bowLen : by + bl - 2;
+      ctx.fillRect(bxBase + stripeInset, stripeStart, stripeW, stripeEnd - stripeStart);
+      ctx.fillRect(bxBase + bw - stripeInset - stripeW, stripeStart, stripeW, stripeEnd - stripeStart);
+
+      // ── Cabin block ───────────────────────────────────────────────────────
+      // Cabin sits mostly at the stern (behind the mid-boat).
+      // For dir=1 (bow at bottom): cabin near stern = upper portion of boat.
+      // For dir=-1 (bow at top): cabin near stern = lower portion.
+      const cabinH = Math.round(bl * 0.48);
+      const cabinY = boat.dir === 1 ? by + 3 : by + bl - 3 - cabinH;
+      const cabinX = bxBase + 5;
+      const cabinW = bw - 10;
+
+      // Cabin body
+      ctx.fillStyle = `rgb(${Math.floor(cr2*dark)},${Math.floor(cg2*dark)},${Math.floor(cb2*dark)})`;
+      ctx.fillRect(cabinX, cabinY, cabinW, cabinH);
+
+      // Cabin roof highlight
+      ctx.fillStyle = `rgba(255,255,255,${0.15*dark})`;
+      ctx.fillRect(cabinX, cabinY, cabinW, 2);
+
+      // Porthole windows — two rows
+      const winR = 2.5;
+      const winOffX1 = cabinX + 5;
+      const winOffX2 = cabinX + cabinW - 5;
+      const numWins = Math.max(1, Math.floor(cabinH / 12));
+      const winStep = cabinH / (numWins + 1);
+      ctx.fillStyle = `rgba(${Math.floor(240*dark)},${Math.floor(230*dark)},${Math.floor(180*dark)},0.90)`;
+      for (let wi = 0; wi < numWins; wi++) {
+        const wy = cabinY + winStep * (wi + 1);
+        ctx.beginPath();
+        ctx.arc(winOffX1, wy, winR, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(winOffX2, wy, winR, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // ── Chimney stack (thin rectangle near stern cabin end) ───────────────
+      const chimneyY = boat.dir === 1 ? cabinY + 4 : cabinY + cabinH - 10;
+      ctx.fillStyle = `rgb(${Math.floor(45*dark)},${Math.floor(40*dark)},${Math.floor(38*dark)})`;
+      ctx.fillRect(bxBase + bw / 2 - 2, chimneyY, 4, 6);
+      // Chimney top cap
+      ctx.fillStyle = `rgb(${Math.floor(30*dark)},${Math.floor(28*dark)},${Math.floor(26*dark)})`;
+      ctx.fillRect(bxBase + bw / 2 - 3, chimneyY, 6, 2);
+
+      // ── Flower pots on the cabin roof (decorative narrowboat detail) ──────
+      const potY = boat.dir === 1 ? cabinY - 2 : cabinY + cabinH;
+      const potColors = [boat.stripeColor, '#e74c3c', '#f39c12'];
+      for (let pi = 0; pi < 3; pi++) {
+        const potX = cabinX + 3 + pi * Math.round((cabinW - 6) / 3);
+        const pr = parseInt(potColors[pi % potColors.length].slice(1,3),16);
+        const ppg = parseInt(potColors[pi % potColors.length].slice(3,5),16);
+        const pb = parseInt(potColors[pi % potColors.length].slice(5,7),16);
+        // Pot (terra-cotta)
+        ctx.fillStyle = `rgb(${Math.floor(155*dark)},${Math.floor(90*dark)},${Math.floor(55*dark)})`;
+        ctx.fillRect(potX, potY, 4, 3);
+        // Flower bloom
+        ctx.fillStyle = `rgba(${Math.floor(pr*dark)},${Math.floor(ppg*dark)},${Math.floor(pb*dark)},${0.9*dark})`;
+        ctx.beginPath();
+        ctx.arc(potX + 2, potY - 1.5, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // ── Tiller/steering arm at stern ─────────────────────────────────────
+      const sternY = boat.dir === 1 ? by : by + bl;
+      ctx.fillStyle = `rgb(${Math.floor(120*dark)},${Math.floor(90*dark)},${Math.floor(60*dark)})`; // wood tiller
+      ctx.fillRect(bxBase + bw / 2 - 1, sternY - 2, 2, 5);
+
+      // ── Person silhouette at the tiller ──────────────────────────────────
+      // Small figure standing near the stern (outside the cabin)
+      const personY = boat.dir === 1 ? cabinY - 7 : cabinY + cabinH + 2;
+      const personX = bxBase + bw / 2;
+      // Body
+      ctx.fillStyle = `rgba(${Math.floor(40*dark)},${Math.floor(30*dark)},${Math.floor(20*dark)},0.85)`;
+      ctx.fillRect(personX - 2, personY + 2, 4, 5);
+      // Head
+      ctx.beginPath();
+      ctx.arc(personX, personY + 1, 2.2, 0, Math.PI * 2);
+      ctx.fill();
+
+      // ── Washing line (between stern and mid cabin) ────────────────────────
+      // Strung from a post midships to the stern
+      const lineY1 = boat.dir === 1 ? cabinY + 2 : cabinY + cabinH - 2;
+      const lineX1 = bxBase + bw / 2 + 3;
+      const lineX2 = bxBase + bw - 4;
+      ctx.strokeStyle = `rgba(200,200,200,${0.55*dark})`;
+      ctx.lineWidth = 0.5;
+      ctx.beginPath();
+      ctx.moveTo(lineX1, lineY1);
+      ctx.lineTo(lineX2, lineY1 + 2); // slight sag
+      ctx.stroke();
+      // Hanging clothes — small coloured rectangles
+      const clothColors = ['#e74c3c','#3498db','#f1c40f','#2ecc71'];
+      for (let ci = 0; ci < 3; ci++) {
+        const clothX = lineX1 + (lineX2 - lineX1) * (ci + 1) / 4;
+        const cr3 = parseInt(clothColors[ci].slice(1,3),16);
+        const cg3 = parseInt(clothColors[ci].slice(3,5),16);
+        const cb3 = parseInt(clothColors[ci].slice(5,7),16);
+        ctx.fillStyle = `rgba(${Math.floor(cr3*dark)},${Math.floor(cg3*dark)},${Math.floor(cb3*dark)},0.85)`;
+        ctx.fillRect(clothX - 1.5, lineY1 + 1.5, 3, 4);
+      }
+
+      // ── Rope coil near bow ────────────────────────────────────────────────
+      const ropeX = bxBase + bw / 2;
+      const ropeY = boat.dir === 1 ? by + bl - 9 : by + 6;
+      ctx.strokeStyle = `rgba(${Math.floor(160*dark)},${Math.floor(130*dark)},${Math.floor(80*dark)},0.75)`;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(ropeX, ropeY, 3, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(ropeX, ropeY, 1.5, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // ── Chimney smoke puff ────────────────────────────────────────────────
+      // Only show during daytime or dusk (not at deep night)
+      if (dark > 0.4) {
+        const smokeX = bxBase + bw / 2;
+        const smokeCY = chimneyY - 4;
+        // Two drifting blobs
+        ctx.fillStyle = `rgba(180,180,175,${0.30 * dark})`;
+        ctx.beginPath();
+        ctx.arc(smokeX, smokeCY, 3.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = `rgba(200,200,195,${0.18 * dark})`;
+        ctx.beginPath();
+        ctx.arc(smokeX + 2, smokeCY - 5, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
 
       ctx.restore();
     }
