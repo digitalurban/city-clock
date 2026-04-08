@@ -2,7 +2,7 @@ import { CityLayout } from './city/CityLayout';
 import { Pedestrian, clearPedestrianState } from './entities/Pedestrian';
 import { Car } from './entities/Car';
 import { Bird, Flock, createFlock, createSparrowFlock, updateBirdFeeder, birdFeederActive, birdFeederX, birdFeederY } from './entities/Bird';
-import { ChimneySmoke } from './rendering/ChimneySmoke';
+import { ChimneySmoke, FactorySmoke } from './rendering/ChimneySmoke';
 import { ClockManager } from './clock/ClockManager';
 import { DayNightCycle } from './rendering/DayNightCycle';
 import { Weather, type HourlyForecast } from './rendering/Weather';
@@ -45,6 +45,7 @@ let cars: Car[] = [];
 let flocks: Flock[] = [];
 let sparrowFlocks: Flock[] = [];
 const chimneySmoke = new ChimneySmoke();
+const factorySmoke = new FactorySmoke();
 const clockManager = new ClockManager();
 const dayNight = new DayNightCycle();
 const weather = new Weather();
@@ -793,6 +794,8 @@ function resize() {
 
   // Chimney smoke sources
   chimneySmoke.setSources(layout.chimneyPositions);
+  layout.buildFactoryChimneyPositions();
+  factorySmoke.setSources(layout.factoryChimneyPositions);
 
   // Init weather with world dimensions
   weather.init(worldW, worldH);
@@ -855,6 +858,7 @@ function buildStaticCanvas(nightAlpha: number) {
   layout.drawShadows(sctx, nightAlpha);
   layout.drawBuildings(sctx, nightAlpha);
   layout.drawBuildingRooftops(sctx, nightAlpha);
+  layout.drawCanalFactories(sctx, nightAlpha);
   layout.drawSnowCover(sctx, snowAccumulation);
   layout.drawHouses(sctx, nightAlpha);
   // House windows — baked into static canvas so lit windows are stable light
@@ -1009,6 +1013,8 @@ function loop(timestamp: number = 0) {
   // Chimney smoke — above rooftops, below everything else
   chimneySmoke.update();
   chimneySmoke.draw(ctx);
+  factorySmoke.update();
+  factorySmoke.draw(ctx);
 
   // Roadside bins — update respawn timers and draw before pedestrians
   layout.updateBins();
@@ -1031,6 +1037,23 @@ function loop(timestamp: number = 0) {
   layout.drawCanalWaterShimmer(ctx, nightAlpha, time);
   layout.updateCanalBoats();
   layout.drawCanalBoats(ctx, nightAlpha);
+  layout.updateCanalFactoryGoods();
+  layout.drawCanalFactoryGoods(ctx, nightAlpha);
+  // Refresh active chimney sources each frame so smoke stops/starts with factory state
+  factorySmoke.setSources(layout.getActiveFactoryChimneyPositions());
+
+  // Canal loading toast
+  if (layout.canalBoatJustLoaded) {
+    layout.canalBoatJustLoaded = false;
+    const msgs = [
+      ['⚙️ Canal Wharf', 'A narrowboat has moored up and is taking on goods from the factory.'],
+      ['🚢 Canal loading', 'Cargo loaded — the narrowboat continues on its way down the canal.'],
+      ['🏭 Factory dispatch', 'Goods from the canalside mill are being loaded onto a waiting narrowboat.'],
+      ['⚓ Wharf activity', 'A narrowboat is collecting the latest batch of goods from the factory yard.'],
+    ];
+    const [title, body] = msgs[Math.floor(Math.random() * msgs.length)];
+    showToast(title, body, 6000);
+  }
 
   // When train arrives: send 3–5 waiting pedestrians to platform, then board
   if (layout.trainJustArrived) {

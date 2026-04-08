@@ -79,3 +79,59 @@ export class ChimneySmoke {
     }
   }
 }
+
+export class FactorySmoke {
+  private particles: { x: number; y: number; vx: number; vy: number; alpha: number; size: number }[] = [];
+  private sources: { x: number; y: number }[] = [];
+  private emitTimer: number = 0;
+
+  setSources(sources: { x: number; y: number }[]) { this.sources = sources; }
+
+  update() {
+    if (this.sources.length === 0) return;
+    const hour = new Date().getHours() + new Date().getMinutes() / 60;
+    // Factories work 6am–10pm; emit more during those hours
+    const working = hour >= 6 && hour < 22;
+    const emitChance = working ? 0.75 : 0.15;
+
+    this.emitTimer++;
+    if (this.particles.length < 500 && this.emitTimer >= 2) {
+      this.emitTimer = 0;
+      const batch = Math.min(8, this.sources.length * 2);
+      for (let i = 0; i < batch; i++) {
+        if (Math.random() > emitChance) continue;
+        const src = this.sources[Math.floor(Math.random() * this.sources.length)];
+        this.particles.push({
+          x: src.x + (Math.random() - 0.5) * 2,
+          y: src.y,
+          vx: (Math.random() - 0.5) * 0.22,
+          vy: -(0.30 + Math.random() * 0.25),
+          alpha: 0.38 + Math.random() * 0.18,
+          size: 1.5 + Math.random() * 1.2,
+        });
+      }
+    }
+    for (const p of this.particles) {
+      p.x += p.vx;
+      p.y += p.vy;
+      p.vx += (Math.random() - 0.5) * 0.028;
+      p.vx *= 0.97;
+      p.vy *= 0.994;
+      p.size += 0.07;
+      p.alpha -= 0.0032;
+    }
+    for (let i = this.particles.length - 1; i >= 0; i--) {
+      if (this.particles[i].alpha <= 0.01) this.particles.splice(i, 1);
+    }
+  }
+
+  draw(ctx: CanvasRenderingContext2D) {
+    for (const p of this.particles) {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+      // Warm mid-grey — industrial but not pitch black
+      ctx.fillStyle = `rgba(118, 108, 98, ${p.alpha})`;
+      ctx.fill();
+    }
+  }
+}

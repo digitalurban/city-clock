@@ -8,6 +8,7 @@ export interface BuildingDef {
   h: number;
   color: string;
   windowSeed: number;
+  isFactory?: boolean;
 }
 
 export interface HouseDef {
@@ -126,6 +127,17 @@ export interface CityEvent {
 // Block type determines what fills a city block
 type BlockType = 'commercial' | 'residential' | 'park' | 'utility' | 'construction' | 'station' | 'railway' | 'branchRailway' | 'branchStation' | 'canal';
 
+interface CanalFactory {
+  x: number; y: number; w: number; h: number;
+  drawH: number; // actual rendered height — may be less than h (block height)
+  seed: number;
+  goods: number;       // current units in yard (0–maxGoods)
+  goodsTimer: number;  // frames until next goods spawn
+  maxGoods: number;    // capacity
+  smokeActive: boolean; // whether chimneys are currently smoking
+  smokeTimer: number;   // frames until next smoke on/off toggle
+}
+
 interface CanalBoat {
   y: number;
   speed: number;
@@ -135,6 +147,10 @@ interface CanalBoat {
   hullColor: string;
   cabinColor: string;
   stripeColor: string;
+  hasGoods: boolean;
+  goodsAlpha: number;    // 0→1 fade in when loading, 1→0 when delivering
+  loadingTimer: number;  // >0 = slowing to load; counts down
+  loadingFactoryIdx: number; // index into canalFactories while loading
 }
 
 export interface ConstructionSiteDef {
@@ -185,6 +201,8 @@ export class CityLayout {
 
   // Chimney smoke source positions (top of each chimney)
   chimneyPositions: { x: number; y: number }[] = [];
+  // Factory chimney smoke-emission points
+  factoryChimneyPositions: { x: number; y: number }[] = [];
 
   // Rain puddles — fills during rain, evaporates when dry
   puddleIntensity = 0; // 0–1
@@ -241,7 +259,9 @@ export class CityLayout {
   canalTowpathX: number = 0;  // left edge of towpath
   canalTowpathW: number = 12; // width of towpath
   canalBoats: CanalBoat[] = [];
+  canalFactories: CanalFactory[] = [];
   canalLen: number = 0;       // vertical length (top of city to railway row)
+  canalBoatJustLoaded: boolean = false; // set for one frame when a boat picks up goods
 
   // ── Ice cream van ──────────────────────────────────────────────────────────
   iceCreamActive: boolean = false;
@@ -679,9 +699,9 @@ export class CityLayout {
             const waterW = 54;
             const buildingW = blockW - towpathW - waterW; // ~58px
             if (buildingW > 24) {
-              const roll = seededRandom(c * 100 + r * 10);
-              if (roll < 0.55) {
-                this.generateResidentialBlock(bx, by, buildingW, blockH, margin, c, r);
+              const roll = seededRandom(c * 137 + r * 41 + 200);
+              if (roll < 0.70) {
+                this.generateCanalFactory(bx, by, buildingW, blockH, c * 137 + r * 41);
               } else {
                 this.generateParkBlock(bx, by, buildingW, blockH, c, r);
               }
@@ -857,6 +877,24 @@ export class CityLayout {
       color: '#707880',
       windowSeed: buildingIdx * 17 + 500,
     });
+  }
+
+  private generateCanalFactory(bx: number, by: number, w: number, h: number, seed: number) {
+    const margin = 3;
+    const fx = bx + margin;
+    const fy = by + margin;
+    const fw = w - margin * 2;
+    const fh = h - margin * 2;
+    const heightRatio = 0.45 + seededRandom(seed + 99) * 0.50;
+    const drawH = Math.floor(fh * heightRatio);
+    this.buildings.push({ x: fx, y: fy, w: fw, h: drawH, color: '#7a3528', windowSeed: -1, isFactory: true });
+    const maxGoods = 3 + Math.floor(seededRandom(seed + 88) * 3); // 3–5
+    // Stagger initial timers so not all yards fill at once
+    const goodsTimer = Math.floor(seededRandom(seed + 77) * 1800);
+    // Stagger smoke state so factories don't all toggle together
+    const smokeActive = seededRandom(seed + 60) > 0.30; // ~70% start smoking
+    const smokeTimer  = Math.floor(seededRandom(seed + 61) * 3600); // staggered first toggle
+    this.canalFactories.push({ x: fx, y: fy, w: fw, h: fh, drawH, seed, goods: 0, goodsTimer, maxGoods, smokeActive, smokeTimer });
   }
 
   private generateConstructionBlock(bx: number, by: number, blockW: number, blockH: number) {
@@ -1675,6 +1713,7 @@ export class CityLayout {
   drawBuildings(ctx: CanvasRenderingContext2D, nightAlpha: number) {
     const shadow = this.getShadowOffset();
     for (const b of this.buildings) {
+      if (b.isFactory) continue; // drawn separately by drawCanalFactories
       // Directional ground shadow — direction & length shift with sun position
       ctx.fillStyle = `rgba(0, 0, 0, ${shadow.alpha + nightAlpha * 0.06})`;
       ctx.fillRect(b.x + shadow.dx, b.y + shadow.dy, b.w, b.h);
@@ -1766,6 +1805,7 @@ export class CityLayout {
     const darkFactor = 1 - nightAlpha * 0.75;
 
     for (const b of this.buildings) {
+      if (b.isFactory) continue;
       if (b.w < 20 || b.h < 20) continue;
 
       const pW = Math.max(4, Math.min(7, Math.floor(Math.min(b.w, b.h) * 0.09)));
@@ -4800,6 +4840,117 @@ export class CityLayout {
     }
   }
 
+  /** Compute smoke-emission points for each factory chimney stack */
+  buildFactoryChimneyPositions() {
+    this.factoryChimneyPositions = [];
+    for (const f of this.canalFactories) {
+      const { x, y, w, drawH, seed } = f;
+      const s = (n: number) => seededRandom(seed + n);
+      const chimneyType = Math.floor(s(3) * 3);
+      const chimneyConfigs = [
+        [{ xf: 0.45 }],
+        [{ xf: 0.28 }, { xf: 0.65 }],
+        [{ xf: 0.22 }, { xf: 0.50 }, { xf: 0.75 }],
+      ];
+      const chimneys = chimneyConfigs[chimneyType];
+      for (let ci = 0; ci < chimneys.length; ci++) {
+        const { xf } = chimneys[ci];
+        const cxPos = x + w * (xf + (s(20 + ci) - 0.5) * 0.08);
+        const cyPos = y + drawH * (0.10 + s(30 + ci) * 0.12);
+        this.factoryChimneyPositions.push({ x: cxPos, y: cyPos });
+      }
+    }
+  }
+
+  updateCanalFactoryGoods() {
+    for (const f of this.canalFactories) {
+      // ── Smoke on/off cycle ────────────────────────────────────────────
+      f.smokeTimer--;
+      if (f.smokeTimer <= 0) {
+        f.smokeActive = !f.smokeActive;
+        if (f.smokeActive) {
+          // Running: smoke for 30–120 seconds
+          f.smokeTimer = 1800 + Math.floor(Math.random() * 5400);
+        } else {
+          // Stopped / shift change: quiet for 10–45 seconds
+          f.smokeTimer = 600 + Math.floor(Math.random() * 2100);
+        }
+      }
+
+      // ── Goods accumulation ────────────────────────────────────────────
+      const yardH = f.h - f.drawH;
+      if (yardH <= 6) continue;
+      if (f.goods < f.maxGoods) {
+        f.goodsTimer--;
+        if (f.goodsTimer <= 0) {
+          f.goods++;
+          f.goodsTimer = 1200 + Math.floor(Math.random() * 1200);
+        }
+      }
+    }
+  }
+
+  /** Returns chimney positions for factories that are currently smoking */
+  getActiveFactoryChimneyPositions(): { x: number; y: number }[] {
+    const out: { x: number; y: number }[] = [];
+    for (const f of this.canalFactories) {
+      if (!f.smokeActive) continue;
+      const { x, y, w, drawH, seed } = f;
+      const s = (n: number) => seededRandom(seed + n);
+      const chimneyType = Math.floor(s(3) * 3);
+      const xfs = [[0.45], [0.28, 0.65], [0.22, 0.50, 0.75]][chimneyType];
+      xfs.forEach((xf, ci) => {
+        out.push({
+          x: x + w * (xf + (s(20 + ci) - 0.5) * 0.08),
+          y: y + drawH * (0.10 + s(30 + ci) * 0.12),
+        });
+      });
+    }
+    return out;
+  }
+
+  drawCanalFactoryGoods(ctx: CanvasRenderingContext2D, nightAlpha: number) {
+    if (this.canalFactories.length === 0) return;
+    const dark = 1 - nightAlpha * 0.70;
+    const crateColors = [
+      [160, 110, 60],   // wooden crate brown
+      [100, 100, 110],  // metal drum grey
+      [180, 140, 80],   // pale timber
+      [90,  60,  40],   // dark wood
+      [130, 120, 100],  // canvas sack
+    ];
+
+    for (const f of this.canalFactories) {
+      if (f.goods === 0) continue;
+      const yardH = f.h - f.drawH;
+      if (yardH <= 6) continue;
+      const yardY = f.y + f.drawH;
+
+      for (let gi = 0; gi < f.goods; gi++) {
+        // Deterministic but spread position using goods index + seed
+        const gx = f.x + 3 + seededRandom(f.seed + gi * 17) * (f.w - 14);
+        const gy = yardY + 3 + seededRandom(f.seed + gi * 23 + 1) * (yardH - 10);
+        const gw = 5 + seededRandom(f.seed + gi * 11) * 4; // 5–9px
+        const gh = 4 + seededRandom(f.seed + gi * 13 + 2) * 3; // 4–7px
+        const colorIdx = Math.floor(seededRandom(f.seed + gi * 7 + 3) * crateColors.length);
+        const [cr, cg, cb] = crateColors[colorIdx];
+
+        // Shadow
+        ctx.fillStyle = `rgba(0,0,0,${0.20 * dark})`;
+        ctx.fillRect(gx + 2, gy + 2, gw, gh);
+        // Crate/barrel body
+        ctx.fillStyle = `rgb(${Math.floor(cr * dark)},${Math.floor(cg * dark)},${Math.floor(cb * dark)})`;
+        ctx.fillRect(gx, gy, gw, gh);
+        // Top highlight
+        ctx.fillStyle = `rgba(255,255,255,${0.15 * dark})`;
+        ctx.fillRect(gx, gy, gw, 1.5);
+        // Dark band (barrel hoop / crate slat)
+        ctx.fillStyle = `rgba(0,0,0,${0.22 * dark})`;
+        ctx.fillRect(gx, gy + gh * 0.45, gw, 1);
+      }
+    }
+  }
+
   /** True when the market should be active (weekends, or ~30% of weekdays) */
   isMarketDay(): boolean {
     const d = new Date();
@@ -5058,9 +5209,246 @@ export class CityLayout {
       hullColor: cfg.hull,
       cabinColor: cfg.cabin,
       stripeColor: cfg.stripe,
+      hasGoods: false,
+      goodsAlpha: 0,
+      loadingTimer: 0,
+      loadingFactoryIdx: -1,
     }));
   }
 
+
+  /** Draw Northern UK-style canalside factories — baked into the static canvas. */
+  drawCanalFactories(ctx: CanvasRenderingContext2D, nightAlpha: number) {
+    if (this.canalFactories.length === 0) return;
+    const shadow = this.getShadowOffset();
+    const dark = 1 - nightAlpha * 0.82;
+
+    // Brick palettes [r, g, b]: Victorian red, sooty weathered, orange-red newer
+    const brickPalettes = [[122,53,40],[90,46,38],[148,72,46]];
+    // Corresponding dark-face colours for south/east parapet
+    const brickDark    = [[60,22,16],[42,18,14],[72,32,18]];
+
+    for (const f of this.canalFactories) {
+      const { x, y, w, h, drawH, seed } = f;
+      const s = (n: number) => seededRandom(seed + n);
+
+      // Per-building character choices
+      const paletteIdx  = Math.floor(s(0)  * 3);               // 0–2 brick palette
+      const roofStyle   = Math.floor(s(2)  * 3);               // 0=H-sawtooth 1=V-sawtooth 2=monitor
+      const chimneyType = Math.floor(s(3)  * 3);               // 0=1 large 1=2 medium 2=3 small
+      const hasAnnex    = s(4) < 0.40;                         // small office/boiler annex
+      const hasPipe     = s(6) < 0.55;                         // exterior pipe on west wall
+      const numDoors    = 1 + Math.floor(s(7) * 2);            // 1–2 loading doors
+
+      const [br, bg, bb]     = brickPalettes[paletteIdx];
+      const [dr, dg, db]     = brickDark[paletteIdx];
+      const pW = 4;
+      const roofPad = 5;
+      const yardH = h - drawH; // space below the factory (open yard / access area)
+
+      // ── Cobbled yard in the gap below the factory (if building is shorter than the block)
+      if (yardH > 4) {
+        ctx.fillStyle = `rgb(${Math.floor(108*dark)},${Math.floor(100*dark)},${Math.floor(88*dark)})`;
+        ctx.fillRect(x, y + drawH, w, yardH);
+        // Cobble grid — faint lines
+        ctx.strokeStyle = `rgba(0,0,0,${0.10 * dark})`;
+        ctx.lineWidth = 0.5;
+        const cobbleSize = 7;
+        for (let cy2 = y + drawH + cobbleSize; cy2 < y + h; cy2 += cobbleSize) {
+          ctx.beginPath(); ctx.moveTo(x, cy2); ctx.lineTo(x + w, cy2); ctx.stroke();
+        }
+        for (let cx2 = x + cobbleSize; cx2 < x + w; cx2 += cobbleSize) {
+          ctx.beginPath(); ctx.moveTo(cx2, y + drawH); ctx.lineTo(cx2, y + h); ctx.stroke();
+        }
+      }
+
+      // ── Optional south annex (office/boiler house) drawn first so main body sits on top
+      if (hasAnnex && drawH > 30) {
+        const annexH = Math.floor(drawH * (0.18 + s(8) * 0.12)); // 18–30% of factory height
+        const annexW = Math.floor(w * (0.55 + s(9) * 0.3));
+        const [ar, ag, ab] = paletteIdx === 1
+          ? [110, 95, 78]    // buff stone / older annex
+          : [148, 130, 108]; // limestone / newer
+        ctx.fillStyle = `rgb(${Math.floor(ar*dark)},${Math.floor(ag*dark)},${Math.floor(ab*dark)})`;
+        ctx.fillRect(x, y + drawH - annexH, annexW, annexH);
+        ctx.fillStyle = `rgba(0,0,0,${0.15 * dark})`;
+        ctx.fillRect(x, y + drawH - pW, annexW, pW); // south face
+        ctx.strokeStyle = `rgba(0,0,0,${0.22 + nightAlpha * 0.08})`;
+        ctx.lineWidth = 0.8;
+        ctx.strokeRect(x, y + drawH - annexH, annexW, annexH);
+      }
+
+      // ── Ground shadow
+      ctx.fillStyle = `rgba(0,0,0,${shadow.alpha + nightAlpha * 0.06})`;
+      ctx.fillRect(x + shadow.dx, y + shadow.dy, w, drawH);
+
+      // ── Brick body
+      ctx.fillStyle = `rgb(${Math.floor(br*dark)},${Math.floor(bg*dark)},${Math.floor(bb*dark)})`;
+      ctx.fillRect(x, y, w, drawH);
+
+      // Horizontal mortar courses
+      ctx.strokeStyle = `rgba(0,0,0,${0.12 * dark})`;
+      ctx.lineWidth = 0.5;
+      for (let my = y + 5; my < y + drawH; my += 5) {
+        ctx.beginPath(); ctx.moveTo(x, my); ctx.lineTo(x + w, my); ctx.stroke();
+      }
+
+      // ── Roof (clipped to inner area)
+      const roofX = x + roofPad;
+      const roofY = y + roofPad;
+      const roofW = w - roofPad * 2;
+      const roofH = drawH - roofPad * 2;
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(roofX, roofY, roofW, roofH);
+      ctx.clip();
+
+      if (roofStyle === 0) {
+        // Horizontal sawtooth — N-facing glass strips running E–W
+        const numBays = 4 + Math.floor(s(1) * 4); // 4–7
+        const bayH = roofH / numBays;
+        const glassRatio = 0.38 + s(11) * 0.14; // 38–52% glass
+        for (let bay = 0; bay < numBays; bay++) {
+          const bayY = roofY + bay * bayH;
+          ctx.fillStyle = `rgba(148,182,210,${0.50 * dark})`;
+          ctx.fillRect(roofX, bayY, roofW, bayH * glassRatio);
+          ctx.fillStyle = `rgba(22,12,8,${0.60 * dark})`;
+          ctx.fillRect(roofX, bayY + bayH * glassRatio, roofW, bayH * (1 - glassRatio));
+          ctx.strokeStyle = `rgba(55,40,32,${0.40 * dark})`;
+          ctx.lineWidth = 0.8;
+          ctx.beginPath(); ctx.moveTo(roofX, bayY); ctx.lineTo(roofX + roofW, bayY); ctx.stroke();
+        }
+
+      } else if (roofStyle === 1) {
+        // Vertical sawtooth — W-facing glass strips running N–S
+        const numBays = 3 + Math.floor(s(1) * 3); // 3–5
+        const bayW = roofW / numBays;
+        const glassRatio = 0.40 + s(12) * 0.15;
+        for (let bay = 0; bay < numBays; bay++) {
+          const bayX = roofX + bay * bayW;
+          ctx.fillStyle = `rgba(148,182,210,${0.50 * dark})`;
+          ctx.fillRect(bayX, roofY, bayW * glassRatio, roofH);
+          ctx.fillStyle = `rgba(22,12,8,${0.60 * dark})`;
+          ctx.fillRect(bayX + bayW * glassRatio, roofY, bayW * (1 - glassRatio), roofH);
+          ctx.strokeStyle = `rgba(55,40,32,${0.40 * dark})`;
+          ctx.lineWidth = 0.8;
+          ctx.beginPath(); ctx.moveTo(bayX, roofY); ctx.lineTo(bayX, roofY + roofH); ctx.stroke();
+        }
+
+      } else {
+        // Monitor / clerestory — central raised glazed ridge flanked by flat roof
+        const monH = roofH * (0.36 + s(13) * 0.14); // height of monitor section
+        const monY = roofY + (roofH - monH) / 2;
+        // Flat roof sections (dark felt/asphalt)
+        ctx.fillStyle = `rgba(30,22,18,${0.55 * dark})`;
+        ctx.fillRect(roofX, roofY, roofW, roofH);
+        // Monitor glazing strip
+        ctx.fillStyle = `rgba(148,182,210,${0.52 * dark})`;
+        ctx.fillRect(roofX + 3, monY, roofW - 6, monH);
+        // Monitor frame lines
+        ctx.strokeStyle = `rgba(55,40,32,${0.45 * dark})`;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(roofX + 3, monY, roofW - 6, monH);
+        // Glazing bars inside monitor
+        const barCount = 3 + Math.floor(s(14) * 3);
+        const barSpacing = monH / (barCount + 1);
+        ctx.lineWidth = 0.7;
+        for (let bi = 1; bi <= barCount; bi++) {
+          const barY = monY + bi * barSpacing;
+          ctx.beginPath(); ctx.moveTo(roofX + 3, barY); ctx.lineTo(roofX + roofW - 3, barY); ctx.stroke();
+        }
+      }
+      ctx.restore();
+
+      // ── Parapet faces
+      ctx.fillStyle = `rgb(${Math.floor(dr*dark)},${Math.floor(dg*dark)},${Math.floor(db*dark)})`;
+      ctx.fillRect(x, y + drawH - pW, w, pW); // south face
+      ctx.fillStyle = `rgba(0,0,0,${0.20 * dark})`;
+      ctx.fillRect(x + w - pW, y, pW, drawH - pW); // east face
+
+      // ── Loading bay door(s) on east wall
+      for (let di = 0; di < numDoors; di++) {
+        const doorH2 = Math.min(14, drawH * 0.14);
+        const doorW2 = pW + 2;
+        const tBase = numDoors === 1 ? 0.45 : 0.25 + di * 0.35;
+        const doorY2 = y + drawH * (tBase + s(5 + di) * 0.12);
+        ctx.fillStyle = `rgba(12,7,5,${0.90 * dark})`;
+        ctx.fillRect(x + w - doorW2, doorY2, doorW2, doorH2);
+        ctx.strokeStyle = `rgba(80,58,46,${0.65 * dark})`;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x + w - doorW2, doorY2, doorW2, doorH2);
+        ctx.strokeStyle = `rgba(55,38,28,${0.40 * dark})`;
+        ctx.lineWidth = 0.5;
+        for (let dr2 = 1; dr2 < 4; dr2++) {
+          const dlY = doorY2 + (doorH2 * dr2) / 4;
+          ctx.beginPath(); ctx.moveTo(x + w - doorW2, dlY); ctx.lineTo(x + w, dlY); ctx.stroke();
+        }
+      }
+
+      // ── Optional exterior pipe along west wall
+      if (hasPipe) {
+        const pipeY1 = y + drawH * (0.12 + s(15) * 0.10);
+        const pipeY2 = y + drawH * (0.70 + s(16) * 0.18);
+        ctx.strokeStyle = `rgba(${Math.floor(60*dark)},${Math.floor(55*dark)},${Math.floor(50*dark)},0.85)`;
+        ctx.lineWidth = 2.5;
+        ctx.beginPath(); ctx.moveTo(x + 3, pipeY1); ctx.lineTo(x + 3, pipeY2); ctx.stroke();
+        // Pipe brackets
+        ctx.strokeStyle = `rgba(40,35,30,${0.65 * dark})`;
+        ctx.lineWidth = 1;
+        for (let py = pipeY1 + 12; py < pipeY2 - 8; py += 18) {
+          ctx.beginPath(); ctx.moveTo(x, py); ctx.lineTo(x + 6, py); ctx.stroke();
+        }
+      }
+
+      // ── Chimney stacks
+      const chimneyConfigs = [
+        [{ r: 7, xf: 0.45 }],                                              // 1 large
+        [{ r: 4.5, xf: 0.28 }, { r: 4.5, xf: 0.65 }],                    // 2 medium
+        [{ r: 3.5, xf: 0.22 }, { r: 3.5, xf: 0.50 }, { r: 3.5, xf: 0.75 }], // 3 small
+      ];
+      const chimneys = chimneyConfigs[chimneyType];
+      for (let ci = 0; ci < chimneys.length; ci++) {
+        const { r: cr, xf } = chimneys[ci];
+        const cxPos = x + w * (xf + (s(20 + ci) - 0.5) * 0.08);
+        const cyPos = y + drawH * (0.10 + s(30 + ci) * 0.12);
+
+        ctx.fillStyle = `rgba(0,0,0,${0.30 * dark})`;
+        ctx.beginPath(); ctx.arc(cxPos + 2.5, cyPos + 2.5, cr, 0, Math.PI * 2); ctx.fill();
+
+        ctx.fillStyle = `rgb(${Math.floor(50*dark)},${Math.floor(40*dark)},${Math.floor(36*dark)})`;
+        ctx.beginPath(); ctx.arc(cxPos, cyPos, cr, 0, Math.PI * 2); ctx.fill();
+
+        ctx.strokeStyle = `rgba(100,78,64,${0.55 * dark})`;
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.arc(cxPos, cyPos, cr, 0, Math.PI * 2); ctx.stroke();
+
+        ctx.fillStyle = `rgba(0,0,0,${0.75 * dark})`;
+        ctx.beginPath(); ctx.arc(cxPos, cyPos, cr * 0.52, 0, Math.PI * 2); ctx.fill();
+      }
+
+      // ── Night windows
+      if (nightAlpha > 0.2) {
+        const hour = new Date().getHours() + new Date().getMinutes() / 60;
+        const timeSlot = Math.floor(hour * 3);
+        const litChance = (hour >= 22 || hour < 6) ? 0.12 : 0.06;
+        const winAlpha = Math.min(1, nightAlpha * 1.6);
+        for (let wx = x + roofPad + 4; wx < x + w - roofPad - 4; wx += 9) {
+          for (let wy = y + roofPad + 4; wy < y + drawH - pW - 4; wy += 8) {
+            if (seededRandom(seed + wx * 7 + wy * 13 + timeSlot * 3001) < litChance) {
+              ctx.fillStyle = `rgba(255,200,80,${winAlpha * 0.8})`;
+              ctx.fillRect(wx, wy, 3, 3);
+            }
+          }
+        }
+      }
+
+      // ── Building outline
+      ctx.strokeStyle = `rgba(0,0,0,${0.28 + nightAlpha * 0.10})`;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x, y, w, drawH);
+    }
+  }
 
   /** Draw canal water, towpath and bridges — baked into the static canvas. */
   drawCanalCorridor(ctx: CanvasRenderingContext2D, nightAlpha: number) {
@@ -5193,6 +5581,49 @@ export class CityLayout {
       // ── Move ────────────────────────────────────────────────────────────
       boat.y += boat.speed * boat.dir;
 
+      // ── Factory goods pickup ────────────────────────────────────────────
+      if (!boat.hasGoods && boat.loadingTimer === 0) {
+        const boatMid = boat.y + boat.length / 2;
+        for (let fi = 0; fi < this.canalFactories.length; fi++) {
+          const f = this.canalFactories[fi];
+          if (f.goods === 0) continue;
+          // Factory loading bay is on the east wall, mid-height of building
+          const factoryMid = f.y + f.drawH * 0.6;
+          if (Math.abs(boatMid - factoryMid) < 22) {
+            // Start loading: slow boat, start timer
+            boat.loadingTimer = 200; // ~3.3 s at 60fps
+            boat.loadingFactoryIdx = fi;
+            break;
+          }
+        }
+      }
+      if (boat.loadingTimer > 0) {
+        boat.speed = Math.max(0, boat.speed - 0.003);
+        boat.loadingTimer--;
+        if (boat.loadingTimer === 0) {
+          // Transfer goods
+          const fi = boat.loadingFactoryIdx;
+          if (fi >= 0 && fi < this.canalFactories.length) {
+            this.canalFactories[fi].goods = 0;
+            // Reset goods timer for next batch
+            this.canalFactories[fi].goodsTimer = 1800 + Math.floor(Math.random() * 1800);
+          }
+          boat.hasGoods = true;
+          boat.goodsAlpha = 0;
+          boat.loadingFactoryIdx = -1;
+          this.canalBoatJustLoaded = true;
+        }
+      }
+      // Fade goods in on boat after loading
+      if (boat.hasGoods && boat.goodsAlpha < 1) {
+        boat.goodsAlpha = Math.min(1, boat.goodsAlpha + 0.015);
+      }
+      // Deliver goods when boat wraps (handled at wrap point) — clear after 30s
+      if (boat.hasGoods) {
+        boat.goodsAlpha -= 0.00015; // very slowly fades to simulate delivery
+        if (boat.goodsAlpha <= 0) { boat.hasGoods = false; boat.goodsAlpha = 0; }
+      }
+
       // ── Wrap when fully off either end, with gap check ──────────────────
       if (boat.dir === 1 && boat.y > this.canalLen + 10) {
         // Re-enter at top — find a clear spot
@@ -5204,6 +5635,7 @@ export class CityLayout {
           if (gap < MIN_GAP) newY = other.y - boat.length - MIN_GAP;
         }
         boat.y = newY;
+        if (boat.hasGoods) { boat.hasGoods = false; boat.goodsAlpha = 0; }
       } else if (boat.dir === -1 && boat.y + boat.length < -10) {
         // Re-enter at bottom — find a clear spot
         let newY = this.canalLen + MIN_GAP;
@@ -5213,6 +5645,7 @@ export class CityLayout {
           if (gap < MIN_GAP) newY = other.y + other.length + MIN_GAP;
         }
         boat.y = newY;
+        if (boat.hasGoods) { boat.hasGoods = false; boat.goodsAlpha = 0; }
       }
     }
   }
@@ -5448,6 +5881,30 @@ export class CityLayout {
         ctx.beginPath();
         ctx.arc(smokeX + 2, smokeCY - 5, 2.5, 0, Math.PI * 2);
         ctx.fill();
+      }
+
+      // ── Goods on boat (crates/barrels when loaded) ──────────────────────
+      if (boat.hasGoods && boat.goodsAlpha > 0.01) {
+        const cabinStart = boat.dir === 1
+          ? by + bl * 0.20
+          : by + bl * 0.12;
+        const cabinLen = bl * 0.50;
+        const crateW = bw * 0.38;
+        const crateH = 5;
+        const crateX = bxBase + (bw - crateW) / 2;
+        // 2–3 crate stacks
+        const stackCount = 2;
+        for (let si = 0; si < stackCount; si++) {
+          const crateY = cabinStart + cabinLen * (0.2 + si * 0.45);
+          ctx.fillStyle = `rgba(0,0,0,${0.22 * boat.goodsAlpha})`;
+          ctx.fillRect(crateX + 2, crateY + 2, crateW, crateH);
+          ctx.fillStyle = `rgba(${Math.floor(148 * dark)},${Math.floor(108 * dark)},${Math.floor(62 * dark)},${boat.goodsAlpha})`;
+          ctx.fillRect(crateX, crateY, crateW, crateH);
+          ctx.fillStyle = `rgba(255,255,255,${0.15 * boat.goodsAlpha})`;
+          ctx.fillRect(crateX, crateY, crateW, 1.5);
+          ctx.fillStyle = `rgba(0,0,0,${0.25 * boat.goodsAlpha})`;
+          ctx.fillRect(crateX, crateY + crateH * 0.5, crateW, 1);
+        }
       }
 
       ctx.restore();
