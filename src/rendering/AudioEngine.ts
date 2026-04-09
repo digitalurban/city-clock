@@ -162,120 +162,129 @@ export class AudioEngine {
   // ── Sirens ───────────────────────────────────────────────────────────────
 
   /**
-   * One "wee-woo" siren cycle (~2.4 s).
-   * Police: classic two-tone (hi→lo→hi); ambulance: slower sweep; firetruck: airhorn blasts.
+   * Single siren pass — plays once for the vehicle, never repeats.
+   * Police: smooth UK two-tone sweep. Ambulance: rising-falling sweep.
+   * Firetruck: one sustained low horn.
+   * All use sine oscillators through a mild lowpass so they don't sound harsh.
    */
   triggerSiren(type: 'police' | 'ambulance' | 'firetruck' = 'police') {
     if (!this.ctx || !this.masterGain) return;
-    const ctx = this.ctx;
-    const out = ctx.createGain();
-    out.gain.value = 0.28;
-    out.connect(this.masterGain);
+    const ctx  = this.ctx;
+    const t0   = ctx.currentTime;
+
+    // Shared output bus — low gain so siren sits behind the scene
+    const out    = ctx.createGain();
+    const filter = ctx.createBiquadFilter();
+    filter.type  = 'lowpass';
+    filter.frequency.value = 1800;
+    out.gain.value = 0.18;
+    out.connect(filter);
+    filter.connect(this.masterGain);
+
+    const tone = (freq: number, start: number, dur: number, endFreq = freq) => {
+      const osc = ctx.createOscillator();
+      const g   = ctx.createGain();
+      osc.type  = 'sine';
+      osc.frequency.setValueAtTime(freq, start);
+      if (endFreq !== freq) osc.frequency.linearRampToValueAtTime(endFreq, start + dur);
+      g.gain.setValueAtTime(0, start);
+      g.gain.linearRampToValueAtTime(1, start + 0.04);
+      g.gain.setValueAtTime(1, start + dur - 0.06);
+      g.gain.linearRampToValueAtTime(0, start + dur);
+      osc.connect(g); g.connect(out);
+      osc.start(start); osc.stop(start + dur + 0.02);
+    };
 
     if (type === 'police') {
-      // Two-tone warble: 960 Hz and 770 Hz, alternating every 0.4 s, 3 pairs
-      const pairs = 3;
-      for (let i = 0; i < pairs; i++) {
-        [960, 770].forEach((f, j) => {
-          const t0 = ctx.currentTime + (i * 0.8) + j * 0.4;
-          const osc = ctx.createOscillator();
-          const g   = ctx.createGain();
-          osc.type = 'sawtooth';
-          osc.frequency.setValueAtTime(f, t0);
-          g.gain.setValueAtTime(0, t0);
-          g.gain.linearRampToValueAtTime(1, t0 + 0.03);
-          g.gain.setValueAtTime(1, t0 + 0.34);
-          g.gain.linearRampToValueAtTime(0, t0 + 0.4);
-          osc.connect(g); g.connect(out);
-          osc.start(t0); osc.stop(t0 + 0.42);
-        });
-      }
+      // UK two-tone: smooth sweep hi→lo, lo→hi, twice (approx 2 s total)
+      tone(960, t0 + 0.0,  0.5, 760);
+      tone(760, t0 + 0.5,  0.5, 960);
+      tone(960, t0 + 1.0,  0.5, 760);
+      tone(760, t0 + 1.5,  0.5, 960);
     } else if (type === 'ambulance') {
-      // Slow continuous sweep between 580 Hz and 1100 Hz over 2.4 s, two sweeps
-      for (let i = 0; i < 2; i++) {
-        const t0 = ctx.currentTime + i * 1.2;
-        const osc = ctx.createOscillator();
-        const g   = ctx.createGain();
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(580, t0);
-        osc.frequency.linearRampToValueAtTime(1100, t0 + 0.6);
-        osc.frequency.linearRampToValueAtTime(580,  t0 + 1.2);
-        g.gain.setValueAtTime(0, t0);
-        g.gain.linearRampToValueAtTime(1, t0 + 0.05);
-        g.gain.setValueAtTime(1, t0 + 1.1);
-        g.gain.linearRampToValueAtTime(0, t0 + 1.2);
-        osc.connect(g); g.connect(out);
-        osc.start(t0); osc.stop(t0 + 1.22);
-      }
+      // Slow rising-then-falling sweep, one pass (~2 s)
+      tone(550, t0 + 0.0,  1.0, 1050);
+      tone(1050, t0 + 1.0, 1.0, 550);
     } else {
-      // Firetruck: three short airhorn blasts (low, brassy)
-      for (let i = 0; i < 3; i++) {
-        const t0 = ctx.currentTime + i * 0.7;
-        const osc = ctx.createOscillator();
-        const g   = ctx.createGain();
-        osc.type = 'sawtooth';
-        osc.frequency.value = 220 + i * 20;
-        g.gain.setValueAtTime(0, t0);
-        g.gain.linearRampToValueAtTime(1, t0 + 0.04);
-        g.gain.setValueAtTime(1, t0 + 0.45);
-        g.gain.linearRampToValueAtTime(0, t0 + 0.6);
-        osc.connect(g); g.connect(out);
-        osc.start(t0); osc.stop(t0 + 0.62);
-      }
+      // Firetruck: one sustained low horn with slight pitch drop
+      tone(280, t0 + 0.0,  1.8, 240);
     }
-
-    // Fade the shared output node out after the full sequence
-    out.gain.setValueAtTime(0.28, ctx.currentTime + 2.3);
-    out.gain.linearRampToValueAtTime(0, ctx.currentTime + 2.5);
   }
 
   // ── Train departure ──────────────────────────────────────────────────────
 
   /**
-   * Steam train pulling away: low rumble building then fading, followed by
-   * a short steam-whistle toot.
+   * Steam train pulling away.
+   * Pattern: short toot · pause · long toooot, with harmonic-rich whistle and low rumble.
    */
   triggerTrainDeparture() {
     if (!this.ctx || !this.masterGain) return;
     const ctx = this.ctx;
     const sr  = ctx.sampleRate;
+    const t0  = ctx.currentTime;
 
-    // 1. Low rumble — filtered noise, ~2 s build then fade
-    const rDur = 3.0;
+    // ── 1. Mechanical rumble — low filtered noise, builds then fades ─────────
+    const rDur = 4.0;
     const rN   = Math.floor(sr * rDur);
     const rBuf = ctx.createBuffer(1, rN, sr);
     const rD   = rBuf.getChannelData(0);
-    for (let i = 0; i < rN; i++) rD[i] = (Math.random() * 2 - 1) * (1 - i / rN * 0.6);
-    const rSrc = ctx.createBufferSource();
+    for (let i = 0; i < rN; i++) rD[i] = Math.random() * 2 - 1;
+    const rSrc  = ctx.createBufferSource();
     rSrc.buffer = rBuf;
     const rFilt = ctx.createBiquadFilter();
-    rFilt.type = 'lowpass';
-    rFilt.frequency.value = 180;
-    rFilt.Q.value = 2.5;
+    rFilt.type  = 'bandpass';
+    rFilt.frequency.value = 80;
+    rFilt.Q.value = 0.8;
     const rGain = ctx.createGain();
-    const t0 = ctx.currentTime;
     rGain.gain.setValueAtTime(0, t0);
-    rGain.gain.linearRampToValueAtTime(0.5, t0 + 0.6);
-    rGain.gain.setValueAtTime(0.5, t0 + 1.4);
+    rGain.gain.linearRampToValueAtTime(0.4, t0 + 0.8);
+    rGain.gain.setValueAtTime(0.4, t0 + 2.0);
     rGain.gain.exponentialRampToValueAtTime(0.001, t0 + rDur);
     rSrc.connect(rFilt); rFilt.connect(rGain); rGain.connect(this.masterGain);
     rSrc.start(t0); rSrc.stop(t0 + rDur + 0.05);
 
-    // 2. Steam whistle toot — two short sine sweeps at t+0.3 s
-    [[880, 740, 0.3], [880, 740, 0.72]].forEach(([fHi, fLo, offset]) => {
-      const osc  = ctx.createOscillator();
-      const g    = ctx.createGain();
-      const tw   = t0 + offset;
-      osc.type   = 'sine';
-      osc.frequency.setValueAtTime(fHi, tw);
-      osc.frequency.exponentialRampToValueAtTime(fLo, tw + 0.28);
-      g.gain.setValueAtTime(0, tw);
-      g.gain.linearRampToValueAtTime(0.22, tw + 0.03);
-      g.gain.setValueAtTime(0.22, tw + 0.22);
-      g.gain.linearRampToValueAtTime(0, tw + 0.32);
-      osc.connect(g); g.connect(this.masterGain);
-      osc.start(tw); osc.stop(tw + 0.35);
-    });
+    // ── 2. Steam whistle — harmonic chord + breathy noise ────────────────────
+    // Classic pattern:  short toot (0.35 s)  · pause  · long toot (0.9 s)
+    const whistleNote = (start: number, dur: number) => {
+      const fundamental = 880;
+      // Layered harmonics: 1st, 2nd, 3rd give the characteristic chime quality
+      [[1.0, 0.55], [2.0, 0.30], [3.0, 0.15]].forEach(([mult, gain]) => {
+        const osc  = ctx.createOscillator();
+        const g    = ctx.createGain();
+        osc.type   = 'sine';
+        // Slight pitch sag at the end gives the steam-pressure-dropping feel
+        osc.frequency.setValueAtTime(fundamental * mult, start);
+        osc.frequency.linearRampToValueAtTime(fundamental * mult * 0.97, start + dur);
+        g.gain.setValueAtTime(0, start);
+        g.gain.linearRampToValueAtTime(gain, start + 0.02);
+        g.gain.setValueAtTime(gain, start + dur - 0.05);
+        g.gain.linearRampToValueAtTime(0, start + dur + 0.04);
+        osc.connect(g); g.connect(this.masterGain);
+        osc.start(start); osc.stop(start + dur + 0.08);
+      });
+      // Breathiness — narrow-band noise centred on fundamental
+      const nN   = Math.floor(sr * (dur + 0.1));
+      const nBuf = ctx.createBuffer(1, nN, sr);
+      const nD   = nBuf.getChannelData(0);
+      for (let i = 0; i < nN; i++) nD[i] = Math.random() * 2 - 1;
+      const nSrc = ctx.createBufferSource();
+      nSrc.buffer = nBuf;
+      const nFilt = ctx.createBiquadFilter();
+      nFilt.type = 'bandpass';
+      nFilt.frequency.value = fundamental * 1.5;
+      nFilt.Q.value = 4;
+      const nGain = ctx.createGain();
+      nGain.gain.setValueAtTime(0, start);
+      nGain.gain.linearRampToValueAtTime(0.06, start + 0.02);
+      nGain.gain.setValueAtTime(0.06, start + dur - 0.04);
+      nGain.gain.linearRampToValueAtTime(0, start + dur + 0.04);
+      nSrc.connect(nFilt); nFilt.connect(nGain); nGain.connect(this.masterGain);
+      nSrc.start(start); nSrc.stop(start + dur + 0.1);
+    };
+
+    // Short toot at ~0.5 s, long toot at ~1.1 s
+    whistleNote(t0 + 0.5, 0.32);
+    whistleNote(t0 + 1.1, 0.90);
   }
 
   // ── Thunder ──────────────────────────────────────────────────────────────

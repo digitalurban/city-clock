@@ -1359,24 +1359,15 @@ function loop(timestamp: number = 0) {
   // Construction site (animated crane)
   layout.drawConstructionSite(ctx, nightAlpha, time);
 
-  // Update and draw cars; trigger siren sounds for emergency vehicles
-  let _hasEmergencyOnScreen = false;
-  let _emergencyTypeOnScreen: 'police' | 'ambulance' | 'firetruck' = 'police';
+  // Update and draw cars; trigger siren once per emergency vehicle
   for (const car of cars) {
     car.update(layout, pedestrians, cars, trafficPhase);
     car.draw(ctx, nightAlpha);
-    if (!_hasEmergencyOnScreen &&
-        (car.carType === 'police' || car.carType === 'ambulance' || car.carType === 'firetruck')) {
-      _hasEmergencyOnScreen = true;
-      _emergencyTypeOnScreen = car.carType as 'police' | 'ambulance' | 'firetruck';
-    }
-  }
-  // Trigger siren at most once every ~3 s while an emergency vehicle is present
-  if (_hasEmergencyOnScreen && audioEngine.isActive && !audioEngine.muted) {
-    const _now = Date.now();
-    if (_now - _lastSirenMs >= 3000) {
-      _lastSirenMs = _now;
-      audioEngine.triggerSiren(_emergencyTypeOnScreen);
+    if (audioEngine.isActive && !audioEngine.muted &&
+        (car.carType === 'police' || car.carType === 'ambulance' || car.carType === 'firetruck') &&
+        !_siredCars.has(car)) {
+      _siredCars.add(car);
+      audioEngine.triggerSiren(car.carType as 'police' | 'ambulance' | 'firetruck');
     }
   }
 
@@ -1920,8 +1911,8 @@ let _cityInfoEnabled = true;
 // Canal loading toast throttle — show at most once every 5 minutes
 let _lastCanalToastMs = 0;
 
-// Siren throttle — trigger at most once every 3 s while emergency vehicle present
-let _lastSirenMs = 0;
+// Siren — fire once per Car object, never again for the same vehicle
+const _siredCars = new WeakSet<Car>();
 
 // Stack management — toasts stack upward from bottom-left
 const _activeToasts: HTMLDivElement[] = [];
