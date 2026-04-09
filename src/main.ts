@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 import { CityLayout } from './city/CityLayout';
 import { Pedestrian, clearPedestrianState } from './entities/Pedestrian';
 import { Car } from './entities/Car';
@@ -103,24 +104,35 @@ let _alarmAudioUnlocked = false;
 /** Create (once) and unlock the <audio> element during a user gesture. */
 function _initAlarmAudio() {
   if (_alarmAudio) return;
-  _alarmAudio = new Audio('./alarm.mp3');
+  // Use import.meta.env.BASE_URL so the path is correct in both dev and
+  // production (GitHub Pages / Capacitor) regardless of how the app is served.
+  const alarmUrl = `${import.meta.env.BASE_URL}alarm.mp3`;
+  console.info('[Alarm] Initialising alarm audio from:', alarmUrl);
+  _alarmAudio = new Audio(alarmUrl);
   _alarmAudio.loop = true;
   _alarmAudio.preload = 'auto';
+  _alarmAudio.onerror = (e) => console.warn('[Alarm] <audio> load error:', e);
+
   // Unlock iOS / browser autoplay: play then immediately pause inside the
   // user-gesture handler so the element is considered "allowed to autoplay".
   _alarmAudio.play().then(() => {
     _alarmAudio!.pause();
     _alarmAudio!.currentTime = 0;
     _alarmAudioUnlocked = true;
-  }).catch(() => {
-    // play() rejected (e.g. no audio file yet) — still mark as attempted
+    console.info('[Alarm] Audio element unlocked and ready.');
+  }).catch((err) => {
+    console.warn('[Alarm] Unlock play() rejected (will retry on ring):', err);
     _alarmAudioUnlocked = true;
   });
 }
 
 /** Start looping alarm.mp3. */
 function ringAlarm() {
-  if (!_alarmAudio) return;
+  if (!_alarmAudio) {
+    console.warn('[Alarm] ringAlarm() called but _alarmAudio is null — was alarm Set clicked?');
+    return;
+  }
+  console.info('[Alarm] Ringing — src:', _alarmAudio.src, 'readyState:', _alarmAudio.readyState);
   _alarmAudio.currentTime = 0;
   _alarmAudio.play().catch(err => {
     console.warn('[Alarm] audio.play() failed:', err);
