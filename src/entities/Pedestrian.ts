@@ -121,6 +121,11 @@ export class Pedestrian {
   isBrowsingMarket: boolean = false;
   marketBrowseTimer: number = 0;
 
+  // Visit-completion signals — set when a visit ends, cleared by main.ts each frame
+  justCompletedVisit: boolean = false;
+  lastVisitVenueType: string | null = null; // 'cafe'|'bar'|'shop'|'bookshop'|'market'
+  lastVisitVenueName: string | null = null; // venue name, e.g. 'Flowers', 'Market'
+
   // Garden presence — stepping outside while at home
   isInGarden: boolean = false;
   gardenTimer: number = 0;
@@ -713,6 +718,9 @@ export class Pedestrian {
         if (this.sitTimer >= this.sitDuration) {
           this.isSitting = false;
           this.hasFood = Math.random() < 0.4;
+          this.justCompletedVisit = true;
+          this.lastVisitVenueType = 'cafe';
+          this.lastVisitVenueName = null;
           this.thoughtBubble = 'heart';
           this.thoughtTimer = 120;
           const wp = layout.getRandomSidewalkWaypoint();
@@ -784,6 +792,9 @@ export class Pedestrian {
         const stallDuration = 180 + Math.random() * 240; // ~3-7 seconds per stall
         if (this.marketBrowseTimer >= stallDuration || this.clockTarget || isDancing) {
           this.isBrowsingMarket = false;
+          this.justCompletedVisit = true;
+          this.lastVisitVenueType = 'market';
+          this.lastVisitVenueName = null;
           const wp = layout.getRandomSidewalkWaypoint();
           this.waypointX = wp.x;
           this.waypointY = wp.y;
@@ -867,6 +878,9 @@ export class Pedestrian {
             if (queue.length === 0) venueQueues.delete(this.queueVenue);
             this.isQueuing = false;
             this.hasBag = true;
+            this.justCompletedVisit = true;
+            this.lastVisitVenueType = this.queueVenue.type;
+            this.lastVisitVenueName = this.queueVenue.name;
             this.thoughtBubble = 'happy';
             this.thoughtTimer = 100;
             this.queueVenue = null;

@@ -159,6 +159,125 @@ export class AudioEngine {
     this.birdTimerHandle = setTimeout(() => this.scheduleBirds(), delay);
   }
 
+  // ── Sirens ───────────────────────────────────────────────────────────────
+
+  /**
+   * One "wee-woo" siren cycle (~2.4 s).
+   * Police: classic two-tone (hi→lo→hi); ambulance: slower sweep; firetruck: airhorn blasts.
+   */
+  triggerSiren(type: 'police' | 'ambulance' | 'firetruck' = 'police') {
+    if (!this.ctx || !this.masterGain) return;
+    const ctx = this.ctx;
+    const out = ctx.createGain();
+    out.gain.value = 0.28;
+    out.connect(this.masterGain);
+
+    if (type === 'police') {
+      // Two-tone warble: 960 Hz and 770 Hz, alternating every 0.4 s, 3 pairs
+      const pairs = 3;
+      for (let i = 0; i < pairs; i++) {
+        [960, 770].forEach((f, j) => {
+          const t0 = ctx.currentTime + (i * 0.8) + j * 0.4;
+          const osc = ctx.createOscillator();
+          const g   = ctx.createGain();
+          osc.type = 'sawtooth';
+          osc.frequency.setValueAtTime(f, t0);
+          g.gain.setValueAtTime(0, t0);
+          g.gain.linearRampToValueAtTime(1, t0 + 0.03);
+          g.gain.setValueAtTime(1, t0 + 0.34);
+          g.gain.linearRampToValueAtTime(0, t0 + 0.4);
+          osc.connect(g); g.connect(out);
+          osc.start(t0); osc.stop(t0 + 0.42);
+        });
+      }
+    } else if (type === 'ambulance') {
+      // Slow continuous sweep between 580 Hz and 1100 Hz over 2.4 s, two sweeps
+      for (let i = 0; i < 2; i++) {
+        const t0 = ctx.currentTime + i * 1.2;
+        const osc = ctx.createOscillator();
+        const g   = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(580, t0);
+        osc.frequency.linearRampToValueAtTime(1100, t0 + 0.6);
+        osc.frequency.linearRampToValueAtTime(580,  t0 + 1.2);
+        g.gain.setValueAtTime(0, t0);
+        g.gain.linearRampToValueAtTime(1, t0 + 0.05);
+        g.gain.setValueAtTime(1, t0 + 1.1);
+        g.gain.linearRampToValueAtTime(0, t0 + 1.2);
+        osc.connect(g); g.connect(out);
+        osc.start(t0); osc.stop(t0 + 1.22);
+      }
+    } else {
+      // Firetruck: three short airhorn blasts (low, brassy)
+      for (let i = 0; i < 3; i++) {
+        const t0 = ctx.currentTime + i * 0.7;
+        const osc = ctx.createOscillator();
+        const g   = ctx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.value = 220 + i * 20;
+        g.gain.setValueAtTime(0, t0);
+        g.gain.linearRampToValueAtTime(1, t0 + 0.04);
+        g.gain.setValueAtTime(1, t0 + 0.45);
+        g.gain.linearRampToValueAtTime(0, t0 + 0.6);
+        osc.connect(g); g.connect(out);
+        osc.start(t0); osc.stop(t0 + 0.62);
+      }
+    }
+
+    // Fade the shared output node out after the full sequence
+    out.gain.setValueAtTime(0.28, ctx.currentTime + 2.3);
+    out.gain.linearRampToValueAtTime(0, ctx.currentTime + 2.5);
+  }
+
+  // ── Train departure ──────────────────────────────────────────────────────
+
+  /**
+   * Steam train pulling away: low rumble building then fading, followed by
+   * a short steam-whistle toot.
+   */
+  triggerTrainDeparture() {
+    if (!this.ctx || !this.masterGain) return;
+    const ctx = this.ctx;
+    const sr  = ctx.sampleRate;
+
+    // 1. Low rumble — filtered noise, ~2 s build then fade
+    const rDur = 3.0;
+    const rN   = Math.floor(sr * rDur);
+    const rBuf = ctx.createBuffer(1, rN, sr);
+    const rD   = rBuf.getChannelData(0);
+    for (let i = 0; i < rN; i++) rD[i] = (Math.random() * 2 - 1) * (1 - i / rN * 0.6);
+    const rSrc = ctx.createBufferSource();
+    rSrc.buffer = rBuf;
+    const rFilt = ctx.createBiquadFilter();
+    rFilt.type = 'lowpass';
+    rFilt.frequency.value = 180;
+    rFilt.Q.value = 2.5;
+    const rGain = ctx.createGain();
+    const t0 = ctx.currentTime;
+    rGain.gain.setValueAtTime(0, t0);
+    rGain.gain.linearRampToValueAtTime(0.5, t0 + 0.6);
+    rGain.gain.setValueAtTime(0.5, t0 + 1.4);
+    rGain.gain.exponentialRampToValueAtTime(0.001, t0 + rDur);
+    rSrc.connect(rFilt); rFilt.connect(rGain); rGain.connect(this.masterGain);
+    rSrc.start(t0); rSrc.stop(t0 + rDur + 0.05);
+
+    // 2. Steam whistle toot — two short sine sweeps at t+0.3 s
+    [[880, 740, 0.3], [880, 740, 0.72]].forEach(([fHi, fLo, offset]) => {
+      const osc  = ctx.createOscillator();
+      const g    = ctx.createGain();
+      const tw   = t0 + offset;
+      osc.type   = 'sine';
+      osc.frequency.setValueAtTime(fHi, tw);
+      osc.frequency.exponentialRampToValueAtTime(fLo, tw + 0.28);
+      g.gain.setValueAtTime(0, tw);
+      g.gain.linearRampToValueAtTime(0.22, tw + 0.03);
+      g.gain.setValueAtTime(0.22, tw + 0.22);
+      g.gain.linearRampToValueAtTime(0, tw + 0.32);
+      osc.connect(g); g.connect(this.masterGain);
+      osc.start(tw); osc.stop(tw + 0.35);
+    });
+  }
+
   // ── Thunder ──────────────────────────────────────────────────────────────
 
   triggerThunder(delay = 0) {

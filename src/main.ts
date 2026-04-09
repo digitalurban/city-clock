@@ -407,6 +407,106 @@ canvas.addEventListener('touchend', (e) => {
   }
 }, { passive: true });
 
+// ==================== City Stats Panel ====================
+let _statsPanelEnabled = false;
+let _statsPanelEl: HTMLDivElement | null = null;
+let _statsLastUpdate = 0;
+
+// Daily counters — reset at midnight, show realistic per-day totals
+const _cityStats = {
+  coffeesSold:     0,
+  pintsSold:       0,
+  booksSold:       0,
+  flowersSold:     0,
+  trainPassengers: 0,
+};
+let _marketVegStock = 100;       // 0–100 %, depletes as market is browsed, resets daily
+let _lastStatsResetDay = -1;     // calendar day of last full reset
+
+// Per-person daily purchase allowances tracked via WeakMap — no Pedestrian changes needed.
+// Each entry: { day: number; count: number }
+// Limits: café→2 per day, bar/bookshop/flowers→1 per day, each only in relevant hours.
+type PedVisitEntry = Partial<Record<string, { day: number; count: number }>>;
+const _pedVisitCount = new WeakMap<(typeof pedestrians)[0], PedVisitEntry>();
+
+const WEATHER_LABEL: Record<string, string> = {
+  clear: '☀️ Clear', cloudy: '⛅ Cloudy', drizzle: '🌦 Drizzle',
+  rain: '🌧 Rain', heavy_rain: '🌧 Heavy rain', snow: '❄️ Snow',
+  heavy_snow: '❄️ Heavy snow', fog: '🌫 Fog', thunderstorm: '⛈ Storm', hail: '🌨 Hail',
+};
+
+function createStatsPanel() {
+  const el = document.createElement('div');
+  el.id = 'city-stats-panel';
+  el.style.cssText = `
+    display: none; position: fixed; top: 16px; right: 16px; z-index: 150;
+    background: rgba(10, 12, 22, 0.78); color: #ccd6f0; padding: 10px 14px;
+    border-radius: 10px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', monospace;
+    font-size: 12px; line-height: 1.9; min-width: 160px;
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    box-shadow: 0 2px 12px rgba(0,0,0,0.45);
+    pointer-events: none;
+  `;
+  document.body.appendChild(el);
+  _statsPanelEl = el;
+}
+
+function updateStatsPanel() {
+  if (!_statsPanelEnabled || !_statsPanelEl) return;
+  const now = Date.now();
+  if (now - _statsLastUpdate < 1000) return; // update at most once per second
+  _statsLastUpdate = now;
+
+  // Reset all daily counters at midnight
+  const todayNum = new Date().getDate();
+  if (todayNum !== _lastStatsResetDay) {
+    _cityStats.coffeesSold = 0;
+    _cityStats.pintsSold   = 0;
+    _cityStats.booksSold   = 0;
+    _cityStats.flowersSold = 0;
+    _cityStats.trainPassengers = 0;
+    _marketVegStock   = 100;
+    _lastStatsResetDay = todayNum;
+  }
+
+  // Live occupancy counts (fast scan once per second)
+  const pb = layout?.plazaBounds;
+  let inPlaza = 0;
+  let atHome  = 0;
+  if (pb) {
+    for (const p of pedestrians) {
+      if (p.x >= pb.x && p.x <= pb.x + pb.w && p.y >= pb.y && p.y <= pb.y + pb.h) inPlaza++;
+      if (p.isAtHome) atHome++;
+    }
+  }
+
+  const smokingCount   = layout?.canalFactories?.filter(f => f.smokeActive).length ?? 0;
+  const totalFactories = layout?.canalFactories?.length ?? 0;
+  const weatherLabel   = WEATHER_LABEL[weather?.type ?? ''] ?? weather?.type ?? '—';
+
+  function row(icon: string, label: string, value: string) {
+    return `<div style="display:flex;justify-content:space-between;gap:16px;">` +
+      `<span style="color:#8aa0c0;">${icon} ${label}</span>` +
+      `<span style="color:#e0eaff;font-weight:500;">${value}</span></div>`;
+  }
+
+  _statsPanelEl.innerHTML = [
+    `<div style="font-size:11px;font-weight:600;letter-spacing:0.06em;color:#7a9cc0;margin-bottom:4px;">CITY STATS — TODAY</div>`,
+    row('🎭', 'In the plaza',      String(inPlaza)),
+    row('🏠', 'People at home',    String(atHome)),
+    row('🚂', 'Train passengers',  String(_cityStats.trainPassengers)),
+    `<div style="border-top:1px solid #2a3a5a;margin:5px 0;"></div>`,
+    row('☕', 'Coffees sold',      String(_cityStats.coffeesSold)),
+    row('🍺', 'Pints sold',        String(_cityStats.pintsSold)),
+    row('📚', 'Books sold',        String(_cityStats.booksSold)),
+    row('💐', 'Flowers sold',      String(_cityStats.flowersSold)),
+    row('🥦', 'Market veg stock',  `${_marketVegStock}%`),
+    `<div style="border-top:1px solid #2a3a5a;margin:5px 0;"></div>`,
+    row('🏭', 'Mills operating',   `${smokingCount}/${totalFactories}`),
+    row('🌦', 'Weather',           weatherLabel),
+  ].join('');
+}
+
 // ==================== 12-Hour Forecast Overlay ====================
 let forecastOverlay: HTMLDivElement | null = null;
 let lastForecastVersion = -1;
@@ -517,9 +617,9 @@ function createOptionsUI() {
     <div style="margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between;">
       <span>Sound</span>
       <button id="audio-toggle" style="
-        background: #4a9eff; color: white; border: none; border-radius: 20px;
+        background: #555; color: #aaa; border: none; border-radius: 20px;
         padding: 4px 14px; cursor: pointer; font-size: 13px; font-weight: bold;
-        min-width: 64px; transition: background 0.2s;">🔊 On</button>
+        min-width: 64px; transition: background 0.2s;">🔇 Off</button>
     </div>
     <div style="margin-bottom: 10px;">
       <label style="display: flex; justify-content: space-between; margin-bottom: 4px;">
@@ -550,6 +650,13 @@ function createOptionsUI() {
         background: #2a7a48; color: #d4f5e0; border: none; border-radius: 20px;
         padding: 4px 14px; cursor: pointer; font-size: 13px; font-weight: bold;
         min-width: 64px; transition: background 0.2s;">🏙 On</button>
+    </div>
+    <div style="margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between;">
+      <span>Stats Panel</span>
+      <button id="stats-panel-toggle" style="
+        background: #444; color: #aaa; border: none; border-radius: 20px;
+        padding: 4px 14px; cursor: pointer; font-size: 13px; font-weight: bold;
+        min-width: 64px; transition: background 0.2s;">📊 Off</button>
     </div>
     <div style="margin-bottom: 6px;">
       <label style="display: flex; justify-content: space-between; margin-bottom: 4px;">
@@ -597,6 +704,19 @@ function createOptionsUI() {
       for (const t of [..._activeToasts]) {
         t.classList.remove('city-toast--visible');
       }
+    }
+  });
+
+  // Stats Panel toggle handler
+  const statsPanelToggle = panel.querySelector('#stats-panel-toggle') as HTMLButtonElement;
+  statsPanelToggle.addEventListener('click', () => {
+    _statsPanelEnabled = !_statsPanelEnabled;
+    statsPanelToggle.style.background = _statsPanelEnabled ? '#2a5a8a' : '#444';
+    statsPanelToggle.style.color = _statsPanelEnabled ? '#d0e8ff' : '#aaa';
+    statsPanelToggle.textContent = _statsPanelEnabled ? '📊 On' : '📊 Off';
+    if (_statsPanelEl) {
+      _statsPanelEl.style.display = _statsPanelEnabled ? 'block' : 'none';
+      if (_statsPanelEnabled) { _statsLastUpdate = 0; updateStatsPanel(); }
     }
   });
 
@@ -678,6 +798,7 @@ function createOptionsUI() {
     audioEngine.setMuted(nowMuted);
     audioToggleBtn.textContent = nowMuted ? '🔇 Off' : '🔊 On';
     audioToggleBtn.style.background = nowMuted ? '#555' : '#4a9eff';
+    audioToggleBtn.style.color = nowMuted ? '#aaa' : 'white';
   });
 
   // Prevent canvas interactions when interacting with sliders
@@ -1050,23 +1171,28 @@ function loop(timestamp: number = 0) {
   // Refresh active chimney sources each frame so smoke stops/starts with factory state
   factorySmoke.setSources(layout.getActiveFactoryChimneyPositions());
 
-  // Canal loading toast
+  // Canal loading toast — throttled to at most once every 5 minutes
   if (layout.canalBoatJustLoaded) {
     layout.canalBoatJustLoaded = false;
-    const msgs = [
-      ['⚙️ Canal Wharf', 'A narrowboat has moored up and is taking on goods from the factory.'],
-      ['🚢 Canal loading', 'Cargo loaded — the narrowboat continues on its way down the canal.'],
-      ['🏭 Factory dispatch', 'Goods from the canalside mill are being loaded onto a waiting narrowboat.'],
-      ['⚓ Wharf activity', 'A narrowboat is collecting the latest batch of goods from the factory yard.'],
-    ];
-    const [title, body] = msgs[Math.floor(Math.random() * msgs.length)];
-    showToast(title, body, 6000);
+    const now = Date.now();
+    if (now - _lastCanalToastMs >= 5 * 60_000) {
+      _lastCanalToastMs = now;
+      const msgs = [
+        ['⚙️ Canal Wharf', 'A narrowboat has moored up and is taking on goods from the factory.'],
+        ['🚢 Canal loading', 'Cargo loaded — the narrowboat continues on its way down the canal.'],
+        ['🏭 Factory dispatch', 'Goods from the canalside mill are being loaded onto a waiting narrowboat.'],
+        ['⚓ Wharf activity', 'A narrowboat is collecting the latest batch of goods from the factory yard.'],
+      ];
+      const [title, body] = msgs[Math.floor(Math.random() * msgs.length)];
+      showToast(title, body, 6000);
+    }
   }
 
   // When train arrives: send 3–5 waiting pedestrians to platform, then board
   if (layout.trainJustArrived) {
     // 1. Spawn 3-5 new arrivals from the train onto the platform, heading into city
     const arrivalCount = 3 + Math.floor(Math.random() * 3);
+    _cityStats.trainPassengers += arrivalCount;
     for (let i = 0; i < arrivalCount; i++) {
       const p = new Pedestrian(layout, pedestrians.length, CLOCK_ELIGIBLE_COUNT);
       const plat = layout.getRandomPlatformPosition();
@@ -1166,6 +1292,7 @@ function loop(timestamp: number = 0) {
 
   if (layout.branchTrainJustArrived) {
     const arrivalCount = 2 + Math.floor(Math.random() * 3);
+    _cityStats.trainPassengers += arrivalCount;
     for (let i = 0; i < arrivalCount; i++) {
       const p = new Pedestrian(layout, pedestrians.length, CLOCK_ELIGIBLE_COUNT);
       const plat = layout.getRandomBranchPlatformPosition();
@@ -1232,10 +1359,25 @@ function loop(timestamp: number = 0) {
   // Construction site (animated crane)
   layout.drawConstructionSite(ctx, nightAlpha, time);
 
-  // Update and draw cars
+  // Update and draw cars; trigger siren sounds for emergency vehicles
+  let _hasEmergencyOnScreen = false;
+  let _emergencyTypeOnScreen: 'police' | 'ambulance' | 'firetruck' = 'police';
   for (const car of cars) {
     car.update(layout, pedestrians, cars, trafficPhase);
     car.draw(ctx, nightAlpha);
+    if (!_hasEmergencyOnScreen &&
+        (car.carType === 'police' || car.carType === 'ambulance' || car.carType === 'firetruck')) {
+      _hasEmergencyOnScreen = true;
+      _emergencyTypeOnScreen = car.carType as 'police' | 'ambulance' | 'firetruck';
+    }
+  }
+  // Trigger siren at most once every ~3 s while an emergency vehicle is present
+  if (_hasEmergencyOnScreen && audioEngine.isActive && !audioEngine.muted) {
+    const _now = Date.now();
+    if (_now - _lastSirenMs >= 3000) {
+      _lastSirenMs = _now;
+      audioEngine.triggerSiren(_emergencyTypeOnScreen);
+    }
   }
 
   // Update and draw dropped packages
@@ -1349,6 +1491,42 @@ function loop(timestamp: number = 0) {
       cars,
       pedGrid ?? undefined
     );
+
+    // Accumulate sales counters from completed venue visits.
+    // Each person is allowed a small daily quota per venue type, gated by opening hours,
+    // so 24-hour totals stay realistic rather than inflating into the thousands.
+    if (p.justCompletedVisit) {
+      p.justCompletedVisit = false;
+      const vt  = p.lastVisitVenueType ?? '';
+      const vn  = (p.lastVisitVenueName ?? '').toLowerCase();
+      const hr  = new Date().getHours();
+      const day = new Date().getDate();
+
+      // Helper: record one purchase against this person's daily quota for key.
+      // Returns true if the purchase was within quota and should count.
+      const tryCount = (key: string, limit: number): boolean => {
+        let map = _pedVisitCount.get(p);
+        if (!map) { map = {}; _pedVisitCount.set(p, map); }
+        let e = map[key];
+        if (!e || e.day !== day) { e = { day, count: 0 }; map[key] = e; }
+        if (e.count >= limit) return false;
+        e.count++;
+        return true;
+      };
+
+      if ((vt === 'cafe' || vt === 'restaurant') && hr >= 6 && hr < 21) {
+        if (tryCount('cafe', 2)) _cityStats.coffeesSold++;         // up to 2 coffees per person per day
+      } else if (vt === 'bar' && hr >= 17 && hr < 24) {
+        if (tryCount('bar', 1)) _cityStats.pintsSold++;            // 1 round per person per evening
+      } else if (vt === 'bookshop' && hr >= 9 && hr < 19) {
+        if (tryCount('bookshop', 1)) _cityStats.booksSold++;       // 1 book per person per day
+      } else if (vt === 'shop' && vn.includes('flower') && hr >= 8 && hr < 19) {
+        if (tryCount('flowers', 1)) _cityStats.flowersSold++;      // 1 bunch per person per day
+      } else if (vt === 'market') {
+        _marketVegStock = Math.max(0, _marketVegStock - 3);        // market veg depletes freely
+      }
+    }
+
     // Skip draw if off-screen (culling) — update still runs for correct simulation
     if (p.x >= visLeft && p.x <= visRight && p.y >= visTop && p.y <= visBottom) {
       p.draw(ctx, nightAlpha, weather.intensity, isDancing, zoom);
@@ -1482,6 +1660,9 @@ function loop(timestamp: number = 0) {
     rebuildCachedGradients();
   }
 
+
+  // Update stats panel (throttled to 1/sec inside the function)
+  updateStatsPanel();
 
   // Update audio
   if (audioEngine.isActive) {
@@ -1735,6 +1916,12 @@ document.head.appendChild(_toastStyle);
 
 // City info enabled flag — controlled from settings panel (off by default)
 let _cityInfoEnabled = true;
+
+// Canal loading toast throttle — show at most once every 5 minutes
+let _lastCanalToastMs = 0;
+
+// Siren throttle — trigger at most once every 3 s while emergency vehicle present
+let _lastSirenMs = 0;
 
 // Stack management — toasts stack upward from bottom-left
 const _activeToasts: HTMLDivElement[] = [];
@@ -2011,11 +2198,13 @@ function _checkTrainDepartures() {
     const dest = MAIN_LINE_DESTINATIONS[_mainLineDestIdx % MAIN_LINE_DESTINATIONS.length];
     _mainLineDestIdx++;
     showToast('🚂 Train departing', `Central Station: The service to ${dest} is now departing. Next service in 3–5 min.`, 8000);
+    if (audioEngine.isActive && !audioEngine.muted) audioEngine.triggerTrainDeparture();
   }
   if (layout.branchTrainJustStartedDeparting) {
     const dest = BRANCH_LINE_DESTINATIONS[_branchLineDestIdx % BRANCH_LINE_DESTINATIONS.length];
     _branchLineDestIdx++;
     showToast('🚃 Branch line departing', `West St: The service to ${dest} is now departing. Next service in 3–5 min.`, 8000);
+    if (audioEngine.isActive && !audioEngine.muted) audioEngine.triggerTrainDeparture();
   }
 }
 
@@ -2034,5 +2223,6 @@ const _origWeatherUpdate = weather.update.bind(weather);
 
 createOptionsUI();
 createForecastOverlay();
+createStatsPanel();
 resize();
 requestAnimationFrame(loop);
