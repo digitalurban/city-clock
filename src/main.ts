@@ -93,99 +93,64 @@ let alarmTime: string | null = null;
 let isAlarmActive = false;
 let isDancing = false;
 
-// Alarm audio — played via Web Audio API so it is never blocked by the browser
-// autoplay policy.  The AudioContext is created during the "Set" button click
-// (a user gesture) and kept alive; nodes on it can be started from any callback.
-let alarmAudioCtx: AudioContext | null = null;
-let alarmBuffer: AudioBuffer | null = null;       // decoded alarm.mp3
-let alarmSourceNode: AudioBufferSourceNode | null = null; // currently playing node
+// Alarm audio — uses an <audio> element for the MP3 so it is immune to
+// AudioContext suspension (the root cause of intermittent silent alarms).
+// The element is created and unlocked during the "Set" button click (user
+// gesture); when the alarm fires it simply calls .play() on the element.
+let _alarmAudio: HTMLAudioElement | null = null;
+let _alarmAudioUnlocked = false;
 
-/** Fetch and decode alarm.mp3 into the Web Audio buffer (called after ctx is created). */
-async function loadAlarmBuffer() {
-  if (!alarmAudioCtx || alarmBuffer) return;
-  try {
-    const resp = await fetch('./alarm.mp3');
-    if (!resp.ok) {
-      throw new Error(`HTTP ${resp.status} ${resp.statusText} — could not load alarm.mp3`);
-    }
-    const ab = await resp.arrayBuffer();
-    alarmBuffer = await alarmAudioCtx.decodeAudioData(ab);
-  } catch (err) {
-    console.warn('[Alarm] Failed to load alarm.mp3; will fall back to beep:', err);
-  }
-}
-
-/** Start looping alarm.mp3 (or beeps if the file isn't available). */
-async function ringAlarm() {
-  if (!alarmAudioCtx) return;
-  const ctx = alarmAudioCtx;
-  if (ctx.state === 'suspended') ctx.resume();
-
-  // If the buffer hasn't loaded yet (e.g. still in-flight), attempt one more load now.
-  if (!alarmBuffer) {
-    await loadAlarmBuffer();
-  }
-
-  if (alarmBuffer) {
-    // Play the actual alarm.mp3 in a loop via AudioBufferSourceNode
-    const src = ctx.createBufferSource();
-    src.buffer = alarmBuffer;
-    src.loop = true;
-    src.connect(ctx.destination);
-    src.start();
-    alarmSourceNode = src;
-  } else {
-    // Fallback: synthesised beep pattern
-    ringAlarmBeepBurst();
-  }
-}
-
-let alarmBeepHandle: ReturnType<typeof setTimeout> | null = null;
-
-function ringAlarmBeepBurst() {
-  if (!isAlarmActive || !alarmAudioCtx) return;
-  const ctx = alarmAudioCtx;
-  const t = ctx.currentTime;
-  [[880, 0], [1100, 0.22]].forEach(([freq, offset]) => {
-    const osc = ctx.createOscillator();
-    const g = ctx.createGain();
-    osc.type = 'sine';
-    osc.frequency.value = freq;
-    g.gain.setValueAtTime(0, t + offset);
-    g.gain.linearRampToValueAtTime(0.45, t + offset + 0.02);
-    g.gain.exponentialRampToValueAtTime(0.001, t + offset + 0.18);
-    osc.connect(g); g.connect(ctx.destination);
-    osc.start(t + offset); osc.stop(t + offset + 0.2);
+/** Create (once) and unlock the <audio> element during a user gesture. */
+function _initAlarmAudio() {
+  if (_alarmAudio) return;
+  _alarmAudio = new Audio('./alarm.mp3');
+  _alarmAudio.loop = true;
+  _alarmAudio.preload = 'auto';
+  // Unlock iOS / browser autoplay: play then immediately pause inside the
+  // user-gesture handler so the element is considered "allowed to autoplay".
+  _alarmAudio.play().then(() => {
+    _alarmAudio!.pause();
+    _alarmAudio!.currentTime = 0;
+    _alarmAudioUnlocked = true;
+  }).catch(() => {
+    // play() rejected (e.g. no audio file yet) — still mark as attempted
+    _alarmAudioUnlocked = true;
   });
-  alarmBeepHandle = setTimeout(ringAlarmBeepBurst, 900);
 }
 
-/** Stop the alarm (both mp3 and beep fallback). */
+/** Start looping alarm.mp3. */
+function ringAlarm() {
+  if (!_alarmAudio) return;
+  _alarmAudio.currentTime = 0;
+  _alarmAudio.play().catch(err => {
+    console.warn('[Alarm] audio.play() failed:', err);
+  });
+}
+
+/** Stop the alarm. */
 function stopAlarmRing() {
-  if (alarmSourceNode) {
-    try { alarmSourceNode.stop(); } catch (_) {}
-    alarmSourceNode = null;
+  if (_alarmAudio) {
+    _alarmAudio.pause();
+    _alarmAudio.currentTime = 0;
   }
-  if (alarmBeepHandle !== null) { clearTimeout(alarmBeepHandle); alarmBeepHandle = null; }
 }
 
 /**
  * Called during the "Set" button click (user gesture).
- * Creates the AudioContext, starts loading alarm.mp3, and plays a confirmation chirp.
+ * Initialises the <audio> element and plays a quick confirmation chirp
+ * via Web Audio so the chirp itself doesn't depend on the mp3.
  */
 function playAlarmSetBeep() {
+  // Initialise / unlock the alarm audio element inside this user gesture
+  _initAlarmAudio();
+
+  // Confirmation chirp via a fresh one-shot AudioContext (avoids any
+  // suspension issues — it's created and used immediately, then GC'd)
   try {
     const AC = window.AudioContext || (window as any).webkitAudioContext;
     if (!AC) return;
-    if (!alarmAudioCtx) {
-      alarmAudioCtx = new AC();
-      loadAlarmBuffer(); // kick off async fetch+decode while context is warm
-    }
-    if (alarmAudioCtx.state === 'suspended') alarmAudioCtx.resume();
-    const ctx = alarmAudioCtx;
+    const ctx = new AC();
     const t = ctx.currentTime;
-
-    // Quick ascending two-tone confirmation chirp
     const osc = ctx.createOscillator();
     const g = ctx.createGain();
     osc.type = 'sine';
@@ -195,6 +160,8 @@ function playAlarmSetBeep() {
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.28);
     osc.connect(g); g.connect(ctx.destination);
     osc.start(t); osc.stop(t + 0.3);
+    // Close the one-shot context after the chirp finishes
+    setTimeout(() => ctx.close().catch(() => {}), 500);
   } catch (_) {}
 }
 
