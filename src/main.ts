@@ -1,4 +1,7 @@
 /// <reference types="vite/client" />
+// Import alarm.mp3 as a Vite asset so the URL is always correct regardless
+// of base path, deployment environment or Capacitor wrapping.
+import alarmMp3Url from './assets/alarm.mp3?url';
 import { CityLayout } from './city/CityLayout';
 import { Pedestrian, clearPedestrianState } from './entities/Pedestrian';
 import { Car } from './entities/Car';
@@ -104,11 +107,10 @@ let _alarmAudioUnlocked = false;
 /** Create (once) and unlock the <audio> element during a user gesture. */
 function _initAlarmAudio() {
   if (_alarmAudio) return;
-  // Use import.meta.env.BASE_URL so the path is correct in both dev and
-  // production (GitHub Pages / Capacitor) regardless of how the app is served.
-  const alarmUrl = `${import.meta.env.BASE_URL}alarm.mp3`;
-  console.info('[Alarm] Initialising alarm audio from:', alarmUrl);
-  _alarmAudio = new Audio(alarmUrl);
+  // alarmMp3Url is resolved by Vite at build time — guaranteed correct URL
+  // regardless of base path, GitHub Pages subdirectory or Capacitor wrapping.
+  console.info('[Alarm] Initialising alarm audio from:', alarmMp3Url);
+  _alarmAudio = new Audio(alarmMp3Url);
   _alarmAudio.loop = true;
   _alarmAudio.preload = 'auto';
   _alarmAudio.onerror = (e) => console.warn('[Alarm] <audio> load error:', e);
