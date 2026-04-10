@@ -394,4 +394,7 @@ export class AudioEngine {
   get isActive(): boolean {
     return this.initialised && this.ctx !== null && this.ctx.state !== 'closed';
   }
+
+  /** Expose the AudioContext so external callers (e.g. alarm) can reuse it. */
+  get audioContext(): AudioContext | null { return this.ctx; }
 }

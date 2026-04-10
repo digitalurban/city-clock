@@ -97,85 +97,106 @@ let alarmTime: string | null = null;
 let isAlarmActive = false;
 let isDancing = false;
 
-// Alarm audio — uses an <audio> element for the MP3 so it is immune to
-// AudioContext suspension (the root cause of intermittent silent alarms).
-// The element is created and unlocked during the "Set" button click (user
-// gesture); when the alarm fires it simply calls .play() on the element.
-let _alarmAudio: HTMLAudioElement | null = null;
-let _alarmAudioUnlocked = false;
+// ── Alarm audio ─────────────────────────────────────────────────────────────
+// Uses the AudioEngine's own AudioContext (resumed from the user gesture when
+// the user clicks "Set") so it is never blocked by browser autoplay policy.
+// The MP3 is fetched once via the Vite asset URL and decoded into an
+// AudioBuffer; each ring creates a new looping BufferSourceNode connected
+// directly to ctx.destination (bypasses the master-gain mute control).
 
-/** Create (once) and unlock the <audio> element during a user gesture. */
-function _initAlarmAudio() {
-  if (_alarmAudio) return;
-  // alarmMp3Url is resolved by Vite at build time — guaranteed correct URL
-  // regardless of base path, GitHub Pages subdirectory or Capacitor wrapping.
-  console.info('[Alarm] Initialising alarm audio from:', alarmMp3Url);
-  _alarmAudio = new Audio(alarmMp3Url);
-  _alarmAudio.loop = true;
-  _alarmAudio.preload = 'auto';
-  _alarmAudio.onerror = (e) => console.warn('[Alarm] <audio> load error:', e);
+let _alarmBuffer: AudioBuffer | null = null;
+let _alarmSource: AudioBufferSourceNode | null = null;
+let _alarmLoadPromise: Promise<void> | null = null;
 
-  // Unlock iOS / browser autoplay: play then immediately pause inside the
-  // user-gesture handler so the element is considered "allowed to autoplay".
-  _alarmAudio.play().then(() => {
-    _alarmAudio!.pause();
-    _alarmAudio!.currentTime = 0;
-    _alarmAudioUnlocked = true;
-    console.info('[Alarm] Audio element unlocked and ready.');
-  }).catch((err) => {
-    console.warn('[Alarm] Unlock play() rejected (will retry on ring):', err);
-    _alarmAudioUnlocked = true;
-  });
+/** Fetch + decode alarm.mp3 into an AudioBuffer (idempotent). */
+async function _loadAlarmBuffer(): Promise<void> {
+  if (_alarmBuffer) return; // already decoded
+  if (_alarmLoadPromise) return _alarmLoadPromise; // decode in progress
+
+  _alarmLoadPromise = (async () => {
+    const ac = audioEngine.audioContext;
+    if (!ac) { console.warn('[Alarm] Cannot load — AudioContext not yet created'); return; }
+    try {
+      console.info('[Alarm] Fetching MP3 from:', alarmMp3Url);
+      const resp = await fetch(alarmMp3Url);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
+      const arrayBuf = await resp.arrayBuffer();
+      _alarmBuffer = await ac.decodeAudioData(arrayBuf);
+      console.info('[Alarm] Buffer decoded — duration:', _alarmBuffer.duration.toFixed(1), 's');
+    } catch (e) {
+      console.warn('[Alarm] Failed to decode alarm MP3:', e);
+      _alarmLoadPromise = null; // allow retry
+    }
+  })();
+
+  return _alarmLoadPromise;
 }
 
-/** Start looping alarm.mp3. */
+/** Start the looping alarm. Retries automatically until the buffer is ready. */
 function ringAlarm() {
-  if (!_alarmAudio) {
-    console.warn('[Alarm] ringAlarm() called but _alarmAudio is null — was alarm Set clicked?');
+  const ac = audioEngine.audioContext;
+  if (!ac) { console.warn('[Alarm] ringAlarm — no AudioContext'); return; }
+
+  if (!_alarmBuffer) {
+    // Buffer not decoded yet — wait a moment and retry
+    console.info('[Alarm] Buffer not ready, retrying in 300 ms…');
+    setTimeout(ringAlarm, 300);
     return;
   }
-  console.info('[Alarm] Ringing — src:', _alarmAudio.src, 'readyState:', _alarmAudio.readyState);
-  _alarmAudio.currentTime = 0;
-  _alarmAudio.play().catch(err => {
-    console.warn('[Alarm] audio.play() failed:', err);
-  });
+
+  stopAlarmRing(); // stop any previous source node
+
+  // Resume the context in case the browser suspended it while the tab was in
+  // the background (common on mobile browsers).
+  ac.resume().then(() => {
+    if (!_alarmBuffer || !audioEngine.audioContext) return;
+    const ctx2 = audioEngine.audioContext;
+    console.info('[Alarm] Starting ring — ctx.state:', ctx2.state, 'buf.duration:', _alarmBuffer.duration.toFixed(1));
+    _alarmSource = ctx2.createBufferSource();
+    _alarmSource.buffer = _alarmBuffer;
+    _alarmSource.loop = true;
+    // Connect directly to destination so the master-gain mute doesn't silence it
+    _alarmSource.connect(ctx2.destination);
+    _alarmSource.start();
+  }).catch(e => console.warn('[Alarm] ctx.resume() failed:', e));
 }
 
-/** Stop the alarm. */
+/** Stop a ringing alarm. */
 function stopAlarmRing() {
-  if (_alarmAudio) {
-    _alarmAudio.pause();
-    _alarmAudio.currentTime = 0;
+  if (_alarmSource) {
+    try { _alarmSource.stop(); } catch (_) {}
+    try { _alarmSource.disconnect(); } catch (_) {}
+    _alarmSource = null;
   }
 }
 
 /**
  * Called during the "Set" button click (user gesture).
- * Initialises the <audio> element and plays a quick confirmation chirp
- * via Web Audio so the chirp itself doesn't depend on the mp3.
+ * Resumes the AudioContext, kicks off async MP3 decode, and plays a
+ * quick confirmation chirp so the user knows the alarm was accepted.
  */
 function playAlarmSetBeep() {
-  // Initialise / unlock the alarm audio element inside this user gesture
-  _initAlarmAudio();
+  // Resume the AudioEngine's AudioContext inside this user gesture so it is
+  // in 'running' state by the time the alarm fires from a rAF callback.
+  audioEngine.resume();
 
-  // Confirmation chirp via a fresh one-shot AudioContext (avoids any
-  // suspension issues — it's created and used immediately, then GC'd)
+  // Kick off (or no-op if already done) async buffer decode
+  _loadAlarmBuffer();
+
+  // Confirmation chirp — uses the now-running AudioContext directly
   try {
-    const AC = window.AudioContext || (window as any).webkitAudioContext;
-    if (!AC) return;
-    const ctx = new AC();
-    const t = ctx.currentTime;
-    const osc = ctx.createOscillator();
-    const g = ctx.createGain();
+    const ac = audioEngine.audioContext;
+    if (!ac) return;
+    const t = ac.currentTime;
+    const osc = ac.createOscillator();
+    const g = ac.createGain();
     osc.type = 'sine';
     osc.frequency.setValueAtTime(880, t);
     osc.frequency.setValueAtTime(1100, t + 0.12);
     g.gain.setValueAtTime(0.25, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.28);
-    osc.connect(g); g.connect(ctx.destination);
+    osc.connect(g); g.connect(ac.destination);
     osc.start(t); osc.stop(t + 0.3);
-    // Close the one-shot context after the chirp finishes
-    setTimeout(() => ctx.close().catch(() => {}), 500);
   } catch (_) {}
 }
 
