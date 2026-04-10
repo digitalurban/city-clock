@@ -446,7 +446,7 @@ function createStatsPanel() {
   const el = document.createElement('div');
   el.id = 'city-stats-panel';
   el.style.cssText = `
-    display: none; position: fixed; top: 16px; right: 16px; z-index: 150;
+    display: none; position: fixed; top: 36px; right: 16px; z-index: 90;
     background: rgba(10, 12, 22, 0.78); color: #ccd6f0; padding: 10px 14px;
     border-radius: 10px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', monospace;
     font-size: 12px; line-height: 1.9; min-width: 160px;
@@ -584,7 +584,7 @@ function createOptionsUI() {
   const container = document.createElement('div');
   container.id = 'options-container';
   container.style.cssText = `
-    position: fixed; bottom: 16px; right: 16px; z-index: 100;
+    position: fixed; bottom: 16px; right: 16px; z-index: 110;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     user-select: none;
   `;
