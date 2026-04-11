@@ -1,11 +1,18 @@
+/// <reference types="vite/client" />
+import sfxTrainUrl    from '../assets/sfx-train.mp3?url';
+import sfxThunderUrl  from '../assets/sfx-thunder.mp3?url';
+import sfxSirenUrl    from '../assets/sfx-siren.mp3?url';
+
 /**
  * Procedural ambient audio engine.
  *
  * Active layers:
  *  • Rain / hail / snow  — filtered pink noise, scales with weather intensity
- *  • Thunder             — triggered on thunderstorm frames
+ *  • Thunder             — MP3 one-shot (falls back to synthesised rumble)
  *  • Fountain water      — white-noise spray, active when jets are running
  *  • Birds               — sparrow chirps, seagull calls, pigeon coos (5am–9pm)
+ *  • Train departure     — MP3 one-shot (falls back to synthesised whistle)
+ *  • Police siren        — MP3 one-shot (falls back to synthesised sweep)
  *
  * Starts muted — user enables via the Sound toggle in Settings.
  * AudioContext created lazily on first resume() to satisfy browser autoplay policy.
@@ -29,6 +36,11 @@ export class AudioEngine {
   private lastThunderTime = 0;
   private initialised = false;
   private _muted = true;
+
+  // MP3 sound-effect buffers — loaded once after AudioContext is created
+  private sfxTrain:   AudioBuffer | null = null;
+  private sfxThunder: AudioBuffer | null = null;
+  private sfxSiren:   AudioBuffer | null = null;
 
   // ── Noise generators ────────────────────────────────────────────────────
 
@@ -159,20 +171,55 @@ export class AudioEngine {
     this.birdTimerHandle = setTimeout(() => this.scheduleBirds(), delay);
   }
 
+  // ── MP3 SFX loader ───────────────────────────────────────────────────────
+
+  /** Fetch + decode the three SFX MP3s after the AudioContext is created. */
+  private async loadSfxBuffers() {
+    const load = async (url: string): Promise<AudioBuffer | null> => {
+      try {
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        return await this.ctx!.decodeAudioData(await resp.arrayBuffer());
+      } catch (e) {
+        console.warn('[AudioEngine] SFX load failed:', url, e);
+        return null;
+      }
+    };
+    [this.sfxTrain, this.sfxThunder, this.sfxSiren] = await Promise.all([
+      load(sfxTrainUrl), load(sfxThunderUrl), load(sfxSirenUrl),
+    ]);
+  }
+
+  /** Play a decoded AudioBuffer once through the master gain at the given volume. */
+  private playSfx(buf: AudioBuffer, gain = 1.0) {
+    if (!this.ctx || !this.masterGain) return;
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+    const g = this.ctx.createGain();
+    g.gain.value = gain;
+    src.connect(g);
+    g.connect(this.masterGain);
+    src.start();
+  }
+
   // ── Sirens ───────────────────────────────────────────────────────────────
 
   /**
    * Single siren pass — plays once for the vehicle, never repeats.
-   * Police: smooth UK two-tone sweep. Ambulance: rising-falling sweep.
-   * Firetruck: one sustained low horn.
-   * All use sine oscillators through a mild lowpass so they don't sound harsh.
+   * Police: authentic UK siren MP3 (falls back to synthesised two-tone sweep).
+   * Ambulance / firetruck: synthesised.
    */
   triggerSiren(type: 'police' | 'ambulance' | 'firetruck' = 'police') {
     if (!this.ctx || !this.masterGain) return;
-    const ctx  = this.ctx;
-    const t0   = ctx.currentTime;
 
-    // Shared output bus — low gain so siren sits behind the scene
+    if (type === 'police' && this.sfxSiren) {
+      this.playSfx(this.sfxSiren, 0.55);
+      return;
+    }
+
+    // Synthesised fallback (also used for ambulance + firetruck)
+    const ctx = this.ctx;
+    const t0  = ctx.currentTime;
     const out    = ctx.createGain();
     const filter = ctx.createBiquadFilter();
     filter.type  = 'lowpass';
@@ -195,94 +242,51 @@ export class AudioEngine {
       osc.start(start); osc.stop(start + dur + 0.02);
     };
 
-    if (type === 'police') {
-      // UK two-tone: smooth sweep hi→lo, lo→hi, twice (approx 2 s total)
-      tone(960, t0 + 0.0,  0.5, 760);
-      tone(760, t0 + 0.5,  0.5, 960);
-      tone(960, t0 + 1.0,  0.5, 760);
-      tone(760, t0 + 1.5,  0.5, 960);
-    } else if (type === 'ambulance') {
-      // Slow rising-then-falling sweep, one pass (~2 s)
+    if (type === 'ambulance') {
       tone(550, t0 + 0.0,  1.0, 1050);
       tone(1050, t0 + 1.0, 1.0, 550);
     } else {
-      // Firetruck: one sustained low horn with slight pitch drop
+      // Firetruck: sustained low horn
       tone(280, t0 + 0.0,  1.8, 240);
     }
   }
 
   // ── Train departure ──────────────────────────────────────────────────────
 
-  /**
-   * Steam train pulling away.
-   * Pattern: short toot · pause · long toooot, with harmonic-rich whistle and low rumble.
-   */
+  /** Authentic narrow-gauge train whistle MP3, falls back to synthesised. */
   triggerTrainDeparture() {
     if (!this.ctx || !this.masterGain) return;
+
+    if (this.sfxTrain) {
+      this.playSfx(this.sfxTrain, 0.7);
+      return;
+    }
+
+    // Synthesised fallback
     const ctx = this.ctx;
     const sr  = ctx.sampleRate;
     const t0  = ctx.currentTime;
-
-    // ── 1. Mechanical rumble — low filtered noise, builds then fades ─────────
     const rDur = 4.0;
-    const rN   = Math.floor(sr * rDur);
-    const rBuf = ctx.createBuffer(1, rN, sr);
+    const rBuf = ctx.createBuffer(1, Math.floor(sr * rDur), sr);
     const rD   = rBuf.getChannelData(0);
-    for (let i = 0; i < rN; i++) rD[i] = Math.random() * 2 - 1;
-    const rSrc  = ctx.createBufferSource();
-    rSrc.buffer = rBuf;
-    const rFilt = ctx.createBiquadFilter();
-    rFilt.type  = 'bandpass';
-    rFilt.frequency.value = 80;
-    rFilt.Q.value = 0.8;
+    for (let i = 0; i < rD.length; i++) rD[i] = Math.random() * 2 - 1;
+    const rSrc = ctx.createBufferSource(); rSrc.buffer = rBuf;
+    const rFilt = ctx.createBiquadFilter(); rFilt.type = 'bandpass'; rFilt.frequency.value = 80; rFilt.Q.value = 0.8;
     const rGain = ctx.createGain();
-    rGain.gain.setValueAtTime(0, t0);
-    rGain.gain.linearRampToValueAtTime(0.4, t0 + 0.8);
-    rGain.gain.setValueAtTime(0.4, t0 + 2.0);
-    rGain.gain.exponentialRampToValueAtTime(0.001, t0 + rDur);
+    rGain.gain.setValueAtTime(0, t0); rGain.gain.linearRampToValueAtTime(0.4, t0 + 0.8);
+    rGain.gain.setValueAtTime(0.4, t0 + 2.0); rGain.gain.exponentialRampToValueAtTime(0.001, t0 + rDur);
     rSrc.connect(rFilt); rFilt.connect(rGain); rGain.connect(this.masterGain);
     rSrc.start(t0); rSrc.stop(t0 + rDur + 0.05);
-
-    // ── 2. Steam whistle — harmonic chord + breathy noise ────────────────────
-    // Classic pattern:  short toot (0.35 s)  · pause  · long toot (0.9 s)
     const whistleNote = (start: number, dur: number) => {
-      const fundamental = 880;
-      // Layered harmonics: 1st, 2nd, 3rd give the characteristic chime quality
       [[1.0, 0.55], [2.0, 0.30], [3.0, 0.15]].forEach(([mult, gain]) => {
-        const osc  = ctx.createOscillator();
-        const g    = ctx.createGain();
-        osc.type   = 'sine';
-        // Slight pitch sag at the end gives the steam-pressure-dropping feel
-        osc.frequency.setValueAtTime(fundamental * mult, start);
-        osc.frequency.linearRampToValueAtTime(fundamental * mult * 0.97, start + dur);
-        g.gain.setValueAtTime(0, start);
-        g.gain.linearRampToValueAtTime(gain, start + 0.02);
-        g.gain.setValueAtTime(gain, start + dur - 0.05);
-        g.gain.linearRampToValueAtTime(0, start + dur + 0.04);
-        osc.connect(g); g.connect(this.masterGain);
-        osc.start(start); osc.stop(start + dur + 0.08);
+        const osc = ctx.createOscillator(); const g = ctx.createGain();
+        osc.type = 'sine'; osc.frequency.setValueAtTime(880 * mult, start);
+        osc.frequency.linearRampToValueAtTime(880 * mult * 0.97, start + dur);
+        g.gain.setValueAtTime(0, start); g.gain.linearRampToValueAtTime(gain, start + 0.02);
+        g.gain.setValueAtTime(gain, start + dur - 0.05); g.gain.linearRampToValueAtTime(0, start + dur + 0.04);
+        osc.connect(g); g.connect(this.masterGain); osc.start(start); osc.stop(start + dur + 0.08);
       });
-      // Breathiness — narrow-band noise centred on fundamental
-      const nN   = Math.floor(sr * (dur + 0.1));
-      const nBuf = ctx.createBuffer(1, nN, sr);
-      const nD   = nBuf.getChannelData(0);
-      for (let i = 0; i < nN; i++) nD[i] = Math.random() * 2 - 1;
-      const nSrc = ctx.createBufferSource();
-      nSrc.buffer = nBuf;
-      const nFilt = ctx.createBiquadFilter();
-      nFilt.type = 'bandpass';
-      nFilt.frequency.value = fundamental * 1.5;
-      nFilt.Q.value = 4;
-      const nGain = ctx.createGain();
-      nGain.gain.setValueAtTime(0, start);
-      nGain.gain.linearRampToValueAtTime(0.06, start + 0.02);
-      nGain.gain.setValueAtTime(0.06, start + dur - 0.04);
-      nGain.gain.linearRampToValueAtTime(0, start + dur + 0.04);
-      nSrc.connect(nFilt); nFilt.connect(nGain); nGain.connect(this.masterGain);
-      nSrc.start(start); nSrc.stop(start + dur + 0.1);
     };
-
-    // Short toot at ~0.5 s, long toot at ~1.1 s
     whistleNote(t0 + 0.5, 0.32);
     whistleNote(t0 + 1.1, 0.90);
   }
@@ -292,29 +296,33 @@ export class AudioEngine {
   triggerThunder(delay = 0) {
     if (!this.ctx || !this.masterGain || Date.now() - this.lastThunderTime < 3000) return;
     this.lastThunderTime = Date.now();
+
+    if (this.sfxThunder) {
+      // Delay the MP3 shot by scheduling a deferred play
+      if (delay > 0) {
+        setTimeout(() => this.playSfx(this.sfxThunder!, 0.75), delay * 1000);
+      } else {
+        this.playSfx(this.sfxThunder, 0.75);
+      }
+      return;
+    }
+
+    // Synthesised fallback
     const sr = this.ctx.sampleRate;
     const dur = 1.5;
-    const n = Math.floor(sr * dur);
-    const buf = this.ctx.createBuffer(1, n, sr);
+    const buf = this.ctx.createBuffer(1, Math.floor(sr * dur), sr);
     const d = buf.getChannelData(0);
-    for (let i = 0; i < n; i++) {
+    for (let i = 0; i < d.length; i++) {
       const t = i / sr;
       d[i] = (Math.random() * 2 - 1) * (Math.exp(-t * 2.5) + Math.exp(-t * 0.8) * 0.4);
     }
-    const src = this.ctx.createBufferSource();
-    src.buffer = buf;
-    const filter = this.ctx.createBiquadFilter();
-    filter.type = 'lowpass';
-    filter.frequency.value = 150;
-    filter.Q.value = 2;
+    const src = this.ctx.createBufferSource(); src.buffer = buf;
+    const filter = this.ctx.createBiquadFilter(); filter.type = 'lowpass'; filter.frequency.value = 150; filter.Q.value = 2;
     const gain = this.ctx.createGain();
     const t0 = this.ctx.currentTime + delay;
-    gain.gain.setValueAtTime(0, t0);
-    gain.gain.linearRampToValueAtTime(0.6, t0 + 0.05);
+    gain.gain.setValueAtTime(0, t0); gain.gain.linearRampToValueAtTime(0.6, t0 + 0.05);
     gain.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
-    src.connect(filter);
-    filter.connect(gain);
-    gain.connect(this.masterGain);
+    src.connect(filter); filter.connect(gain); gain.connect(this.masterGain);
     src.start(t0);
   }
 
@@ -327,6 +335,7 @@ export class AudioEngine {
         if (!AC) return;
         this.ctx = new AC();
         this.setupNodes();
+        this.loadSfxBuffers();
       } catch (e) {
         console.warn('[AudioEngine] AudioContext creation failed.', e);
         return;
