@@ -3513,11 +3513,11 @@ export class CityLayout {
     const vw = 32, vh = 16; // width (left-right), height (front-back)
     const hw = vw / 2, hh = vh / 2;
 
-    // Wheel geometry — tyres protrude 3px beyond body on top & bottom edges,
-    // so they look like axle-mounted tyres viewed from directly above.
-    const tyreW = 4, tyreH = 6, tyreR = 1.5;
-    const tyreInset = 7; // distance from each end along the body
-    const tyreProtrude = 3; // how far tyres stick out past body edge
+    // Wheel geometry — subtle tyre strips flush with the body edges,
+    // 1px protrusion so they're just visible without dominating.
+    const tyreW = 2.5, tyreH = 5, tyreR = 1;
+    const tyreInset = 7;
+    const tyreProtrude = 1;
 
     const d = (v: number) => Math.floor(v * dark);
 
@@ -3527,25 +3527,18 @@ export class CityLayout {
     ctx.roundRect(x - hw + 3, y - hh + 3, vw, vh, 2);
     ctx.fill();
 
-    // Tyres (drawn first so body covers the inner edges)
-    ctx.fillStyle = `rgb(${d(40)},${d(35)},${d(35)})`;
+    // Tyres — drawn before body so inner half is hidden under it
+    ctx.fillStyle = `rgb(${d(80)},${d(75)},${d(75)})`;
     const tyrePositions = [
-      // [centreX, centreY]
-      [x - hw + tyreInset, y - hh - tyreProtrude + tyreH / 2], // front-left
-      [x + hw - tyreInset, y - hh - tyreProtrude + tyreH / 2], // front-right
-      [x - hw + tyreInset, y + hh + tyreProtrude - tyreH / 2], // rear-left
-      [x + hw - tyreInset, y + hh + tyreProtrude - tyreH / 2], // rear-right
+      [x - hw + tyreInset, y - hh - tyreProtrude + tyreH / 2],
+      [x + hw - tyreInset, y - hh - tyreProtrude + tyreH / 2],
+      [x - hw + tyreInset, y + hh + tyreProtrude - tyreH / 2],
+      [x + hw - tyreInset, y + hh + tyreProtrude - tyreH / 2],
     ];
     for (const [tx, ty] of tyrePositions) {
       ctx.beginPath();
       ctx.roundRect(tx - tyreW / 2, ty - tyreH / 2, tyreW, tyreH, tyreR);
       ctx.fill();
-      // Wheel rim highlight
-      ctx.fillStyle = `rgb(${d(110)},${d(105)},${d(100)})`;
-      ctx.beginPath();
-      ctx.arc(tx, ty, 1.2, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = `rgb(${d(40)},${d(35)},${d(35)})`;
     }
 
     // Van body — white/cream
