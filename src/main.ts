@@ -2164,6 +2164,7 @@ function _checkIceCreamVan() {
   const active = layout.iceCreamActive;
   if (active && !_iceCreamWasActive) {
     showToast('🍦 Ice cream van!', 'The van has parked up near the plaza. Queue forming.', 5000);
+    if (audioEngine.isActive && !audioEngine.muted) audioEngine.triggerIceCream();
   }
   _iceCreamWasActive = active;
 }

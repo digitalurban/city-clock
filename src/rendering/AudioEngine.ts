@@ -2,6 +2,7 @@
 import sfxTrainUrl    from '../assets/sfx-train.mp3?url';
 import sfxThunderUrl  from '../assets/sfx-thunder.mp3?url';
 import sfxSirenUrl    from '../assets/sfx-siren.mp3?url';
+import sfxIceCreamUrl from '../assets/sfx-icecream.mp3?url';
 
 /**
  * Procedural ambient audio engine.
@@ -38,9 +39,10 @@ export class AudioEngine {
   private _muted = true;
 
   // MP3 sound-effect buffers — loaded once after AudioContext is created
-  private sfxTrain:   AudioBuffer | null = null;
-  private sfxThunder: AudioBuffer | null = null;
-  private sfxSiren:   AudioBuffer | null = null;
+  private sfxTrain:    AudioBuffer | null = null;
+  private sfxThunder:  AudioBuffer | null = null;
+  private sfxSiren:    AudioBuffer | null = null;
+  private sfxIceCream: AudioBuffer | null = null;
 
   // ── Noise generators ────────────────────────────────────────────────────
 
@@ -185,8 +187,8 @@ export class AudioEngine {
         return null;
       }
     };
-    [this.sfxTrain, this.sfxThunder, this.sfxSiren] = await Promise.all([
-      load(sfxTrainUrl), load(sfxThunderUrl), load(sfxSirenUrl),
+    [this.sfxTrain, this.sfxThunder, this.sfxSiren, this.sfxIceCream] = await Promise.all([
+      load(sfxTrainUrl), load(sfxThunderUrl), load(sfxSirenUrl), load(sfxIceCreamUrl),
     ]);
   }
 
@@ -399,6 +401,11 @@ export class AudioEngine {
   }
 
   get muted(): boolean { return this._muted; }
+
+  /** Play the ice cream van jingle once when the van arrives. */
+  triggerIceCream() {
+    if (this.sfxIceCream) this.playSfx(this.sfxIceCream, 0.6);
+  }
 
   get isActive(): boolean {
     return this.initialised && this.ctx !== null && this.ctx.state !== 'closed';

@@ -3507,54 +3507,89 @@ export class CityLayout {
     const x = this.iceCreamX;
     const y = this.iceCreamY;
     const dark = 1 - nightAlpha * 0.5;
-    const vw = 28, vh = 14; // van footprint (top-down)
 
-    // Van shadow
-    ctx.fillStyle = 'rgba(0,0,0,0.22)';
-    ctx.fillRect(x - vw / 2 + 2, y - vh / 2 + 2, vw, vh);
+    // Top-down proportions: van is parked facing right
+    // Body is narrower front-to-back, longer left-to-right
+    const vw = 32, vh = 16; // width (left-right), height (front-back)
+    const hw = vw / 2, hh = vh / 2;
 
-    // Van body — white
-    ctx.fillStyle = `rgb(${Math.floor(240*dark)},${Math.floor(240*dark)},${Math.floor(238*dark)})`;
-    ctx.fillRect(x - vw / 2, y - vh / 2, vw, vh);
+    // Wheel geometry — tyres protrude 3px beyond body on top & bottom edges,
+    // so they look like axle-mounted tyres viewed from directly above.
+    const tyreW = 4, tyreH = 6, tyreR = 1.5;
+    const tyreInset = 7; // distance from each end along the body
+    const tyreProtrude = 3; // how far tyres stick out past body edge
 
-    // Coloured stripe along the side
-    ctx.fillStyle = `rgb(${Math.floor(255*dark)},${Math.floor(120*dark)},${Math.floor(40*dark)})`;
-    ctx.fillRect(x - vw / 2, y - 1, vw, 3);
+    const d = (v: number) => Math.floor(v * dark);
 
-    // Serving hatch window (right side, middle)
-    ctx.fillStyle = `rgba(${Math.floor(180*dark)},${Math.floor(230*dark)},${Math.floor(255*dark)},0.8)`;
-    ctx.fillRect(x + vw / 2 - 8, y - vh / 2 + 3, 6, 5);
-
-    // Ice cream cone sign on roof
-    ctx.fillStyle = `rgb(${Math.floor(255*dark)},${Math.floor(210*dark)},${Math.floor(100*dark)})`;
+    // Shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.20)';
     ctx.beginPath();
-    ctx.arc(x + 4, y - vh / 2 - 1, 3.5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = `rgb(${Math.floor(255*dark)},${Math.floor(130*dark)},${Math.floor(160*dark)})`;
-    ctx.beginPath();
-    ctx.arc(x + 4, y - vh / 2 - 3.5, 2.5, 0, Math.PI * 2);
+    ctx.roundRect(x - hw + 3, y - hh + 3, vw, vh, 2);
     ctx.fill();
 
-    // Wheels (4 small dark circles)
-    ctx.fillStyle = `rgb(${Math.floor(45*dark)},${Math.floor(40*dark)},${Math.floor(40*dark)})`;
-    // Wheels sit just inside the body edge so they don't poke out the sides
-    const wr = 2;
-    const wheelOffsets = [
-      { wx: -vw / 2 + 4,  wy: -vh / 2 + wr },
-      { wx:  vw / 2 - 4,  wy: -vh / 2 + wr },
-      { wx: -vw / 2 + 4,  wy:  vh / 2 - wr },
-      { wx:  vw / 2 - 4,  wy:  vh / 2 - wr },
+    // Tyres (drawn first so body covers the inner edges)
+    ctx.fillStyle = `rgb(${d(40)},${d(35)},${d(35)})`;
+    const tyrePositions = [
+      // [centreX, centreY]
+      [x - hw + tyreInset, y - hh - tyreProtrude + tyreH / 2], // front-left
+      [x + hw - tyreInset, y - hh - tyreProtrude + tyreH / 2], // front-right
+      [x - hw + tyreInset, y + hh + tyreProtrude - tyreH / 2], // rear-left
+      [x + hw - tyreInset, y + hh + tyreProtrude - tyreH / 2], // rear-right
     ];
-    for (const { wx, wy } of wheelOffsets) {
+    for (const [tx, ty] of tyrePositions) {
       ctx.beginPath();
-      ctx.arc(x + wx, y + wy, wr, 0, Math.PI * 2);
+      ctx.roundRect(tx - tyreW / 2, ty - tyreH / 2, tyreW, tyreH, tyreR);
       ctx.fill();
+      // Wheel rim highlight
+      ctx.fillStyle = `rgb(${d(110)},${d(105)},${d(100)})`;
+      ctx.beginPath();
+      ctx.arc(tx, ty, 1.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = `rgb(${d(40)},${d(35)},${d(35)})`;
     }
 
-    // Outline
-    ctx.strokeStyle = `rgba(0,0,0,${0.30 * dark})`;
+    // Van body — white/cream
+    ctx.fillStyle = `rgb(${d(242)},${d(241)},${d(238)})`;
+    ctx.beginPath();
+    ctx.roundRect(x - hw, y - hh, vw, vh, 2);
+    ctx.fill();
+
+    // Pink/pastel stripe along the length
+    ctx.fillStyle = `rgb(${d(255)},${d(160)},${d(190)})`;
+    ctx.fillRect(x - hw, y - 2, vw, 4);
+
+    // Windshield (front end — left side, small blue rect)
+    ctx.fillStyle = `rgba(${d(160)},${d(215)},${d(255)},0.85)`;
+    ctx.beginPath();
+    ctx.roundRect(x - hw + 1, y - hh + 2, 6, vh - 4, 1);
+    ctx.fill();
+
+    // Serving hatch (right-hand side, open window)
+    ctx.fillStyle = `rgba(${d(160)},${d(215)},${d(255)},0.75)`;
+    ctx.fillRect(x + hw - 9, y - hh + 3, 7, vh - 6);
+    // Hatch frame
+    ctx.strokeStyle = `rgba(${d(180)},${d(180)},${d(180)},0.9)`;
+    ctx.lineWidth = 0.7;
+    ctx.strokeRect(x + hw - 9, y - hh + 3, 7, vh - 6);
+
+    // Ice cream scoop sign on roof (centre-left of roof)
+    // Cone (triangle from above — just a small circle for the top-down view)
+    ctx.fillStyle = `rgb(${d(220)},${d(175)},${d(100)})`;
+    ctx.beginPath();
+    ctx.arc(x + 4, y, 3, 0, Math.PI * 2);
+    ctx.fill();
+    // Scoop (pink blob on top of cone)
+    ctx.fillStyle = `rgb(${d(255)},${d(140)},${d(170)})`;
+    ctx.beginPath();
+    ctx.arc(x + 4, y - 1, 2.2, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Body outline
+    ctx.strokeStyle = `rgba(0,0,0,${0.22 * dark})`;
     ctx.lineWidth = 0.8;
-    ctx.strokeRect(x - vw / 2, y - vh / 2, vw, vh);
+    ctx.beginPath();
+    ctx.roundRect(x - hw, y - hh, vw, vh, 2);
+    ctx.stroke();
   }
 
   /** Ballast + land use for railway-corridor cells (non-station bottom row).
