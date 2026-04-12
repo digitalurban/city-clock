@@ -679,15 +679,17 @@ export class Weather {
           return rngState / 233280;
         };
 
-        const puffCount = 5 + Math.floor(seededRandom() * 5);
+        // More puffs for a fluffier, more organic silhouette
+        const puffCount = 10 + Math.floor(seededRandom() * 5); // 10–14
         const puffs: Array<{ px: number; py: number; r: number }> = [];
         for (let i = 0; i < puffCount; i++) {
           const angle = seededRandom() * Math.PI * 2;
-          const dist = seededRandom() * (hw * 0.5);
-          // coords relative to cloud centre
+          // Wider spread — puffs reach out to 85% of the half-width
+          const dist = seededRandom() * (hw * 0.85);
           const px = Math.cos(angle) * dist;
-          const py = Math.sin(angle) * dist * (hh / hw);
-          const r = (hh * 0.4) + seededRandom() * (hh * 0.6);
+          const py = Math.sin(angle) * dist * (hh / hw) * 0.7; // flatter vertically
+          // Smaller individual puffs so edges are softer and less blobby
+          const r = (hh * 0.3) + seededRandom() * (hh * 0.55);
           puffs.push({ px, py, r });
         }
 
@@ -708,30 +710,41 @@ export class Weather {
           }
         };
 
-        // Base body (full opacity on offscreen — alpha applied at blit time)
+        // Base body
         oc.fillStyle = `rgb(${grey + 10}, ${grey + 12}, ${grey + 15})`;
         drawPath();
         oc.fill();
 
-        // Volume shading — one gradient per puff (only when rebuilding, not every frame)
-        const hiGrey = Math.min(255, grey + 40);
+        // Per-puff highlight — softer, wider falloff so edges aren't sharp
+        const hiGrey = Math.min(255, grey + 50);
         for (const p of puffs) {
           const grad = oc.createRadialGradient(
-            ox + p.px - p.r * 0.2, oy + p.py - p.r * 0.2, p.r * 0.1,
-            ox + p.px, oy + p.py, p.r * 1.2
+            ox + p.px - p.r * 0.25, oy + p.py - p.r * 0.3, p.r * 0.05,
+            ox + p.px, oy + p.py, p.r * 1.4  // wider than puff radius → feathered edge
           );
-          grad.addColorStop(0, `rgba(${hiGrey}, ${hiGrey + 2}, ${hiGrey + 5}, 0.7)`);
-          grad.addColorStop(0.5, `rgba(${hiGrey}, ${hiGrey + 2}, ${hiGrey + 5}, 0.2)`);
-          grad.addColorStop(1, `rgba(${grey}, ${grey}, ${grey}, 0)`);
+          grad.addColorStop(0,    `rgba(${hiGrey}, ${hiGrey + 3}, ${hiGrey + 8}, 0.75)`);
+          grad.addColorStop(0.45, `rgba(${hiGrey}, ${hiGrey + 2}, ${hiGrey + 5}, 0.25)`);
+          grad.addColorStop(0.75, `rgba(${grey + 5}, ${grey + 5}, ${grey + 5}, 0.08)`);
+          grad.addColorStop(1,    `rgba(${grey}, ${grey}, ${grey}, 0)`);
           oc.fillStyle = grad;
           oc.beginPath();
-          oc.arc(ox + p.px, oy + p.py, p.r * 0.95, 0, Math.PI * 2);
+          oc.arc(ox + p.px, oy + p.py, p.r * 1.1, 0, Math.PI * 2);
           oc.fill();
         }
 
-        // Outline
-        oc.strokeStyle = `rgba(${Math.max(0, grey - 30)}, ${Math.max(0, grey - 25)}, ${Math.max(0, grey - 20)}, 0.2)`;
-        oc.lineWidth = 1;
+        // Bottom shadow gradient — darker underside gives 3-D roundness
+        const shadowGrey = Math.max(30, grey - 45);
+        const bottomGrad = oc.createLinearGradient(0, oy, 0, oy + hh * 0.9);
+        bottomGrad.addColorStop(0,   `rgba(${shadowGrey}, ${shadowGrey}, ${shadowGrey + 5}, 0)`);
+        bottomGrad.addColorStop(0.6, `rgba(${shadowGrey}, ${shadowGrey}, ${shadowGrey + 5}, 0.18)`);
+        bottomGrad.addColorStop(1,   `rgba(${shadowGrey}, ${shadowGrey}, ${shadowGrey + 5}, 0.32)`);
+        oc.fillStyle = bottomGrad;
+        drawPath();
+        oc.fill();
+
+        // Very subtle outline — almost invisible, just rounds the silhouette
+        oc.strokeStyle = `rgba(${Math.max(0, grey - 20)}, ${Math.max(0, grey - 15)}, ${Math.max(0, grey - 10)}, 0.12)`;
+        oc.lineWidth = 0.8;
         drawPath();
         oc.stroke();
 
