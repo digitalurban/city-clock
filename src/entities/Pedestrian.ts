@@ -91,6 +91,7 @@ export class Pedestrian {
   isSitting: boolean = false;
   sitTimer: number = 0;
   sitDuration: number = 0;
+  sitVenueType: string = 'cafe'; // tracks which venue type the current sit is at
   sitX: number = 0;
   sitY: number = 0;
 
@@ -394,6 +395,7 @@ export class Pedestrian {
     if (v.seatingPositions.length > 0) {
       const seat = v.seatingPositions[Math.floor(Math.random() * v.seatingPositions.length)];
       this.isSitting = true;
+      this.sitVenueType = v.type; // remember venue type so completion fires correct stat
       this.sitX = seat.x;
       this.sitY = seat.y;
       this.sitTimer = 0;
@@ -719,7 +721,7 @@ export class Pedestrian {
           this.isSitting = false;
           this.hasFood = Math.random() < 0.4;
           this.justCompletedVisit = true;
-          this.lastVisitVenueType = 'cafe';
+          this.lastVisitVenueType = this.sitVenueType;
           this.lastVisitVenueName = null;
           this.thoughtBubble = 'heart';
           this.thoughtTimer = 120;
