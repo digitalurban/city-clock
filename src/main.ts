@@ -1514,8 +1514,8 @@ function loop(timestamp: number = 0) {
 
       if ((vt === 'cafe' || vt === 'restaurant') && hr >= 6 && hr < 21) {
         if (tryCount('cafe', 2)) _cityStats.coffeesSold++;         // up to 2 coffees per person per day
-      } else if (vt === 'bar' && hr >= 17 && hr < 24) {
-        if (tryCount('bar', 1)) _cityStats.pintsSold++;            // 1 round per person per evening
+      } else if (vt === 'bar' && hr >= 11 && hr < 24) {
+        if (tryCount('bar', 1)) _cityStats.pintsSold++;            // 1 pint per person per day (pub hours)
       } else if (vt === 'bookshop' && hr >= 9 && hr < 19) {
         if (tryCount('bookshop', 1)) _cityStats.booksSold++;       // 1 book per person per day
       } else if (vt === 'shop' && vn.includes('flower') && hr >= 8 && hr < 19) {
