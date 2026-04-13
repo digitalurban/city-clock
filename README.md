@@ -83,10 +83,12 @@ Full rainbow bunting (red / orange / yellow / green / blue / purple / pink / cya
 - **Follow mode** - the inspector pop-up includes a Follow button. Tapping it hides the pop-up and shows a compact pill chip at the top of the screen (`➤ Name · Activity  ✕`) that updates the pedestrian's activity in real time. Clicking the chip re-opens the full pop-up; dragging the canvas cancels following. Tap ✕ on the chip to stop at any time
 - **Roadside wheelie bins** - ~70% of houses put a small colour-coded wheelie bin on the kerb strip beside their garden path (each house has its own lid colour). The garbage truck pulls over periodically to collect nearby bins; bins reappear ~5 minutes later once residents wheel them back in
 - **Service & Delivery Vehicles** - orange delivery vans enter the plaza, park outside a venue to drop off packages. City buses (red/blue) and garbage trucks (green) navigate the road network with unique behaviours.
-- **Emergency vehicles** - police cars, ambulances, and fire trucks with flashing light bars and wailing sirens
+- **Ice cream van** — on warm summer afternoons (April–September, 12–18h) a white-and-pink ice cream van parks near the plaza. Drawn top-down with a cream body, pink stripe, serving hatch window, and a small scoop sign on the roof. Its jingle plays once when it arrives; a toast announces its presence. A pedestrian queue forms outside
+- **City stats panel** — an optional overlay (toggle in Settings) showing live daily totals that reset at midnight: people currently in the plaza, people at home, train passengers, coffees sold, pints sold, books sold, flowers sold, market veg stock (%), and mills operating. Counts are per-person gated so each pedestrian contributes realistically — one round at a bar per evening, one coffee per morning, one book per day — rather than accumulating unrealistically. The panel sits below the settings panel in z-order
+- **Emergency vehicles** - police cars, ambulances, and fire trucks with flashing light bars and wailing sirens. Each vehicle triggers its siren once (not repeatedly) using a WeakSet to track which vehicles have already sounded
 - **Traffic system** - cars navigate the road network with traffic lights, braking for pedestrians and each other, smooth quadratic Bézier arc turns at junctions, and anti-gridlock logic.
 - **Day/night cycle** - real-time lighting based on system clock; deep dark-blue night sky; street lights and plaza lamps cast distinct warm pools through the darkness; building windows glow warm amber at night; car headlight beams cut through the night; all rendered in correct depth order so light sources punch through the darkness rather than being dimmed by it.
-- **Weather** - procedural clouds with realistic multi-lobe shapes, 3D shading, and ground shadows drifting across the city. Fog renders as animated layered noise tendrils that drift in opposite directions rather than a flat overlay. Roads develop a specular wet sheen during rain that pulses slowly with shifting highlights
+- **Weather** - volumetrically refined clouds with 10–14 overlapping puffs per cloud (up from 5–9), feathered gradient edges, and a darker underside shadow gradient that gives each cloud a rounded 3D appearance from above. Three parallax layers at different speeds. Ground shadows follow each cloud across the city. Fog renders as animated layered noise tendrils rather than a flat overlay. Roads develop a specular wet sheen during rain
 - **Zoom and pan** - scroll-wheel zoom, click-drag pan, touch pinch and drag on mobile. The static city layer rebuilds at the current zoom level 300 ms after each gesture settles, so the background is always sharp at any magnification
 - **Adjustable population** - settings panel to control traffic (10-300) and people (112-500) counts live
 - **iOS PWA** - add to home screen on Safari for fullscreen standalone experience; handles orientation changes and visualViewport resizing
@@ -204,7 +206,7 @@ Several passes work together to give the city depth and visual polish:
 - **Window lights** — commercial buildings have sparse lit windows at night (3–10% of positions depending on hour), using time-quantised seeds so lights shift gradually every 20 minutes. Three colour temperatures: warm incandescent, cool office daylight, and blue screen glow. Unlit windows show a subtle dark recess. Deep night (11pm–6am) leaves almost all offices dark; end-of-day (5–8pm) has the most activity
 - **Plaza paving** — a two-tone checkerboard floor (40px tiles), visible grout lines, a double inset perimeter border, and a central compass rose (concentric rings, 8 spokes, 4 cardinal lines) baked into the static canvas at zero runtime cost
 - **Road kerb lines** — a thin white edge stroke around every road rectangle defines the curb/gutter boundary and gives the road network visual structure
-- **Procedural audio** — all sounds are synthesised via the Web Audio API (no MP3s): rain (pink noise filtered to match drizzle → thunderstorm intensity), fountain spray (white noise highpass), bird song (sparrow chirps, pigeon coos, robin sequences), thunder, and wailing police/fire sirens (LFO-modulated oscillator). Starts muted; toggle on/off via the Sound button in Settings. AudioContext is created lazily on first user interaction to satisfy browser autoplay policies. Lamp glow halos use `screen` compositing so overlapping lights stay crisp at night on all browsers including Safari
+- **Audio** — a layered audio system combining authentic MP3 recordings with procedural Web Audio synthesis. Authentic recordings: narrow-gauge train whistle (plays on departure), thunder crack, UK police siren, and ice cream van jingle. Procedural layers: rain (pink noise filtered to match drizzle → thunderstorm intensity), fountain spray (white noise highpass), and bird song (sparrow chirps, pigeon coos, robin sequences). Ambulance and firetruck sirens remain synthesised. All sounds start muted; toggle on/off via the Sound button in Settings. MP3s are loaded via `fetch` + `decodeAudioData` on first user interaction; the AudioContext is created lazily to satisfy browser autoplay policies. Lamp glow halos use `screen` compositing so overlapping lights stay crisp at night on all browsers including Safari
 - **Time-of-day atmosphere** — morning mist (5–9am), golden hour amber (17–20h), and Sunday quiet blue tint, all composited in world space before the main dynamic layer
 
 ### Rendering Architecture
@@ -221,7 +223,7 @@ City Clock is designed to run efficiently as an always-on wallpaper or bedside c
 
 - **Native 60fps** - the render loop runs at the display's native refresh rate for smooth animation; all timers and speeds are tuned for 60fps
 - **Visibility pause** - the loop stops entirely when the tab is hidden or the screen is off (via the Page Visibility API), dropping power draw to near zero when no one is watching
-- **Cloud caching** - each cloud is pre-rendered to an offscreen canvas and cached; only rebuilt when storm intensity changes the cloud colour. Eliminates ~200 `createRadialGradient` calls per frame
+- **Cloud caching** - each cloud (10–14 puffs, underside shadow gradient, feathered highlights) is pre-rendered to an offscreen canvas and cached; only rebuilt when storm intensity shifts the grey value by more than 3. Eliminates ~300 `createRadialGradient` calls per frame
 - **Gradient caching** - wet-sheen gradient is created once and reused every frame; rebuilt only on canvas resize. Eliminates GC objects per minute that previously caused Safari to slow down over time
 - **Spatial grid** - pedestrian separation checks use a `SpatialGrid` structure for O(n) neighbour queries instead of O(n²) brute-force iteration
 - **In-place array cleanup** - all particle and entity arrays are compacted with reverse-splice rather than `.filter()`, avoiding per-frame array allocations
@@ -232,7 +234,7 @@ City Clock is designed to run efficiently as an always-on wallpaper or bedside c
 
 - **TypeScript** + **Vite** for development and bundling
 - **HTML Canvas 2D** for all city rendering — roads, buildings, pedestrians, weather, lighting
-- **Web Audio API** for procedural ambient sound
+- **Web Audio API** for ambient sound — mix of authentic MP3 recordings (`fetch` + `decodeAudioData`) and procedural synthesis
 - Zero runtime dependencies
 
 ## Running Locally

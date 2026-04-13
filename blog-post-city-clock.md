@@ -105,7 +105,17 @@ One of the things that emerged fairly naturally was a notification layer — a r
 
 Train departing. Canal loading. Ice cream van parked near the plaza. Fog settling in. Flash mob in progress. The Sunday market is open.
 
+The ice cream van deserves a mention of its own. On warm afternoons between April and September, a white-and-pink van parks near the plaza — drawn top-down like every other vehicle, with a serving hatch window, a pink stripe along its length, and a small scoop sign on the roof. Its jingle plays when it arrives. A queue forms outside. It stays for a while, then leaves when the weather turns or the afternoon ends.
+
 It's on by default and can be turned off in settings. When it's running it gives the city a texture of ongoing activity — a sense that things are happening slightly beyond the edge of the screen, and have been happening all along.
+
+---
+
+## City Stats
+
+One of the more quietly satisfying additions is a daily stats panel. Toggle it on in Settings and a small overlay appears showing what the city has actually done today: how many people are currently in the plaza, how many are at home, how many train passengers have arrived, how many coffees have been sold, pints pulled, books bought, flowers purchased. The market veg stock percentage ticks down through the day as pedestrians browse the stalls. The number of mills operating updates as factories cycle on and off.
+
+The counts reset at midnight. They're gated per-person — each pedestrian can buy one coffee in the morning and one in the afternoon, one round at the bar in the evening, one book — so the numbers stay in a believable range over a full day rather than spiralling upward. By 9pm you might have 40 coffees sold, 12 pints, a few books, a couple of bunches of flowers. It's a snapshot of a day in the life of a city that's been quietly going about its business the whole time.
 
 ---
 
@@ -152,7 +162,7 @@ Pedestrian pathfinding uses a 9px walkability grid covering the whole city, with
 
 The clock geometry is a standard seven-segment layout scaled to fill the plaza, with each segment subdivided into four pedestrian positions. At summons time, eligible pedestrians compute their target position, cancel whatever they were doing, and walk there. When released, they don't teleport back — they just resume normal wandering from wherever they're standing in the plaza.
 
-Sound is fully procedural via the Web Audio API. No audio files. Rain is filtered pink noise tuned to match drizzle through to thunderstorm intensity. The fountain is white noise highpass. Sirens are LFO-modulated oscillators. Everything starts muted and can be toggled in settings.
+Sound is a mix of authentic recordings and procedural synthesis via the Web Audio API. A narrow-gauge train whistle plays on each departure — a real recording, fetched and decoded into an `AudioBuffer` on first interaction so it's ready without any autoplay restriction. A genuine thunder crack fires during storms. A UK police siren plays once per emergency vehicle (a `WeakSet` ensures it never repeats for the same car object). When an ice cream van parks near the plaza, its jingle plays. Everything else — rain, the fountain spray, bird calls, the ambulance wail — is procedurally synthesised. Everything starts muted and can be toggled in settings.
 
 ---
 
